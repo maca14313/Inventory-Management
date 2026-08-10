@@ -1,8 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// Multi-Tenant Enterprise IMS — Prisma Schema
+// All models use Int @id @default(autoincrement()) (numeric ID contract).
+// No Batch / BatchEntry models — Lot replaces them (Change 1 + Change 2).
 
 generator client {
   provider = "prisma-client-js"
@@ -13,20 +11,386 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ─── 1. Enterprise ─────────────────────────────────────────
+model Enterprise {
+  id              Int      @id @default(autoincrement())
+  name            String
+  code            String   @unique
+  contactEmail    String   @default("")
+  contactPhone    String   @default("")
+  address         String   @default("")
+  isActive        Boolean  @default(true)
+  maxBranches     Int      @default(10)
+  maxWarehouses   Int      @default(50)
+  maxUsers        Int      @default(100)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  branches        Branch[]
+  warehouses      Warehouse[]
+  users           User[]
+  categories      Category[]
+  suppliers       Supplier[]
+  products        Product[]
+  orders          Order[]
+  features        Feature[]
+  stockInRecorders StockInRecorder[]
+  stockOutRecorders StockOutRecorder[]
+  auditLogs       AuditLog[]
+  lots            Lot[]
 }
 
-model Post {
-  id        String   @id @default(cuid())
-  title     String
-  content   String?
-  published Boolean  @default(false)
-  authorId  String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// ─── 2. Branch ─────────────────────────────────────────────
+model Branch {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  name          String
+  code          String
+  location      String   @default("")
+  managerName   String   @default("")
+  managerEmail  String   @default("")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  warehouses    Warehouse[]
+  users         User[]
+
+  @@index([enterpriseId])
+}
+
+// ─── 3. Warehouse ──────────────────────────────────────────
+model Warehouse {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  branchId      Int
+  name          String
+  code          String
+  location      String   @default("")
+  capacity      Int      @default(1000)
+  managerName   String   @default("")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  branch        Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  stock         Stock[]
+  lots          Lot[]
+  orders        Order[]
+  stockInRecorders  StockInRecorder[]
+  stockOutRecorders StockOutRecorder[]
+  users         User[]
+  orderItems    OrderItem[]
+  stockInItems  StockInItem[]
+  stockOutItems StockOutItem[]
+
+  @@index([enterpriseId])
+  @@index([branchId])
+}
+
+// ─── 4. User ───────────────────────────────────────────────
+model User {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int?
+  branchId      Int?
+  warehouseId   Int?
+  username      String   @unique
+  email         String   @default("")
+  fullName      String
+  role          String   // 'super_admin' | 'enterprise_admin' | 'branch_admin' | 'warehouse_admin'
+  isActive      Boolean  @default(true)
+  passwordHash  String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise? @relation(fields: [enterpriseId], references: [id], onDelete: SetNull)
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  warehouse     Warehouse?  @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  orders        Order[]     @relation("OrderCreatedBy")
+  auditLogs     AuditLog[]
+
+  @@index([enterpriseId])
+  @@index([branchId])
+  @@index([warehouseId])
+}
+
+// ─── 5. Category ───────────────────────────────────────────
+model Category {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  name          String
+  description   String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  products      Product[]
+
+  @@index([enterpriseId])
+}
+
+// ─── 6. Supplier ───────────────────────────────────────────
+model Supplier {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  name          String
+  contactPerson String   @default("")
+  email         String   @default("")
+  phone         String   @default("")
+  address       String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  orders        Order[]
+
+  @@index([enterpriseId])
+}
+
+// ─── 7. Product ────────────────────────────────────────────
+model Product {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  name          String
+  sku           String   @unique
+  description   String   @default("")
+  categoryId    Int?
+  price         Float    @default(0)
+  cost          Float    @default(0)
+  unit          String   @default("piece")
+  reorderLevel  Int      @default(10)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  category      Category?  @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  stock         Stock[]
+  lots          Lot[]
+  orderItems    OrderItem[]
+  stockInItems  StockInItem[]
+  stockOutItems StockOutItem[]
+
+  @@index([enterpriseId])
+  @@index([categoryId])
+}
+
+// ─── 8. Stock ──────────────────────────────────────────────
+model Stock {
+  id            Int      @id @default(autoincrement())
+  productId     Int
+  warehouseId   Int
+  quantity      Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, warehouseId])
+  @@index([warehouseId])
+  @@index([productId])
+}
+
+// ─── 9. Lot (Change 2 — real lot tracking) ────────────────
+model Lot {
+  id            Int      @id @default(autoincrement())
+  lotNumber     String   @unique
+  productId     Int
+  warehouseId   Int
+  enterpriseId  Int
+  quantity      Int      // original received
+  remainingQty  Int      // current remaining (FIFO-decremented)
+  unit          String   @default("piece")
+  costPerUnit   Float    @default(0)
+  supplierName  String?
+  source        String   // 'stock_in' | 'register_item' | 'adjustment'
+  sourceRef     String?
+  notes         String?
+  receivedDate  DateTime @default(now())
+  closedAt      DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+
+  @@index([productId, warehouseId])
+  @@index([enterpriseId])
+  @@index([source])
+  @@index([sourceRef])
+}
+
+// ─── 10. Order ─────────────────────────────────────────────
+model Order {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  type          String   // 'purchase' | 'sales'
+  supplierId    Int?
+  warehouseId   Int?
+  status        String   // 'pending' | 'approved' | 'shipped' | 'received' | 'cancelled'
+  totalAmount   Float    @default(0)
+  notes         String   @default("")
+  createdBy     Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  supplier      Supplier?  @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  warehouse     Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  createdByUser User?      @relation("OrderCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  items         OrderItem[]
+
+  @@index([enterpriseId])
+  @@index([supplierId])
+  @@index([warehouseId])
+  @@index([createdBy])
+}
+
+// ─── 11. OrderItem ─────────────────────────────────────────
+model OrderItem {
+  id            Int      @id @default(autoincrement())
+  orderId       Int
+  productId     Int
+  warehouseId   Int
+  quantity      Int      @default(0)
+  unitPrice     Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([warehouseId])
+}
+
+// ─── 12. StockInRecorder ───────────────────────────────────
+model StockInRecorder {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  warehouseId   Int
+  recorderCode  String   @unique  // SIN-YYYY-NNNN
+  personName    String   @default("")
+  personPhone   String   @default("")
+  personEmail   String   @default("")
+  personAddress String   @default("")
+  notes         String   @default("")
+  status        String   @default("pending")  // 'pending' | 'submitted'
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  items         StockInItem[]
+
+  @@index([enterpriseId])
+  @@index([warehouseId])
+}
+
+// ─── 13. StockInItem ───────────────────────────────────────
+model StockInItem {
+  id            Int      @id @default(autoincrement())
+  recorderId    Int
+  productId     Int
+  warehouseId   Int
+  quantity      Int      @default(0)
+  unit          String   @default("piece")
+  costPerUnit   Float    @default(0)
+  notes         String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  recorder      StockInRecorder @relation(fields: [recorderId], references: [id], onDelete: Cascade)
+  product       Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([recorderId])
+  @@index([productId])
+  @@index([warehouseId])
+}
+
+// ─── 14. StockOutRecorder ──────────────────────────────────
+model StockOutRecorder {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  warehouseId   Int
+  recorderCode  String   @unique  // SOUT-YYYY-NNNN
+  personName    String   @default("")
+  personPhone   String   @default("")
+  personEmail   String   @default("")
+  personAddress String   @default("")
+  notes         String   @default("")
+  status        String   @default("pending")  // 'pending' | 'partial_return' | 'returned'
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  items         StockOutItem[]
+
+  @@index([enterpriseId])
+  @@index([warehouseId])
+}
+
+// ─── 15. StockOutItem ──────────────────────────────────────
+model StockOutItem {
+  id            Int      @id @default(autoincrement())
+  recorderId    Int
+  productId     Int
+  warehouseId   Int
+  quantity      Int      @default(0)
+  unit          String   @default("piece")
+  isReturnable  Boolean  @default(false)
+  returnDeadline DateTime?
+  notes         String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  recorder      StockOutRecorder @relation(fields: [recorderId], references: [id], onDelete: Cascade)
+  product       Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse     Warehouse        @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([recorderId])
+  @@index([productId])
+  @@index([warehouseId])
+}
+
+// ─── 16. AuditLog ──────────────────────────────────────────
+model AuditLog {
+  id            Int      @id @default(autoincrement())
+  userId        Int?
+  enterpriseId  Int?
+  action        String
+  entity        String
+  entityId      Int?
+  details       String   @default("")
+  createdAt     DateTime @default(now())
+
+  user          User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  enterprise    Enterprise? @relation(fields: [enterpriseId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([enterpriseId])
+  @@index([entity])
+}
+
+// ─── 17. Feature ───────────────────────────────────────────
+model Feature {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  feature       String
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+
+  @@unique([enterpriseId, feature])
+  @@index([enterpriseId])
 }

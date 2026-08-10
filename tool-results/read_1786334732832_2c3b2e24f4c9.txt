@@ -1,0 +1,1245 @@
+     1→/**
+     2→ * Multi-Tenant Enterprise IMS — Database Driver
+     3→ *
+     4→ * HIERARCHY ENFORCEMENT:
+     5→ *   Super Admin      → sees everything, manages all enterprises
+     6→ *   Enterprise Admin  → scoped to their enterpriseId, manages branches/users/products/orders within it
+     7→ *   Branch Admin      → scoped to their branchId, manages warehouses/users/orders within it
+     8→ *   Warehouse Admin   → scoped to their warehouseId, manages stock/orders within it
+     9→ *
+    10→ * All findMany/findById/create/update/remove operations accept an AuthContext
+    11→ * that enforces tenant boundaries. A warehouse_admin can NEVER see data from
+    12→ * another warehouse, even if they guess the ID.
+    13→ */
+    14→
+    15→import mysql from 'mysql2/promise'
+    16→
+    17→// ─── Core Types ─────────────────────────────────────────────
+    18→
+    19→export type Role = 'super_admin' | 'enterprise_admin' | 'branch_admin' | 'warehouse_admin'
+    20→
+    21→export interface AuthContext {
+    22→  userId: number
+    23→  role: Role
+    24→  enterpriseId: number | null
+    25→  branchId: number | null
+    26→  warehouseId: number | null
+    27→}
+    28→
+    29→export interface Enterprise {
+    30→  id: number; name: string; code: string
+    31→  contactEmail: string; contactPhone: string; address: string
+    32→  isActive: boolean; maxBranches: number; maxWarehouses: number; maxUsers: number
+    33→  createdAt: string; updatedAt: string
+    34→}
+    35→
+    36→export interface EnterpriseFeature {
+    37→  id: number; enterpriseId: number; feature: string; enabled: boolean
+    38→}
+    39→
+    40→export interface Branch {
+    41→  id: number; enterpriseId: number; name: string; code: string
+    42→  location: string; managerName: string; managerEmail: string; isActive: boolean
+    43→  createdAt: string; updatedAt: string
+    44→}
+    45→
+    46→export interface Warehouse {
+    47→  id: number; enterpriseId: number; branchId: number; name: string; code: string
+    48→  location: string; capacity: number; managerName: string; isActive: boolean
+    49→  createdAt: string; updatedAt: string
+    50→}
+    51→
+    52→export interface User {
+    53→  id: number; enterpriseId: number | null; branchId: number | null; warehouseId: number | null
+    54→  username: string; email: string; fullName: string; role: Role
+    55→  isActive: boolean; passwordHash: string
+    56→  createdAt: string; updatedAt: string
+    57→}
+    58→
+    59→export interface Category {
+    60→  id: number; enterpriseId: number; name: string; description: string
+    61→  createdAt: string; updatedAt: string
+    62→}
+    63→
+    64→export interface Supplier {
+    65→  id: number; enterpriseId: number; name: string; contactPerson: string; email: string
+    66→  phone: string; address: string
+    67→  createdAt: string; updatedAt: string
+    68→}
+    69→
+    70→export interface Product {
+    71→  id: number; enterpriseId: number; name: string; sku: string; description: string
+    72→  categoryId: number | null; price: number; cost: number; unit: string
+    73→  reorderLevel: number; isActive: boolean
+    74→  createdAt: string; updatedAt: string
+    75→}
+    76→
+    77→export interface Stock {
+    78→  id: number; productId: number; warehouseId: number; quantity: number
+    79→  createdAt: string; updatedAt: string
+    80→}
+    81→
+    82→export interface Order {
+    83→  id: number; enterpriseId: number; type: 'purchase' | 'sales'
+    84→  supplierId: number | null; warehouseId: number | null
+    85→  status: 'pending' | 'approved' | 'shipped' | 'received' | 'cancelled'
+    86→  totalAmount: number; notes: string; createdBy: number | null
+    87→  createdAt: string; updatedAt: string
+    88→}
+    89→
+    90→export interface OrderItem {
+    91→  id: number; orderId: number; productId: number; warehouseId: number
+    92→  quantity: number; unitPrice: number
+    93→  createdAt: string; updatedAt: string
+    94→}
+    95→
+    96→export interface AuditLog {
+    97→  id: number; userId: number | null; enterpriseId: number | null
+    98→  action: string; entity: string; entityId: number | null
+    99→  details: string; createdAt: string
+   100→}
+   101→
+   102→// ─── Inventory Batches ─────────────────────────────────────
+   103→
+   104→export interface BatchEntry {
+   105→  id: number; batchId: number; productId: number; warehouseId: number
+   106→  quantity: number; unit: string; costPerUnit: number
+   107→  notes: string; createdAt: string; updatedAt: string
+   108→}
+   109→
+   110→export interface Batch {
+   111→  id: number; enterpriseId: number; warehouseId: number
+   112→  batchCode: string; supplierId: number | null; personName: string
+   113→  personPhone: string; personEmail: string; notes: string
+   114→  status: 'open' | 'closed' | 'cancelled'
+   115→  entries: BatchEntry[]
+   116→  createdAt: string; updatedAt: string
+   117→}
+   118→
+   119→// ─── Stock Out Recorder ────────────────────────────────────
+   120→
+   121→export interface StockOutItem {
+   122→  id: number; recorderId: number; productId: number; warehouseId: number
+   123→  quantity: number; unit: string
+   124→  isReturnable: boolean; returnDeadline: string | null
+   125→  notes: string; createdAt: string
+   126→}
+   127→
+   128→export interface StockOutRecorder {
+   129→  id: number; enterpriseId: number; warehouseId: number
+   130→  recorderCode: string; personName: string; personPhone: string
+   131→  personEmail: string; personAddress: string; notes: string
+   132→  status: 'draft' | 'confirmed' | 'partial_return' | 'returned' | 'cancelled'
+   133→  items: StockOutItem[]
+   134→  createdBy: number | null; createdAt: string; updatedAt: string
+   135→}
+   136→
+   137→// ─── Measurements ──────────────────────────────────────────
+   138→
+   139→export const MEASUREMENTS = [
+   140→  "Acre","Ampere","Ampule","Bag","Baker's Dozen","Bale","Bar","Barrel",
+   141→  "Basket","Batch","Bin","Block","Bolt","Bottle","Bouquet","Bowl",
+   142→  "Box","BTU","Bucket","Bulb","Bunch","Bundle","Bushel","Can",
+   143→  "Capsule","Carat","Cart","Carton","Case","cc","Centimeter","Clove",
+   144→  "cm","Coil","Cone","Cord","Crate","cu.m","Cubic Centimeter","Cubic Foot",
+   145→  "Cubic Inch","Cup","Day","Dozen","Drawer","Drop","Drum","Ear",
+   146→  "Feet","Flask","Fluid Ounce","Foot","g","Gallon","Gallons","Gram",
+   147→  "Gross","Half Dozen","Hand","Hank","Head","Hectare","Hogshead","Hour",
+   148→  "in","Inch","Jar","Jug","Keg","kg","Kilogram","Kilometer",
+   149→  "Kilowatt","km","Kuntal","kWh","l","Link","Liter","Litre",
+   150→  "Load","Loaf","Long Ton","m","Meter","Metric Ton","mg","mi",
+   151→  "Microgram","Mile","Milligram","Milliliter","Millimeter","Minute","ml","mm",
+   152→  "Month","Mug","Nautical Mile","nmi","Ounce","Ounces","pac","Pack",
+   153→  "Package","Packet","Pair","Pallet","pcs","Peck","Piece","Pieces",
+   154→  "Pile","Pint","Pod","Pouch","Pound","Pounds","Quart","Quintal",
+   155→  "Ream","Roll","Sachet","Sack","Score","Second","Set","Sheet",
+   156→  "Short Ton","Skid","Slab","Spool","sqcm","sqft","sqin","sqkm",
+   157→  "sqm","sqmm","Square Centimeter","Square Foot","Square Inch","Square Kilometer","Square Millimeter","Square Yard",
+   158→  "sqyd","Stack","Stalk","Stem","Stick","Stone","Strip","Tablespoon",
+   159→  "Tablet","Teaspoon","Tin","Tola","Ton","Tonne","Tray","Tub",
+   160→  "Tube","Unit","Vial","Volt","Watt","Week","Yard","yd",
+   161→  "Year"
+   162→] as const
+   163→
+   164→export type Measurement = typeof MEASUREMENTS[number]
+   165→
+   166→// ─── Tenant Scoping Helpers ─────────────────────────────────
+   167→
+   168→function scopeEnterpriseId(ctx: AuthContext): number | null {
+   169→  if (ctx.role === 'super_admin') return null // sees all
+   170→  return ctx.enterpriseId
+   171→}
+   172→
+   173→function scopeBranchId(ctx: AuthContext): number | null {
+   174→  if (ctx.role === 'super_admin' || ctx.role === 'enterprise_admin') return null
+   175→  return ctx.branchId
+   176→}
+   177→
+   178→function scopeWarehouseId(ctx: AuthContext): number | null {
+   179→  if (ctx.role === 'warehouse_admin') return ctx.warehouseId
+   180→  return null
+   181→}
+   182→
+   183→/** Check if a user context can access a specific enterprise */
+   184→function canAccessEnterprise(ctx: AuthContext, eid: number): boolean {
+   185→  if (ctx.role === 'super_admin') return true
+   186→  return ctx.enterpriseId === eid
+   187→}
+   188→
+   189→/** Check if a user context can access a specific branch */
+   190→function canAccessBranch(ctx: AuthContext, eid: number, bid: number): boolean {
+   191→  if (!canAccessEnterprise(ctx, eid)) return false
+   192→  if (ctx.role === 'super_admin' || ctx.role === 'enterprise_admin') return true
+   193→  return ctx.branchId === bid
+   194→}
+   195→
+   196→/** Check if a user context can access a specific warehouse */
+   197→function canAccessWarehouse(ctx: AuthContext, eid: number, bid: number, wid: number): boolean {
+   198→  if (!canAccessBranch(ctx, eid, bid)) return false
+   199→  if (ctx.role === 'warehouse_admin') return ctx.warehouseId === wid
+   200→  return true
+   201→}
+   202→
+   203→/** Check if actor can manage a target user based on hierarchy */
+   204→function canManageUser(ctx: AuthContext, target: User): boolean {
+   205→  if (ctx.role === 'super_admin') return true
+   206→  if (ctx.role === 'enterprise_admin') {
+   207→    // Can only manage users in same enterprise, and only lower roles
+   208→    if (target.enterpriseId !== ctx.enterpriseId) return false
+   209→    const roleOrder: Record<Role, number> = { super_admin: 0, enterprise_admin: 1, branch_admin: 2, warehouse_admin: 3 }
+   210→    return roleOrder[ctx.role] < roleOrder[target.role]
+   211→  }
+   212→  if (ctx.role === 'branch_admin') {
+   213→    // Can only manage users in same branch, only warehouse_admins
+   214→    if (target.branchId !== ctx.branchId) return false
+   215→    return target.role === 'warehouse_admin'
+   216→  }
+   217→  return false // warehouse_admin cannot manage any users
+   218→}
+   219→
+   220→// ─── Persistence ─────────────────────────────────────────
+   221→
+   222→const isServer = typeof window === 'undefined'
+   223→let DATA_FILE = ''
+   224→
+   225→function persist() {
+   226→  if (!isServer) return // Only persist on server side
+   227→  try {
+   228→    const fs = require('fs')
+   229→    const path = require('path')
+   230→    if (!DATA_FILE) DATA_FILE = path.join(process.cwd(), 'db', 'ims-data.json')
+   231→    const data = {
+   232→      nextId,
+   233→      enterprises, features, branches, warehouses, users,
+   234→      categories, suppliers, products, stock, orders, orderItems,
+   235→      auditLogs, batches, stockOutRecorders,
+   236→    }
+   237→    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf-8')
+   238→  } catch (e) { console.error('Persist error:', e) }
+   239→}
+   240→
+   241→function loadPersisted() {
+   242→  if (!isServer) return false // Only load on server side
+   243→  try {
+   244→    const fs = require('fs')
+   245→    const path = require('path')
+   246→    DATA_FILE = path.join(process.cwd(), 'db', 'ims-data.json')
+   247→    if (!fs.existsSync(DATA_FILE)) return false
+   248→    const raw = fs.readFileSync(DATA_FILE, 'utf-8')
+   249→    if (!raw || raw.trim().length < 10) return false
+   250→    const data = JSON.parse(raw)
+   251→    if (!data.enterprises || !Array.isArray(data.enterprises)) return false
+   252→    nextId = data.nextId || 200
+   253→    // Restore all arrays (splice + push to keep same references)
+   254→    const restore = <T>(arr: T[], src: T[]) => { arr.splice(0, arr.length, ...src) }
+   255→    restore(enterprises, data.enterprises)
+   256→    restore(features, data.features || [])
+   257→    restore(branches, data.branches || [])
+   258→    restore(warehouses, data.warehouses || [])
+   259→    restore(users, data.users || [])
+   260→    restore(categories, data.categories || [])
+   261→    restore(suppliers, data.suppliers || [])
+   262→    restore(products, data.products || [])
+   263→    restore(stock, data.stock || [])
+   264→    restore(orders, data.orders || [])
+   265→    restore(orderItems, data.orderItems || [])
+   266→    restore(auditLogs, data.auditLogs || [])
+   267→    restore(batches, data.batches || [])
+   268→    restore(stockOutRecorders, data.stockOutRecorders || [])
+   269→    console.log(`[DB] Loaded persisted data: ${enterprises.length} enterprises, ${products.length} products, ${stock.length} stock levels`)
+   270→    return true
+   271→  } catch (e) { console.error('Load persisted error:', e); return false }
+   272→}
+   273→
+   274→// ─── In-Memory Data Store ───────────────────────────────────
+   275→
+   276→const now = () => new Date().toISOString()
+   277→let nextId = 200
+   278→
+   279→const enterprises: Enterprise[] = [
+   280→  { id: 1, name: 'Acme Corporation', code: 'ACME', contactEmail: 'admin@acme.com', contactPhone: '+1-555-0100', address: '100 Business Ave, New York, NY', isActive: true, maxBranches: 10, maxWarehouses: 20, maxUsers: 50, createdAt: now(), updatedAt: now() },
+   281→  { id: 2, name: 'TechStart Inc', code: 'TECH', contactEmail: 'admin@techstart.com', contactPhone: '+1-555-0200', address: '200 Tech Blvd, San Francisco, CA', isActive: true, maxBranches: 5, maxWarehouses: 10, maxUsers: 25, createdAt: now(), updatedAt: now() },
+   282→  { id: 3, name: 'GlobalTrade Ltd', code: 'GTRADE', contactEmail: 'admin@globaltrade.com', contactPhone: '+1-555-0300', address: '300 Trade St, London, UK', isActive: true, maxBranches: 8, maxWarehouses: 15, maxUsers: 40, createdAt: now(), updatedAt: now() },
+   283→]
+   284→
+   285→const features: EnterpriseFeature[] = [
+   286→  { id: 1, enterpriseId: 1, feature: 'inventory', enabled: true },
+   287→  { id: 2, enterpriseId: 1, feature: 'orders', enabled: true },
+   288→  { id: 3, enterpriseId: 1, feature: 'suppliers', enabled: true },
+   289→  { id: 4, enterpriseId: 1, feature: 'audit_log', enabled: true },
+   290→  { id: 5, enterpriseId: 1, feature: 'multi_warehouse', enabled: true },
+   291→  { id: 6, enterpriseId: 1, feature: 'api_access', enabled: false },
+   292→  { id: 7, enterpriseId: 2, feature: 'inventory', enabled: true },
+   293→  { id: 8, enterpriseId: 2, feature: 'orders', enabled: true },
+   294→  { id: 9, enterpriseId: 2, feature: 'suppliers', enabled: false },
+   295→  { id: 10, enterpriseId: 2, feature: 'audit_log', enabled: false },
+   296→  { id: 11, enterpriseId: 2, feature: 'multi_warehouse', enabled: true },
+   297→  { id: 12, enterpriseId: 2, feature: 'api_access', enabled: false },
+   298→  { id: 13, enterpriseId: 3, feature: 'inventory', enabled: true },
+   299→  { id: 14, enterpriseId: 3, feature: 'orders', enabled: true },
+   300→  { id: 15, enterpriseId: 3, feature: 'suppliers', enabled: true },
+   301→  { id: 16, enterpriseId: 3, feature: 'audit_log', enabled: true },
+   302→  { id: 17, enterpriseId: 3, feature: 'multi_warehouse', enabled: true },
+   303→  { id: 18, enterpriseId: 3, feature: 'api_access', enabled: true },
+   304→]
+   305→
+   306→const branches: Branch[] = [
+   307→  { id: 1, enterpriseId: 1, name: 'North Division', code: 'ACME-N', location: 'Boston, MA', managerName: 'Alice Johnson', managerEmail: 'alice@acme.com', isActive: true, createdAt: now(), updatedAt: now() },
+   308→  { id: 2, enterpriseId: 1, name: 'South Division', code: 'ACME-S', location: 'Atlanta, GA', managerName: 'Bob Smith', managerEmail: 'bob@acme.com', isActive: true, createdAt: now(), updatedAt: now() },
+   309→  { id: 3, enterpriseId: 1, name: 'West Division', code: 'ACME-W', location: 'Seattle, WA', managerName: 'Carol West', managerEmail: 'carol@acme.com', isActive: true, createdAt: now(), updatedAt: now() },
+   310→  { id: 4, enterpriseId: 2, name: 'Headquarters', code: 'TECH-HQ', location: 'San Francisco, CA', managerName: 'David Chen', managerEmail: 'david@techstart.com', isActive: true, createdAt: now(), updatedAt: now() },
+   311→  { id: 5, enterpriseId: 3, name: 'London Office', code: 'GTRADE-LON', location: 'London, UK', managerName: 'Emma Wright', managerEmail: 'emma@globaltrade.com', isActive: true, createdAt: now(), updatedAt: now() },
+   312→]
+   313→
+   314→const warehouses: Warehouse[] = [
+   315→  { id: 1, enterpriseId: 1, branchId: 1, name: 'Boston Main WH', code: 'ACME-N-W1', location: 'Industrial Park, Boston', capacity: 10000, managerName: 'Dave Wilson', isActive: true, createdAt: now(), updatedAt: now() },
+   316→  { id: 2, enterpriseId: 1, branchId: 1, name: 'Boston Overflow', code: 'ACME-N-W2', location: 'Secondary Lot, Boston', capacity: 5000, managerName: 'Dave Wilson', isActive: true, createdAt: now(), updatedAt: now() },
+   317→  { id: 3, enterpriseId: 1, branchId: 2, name: 'Atlanta WH', code: 'ACME-S-W1', location: 'South Industrial, Atlanta', capacity: 8000, managerName: 'Eva Brown', isActive: true, createdAt: now(), updatedAt: now() },
+   318→  { id: 4, enterpriseId: 1, branchId: 3, name: 'Seattle WH', code: 'ACME-W-W1', location: 'Port District, Seattle', capacity: 12000, managerName: 'Frank Green', isActive: true, createdAt: now(), updatedAt: now() },
+   319→  { id: 5, enterpriseId: 2, branchId: 4, name: 'SF Main Warehouse', code: 'TECH-HQ-W1', location: 'Downtown SF', capacity: 6000, managerName: 'Grace Lee', isActive: true, createdAt: now(), updatedAt: now() },
+   320→  { id: 6, enterpriseId: 3, branchId: 5, name: 'London Warehouse', code: 'GTRADE-LON-W1', location: 'Heathrow Area, London', capacity: 15000, managerName: 'Henry Clark', isActive: true, createdAt: now(), updatedAt: now() },
+   321→]
+   322→
+   323→const users: User[] = [
+   324→  // Super Admin — no enterprise/branch/warehouse binding
+   325→  { id: 1, enterpriseId: null, branchId: null, warehouseId: null, username: 'superadmin', email: 'super@ims.com', fullName: 'Super Administrator', role: 'super_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   326→
+   327→  // Enterprise Admins — bound to enterprise only
+   328→  { id: 2, enterpriseId: 1, branchId: null, warehouseId: null, username: 'acmeadmin', email: 'admin@acme.com', fullName: 'Acme Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   329→  { id: 5, enterpriseId: 2, branchId: null, warehouseId: null, username: 'techadmin', email: 'admin@techstart.com', fullName: 'TechStart Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   330→  { id: 10, enterpriseId: 3, branchId: null, warehouseId: null, username: 'globaladmin', email: 'admin@globaltrade.com', fullName: 'GlobalTrade Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   331→
+   332→  // Branch Admins — bound to enterprise + branch
+   333→  { id: 3, enterpriseId: 1, branchId: 1, warehouseId: null, username: 'northadmin', email: 'alice@acme.com', fullName: 'Alice Johnson (North)', role: 'branch_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   334→  { id: 6, enterpriseId: 1, branchId: 2, warehouseId: null, username: 'southadmin', email: 'bob@acme.com', fullName: 'Bob Smith (South)', role: 'branch_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   335→  { id: 11, enterpriseId: 2, branchId: 4, warehouseId: null, username: 'hqadmin', email: 'david@techstart.com', fullName: 'David Chen (HQ)', role: 'branch_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   336→
+   337→  // Warehouse Admins — bound to enterprise + branch + warehouse
+   338→  { id: 4, enterpriseId: 1, branchId: 1, warehouseId: 1, username: 'bostonwh', email: 'dave@acme.com', fullName: 'Dave Wilson (Boston WH)', role: 'warehouse_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   339→  { id: 7, enterpriseId: 1, branchId: 1, warehouseId: 2, username: 'bostonwh2', email: 'dave2@acme.com', fullName: 'Dave Wilson (Boston Overflow)', role: 'warehouse_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   340→  { id: 8, enterpriseId: 1, branchId: 2, warehouseId: 3, username: 'atlantawh', email: 'eva@acme.com', fullName: 'Eva Brown (Atlanta WH)', role: 'warehouse_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   341→  { id: 9, enterpriseId: 2, branchId: 4, warehouseId: 5, username: 'sfwh', email: 'grace@techstart.com', fullName: 'Grace Lee (SF WH)', role: 'warehouse_admin', isActive: true, passwordHash: 'admin123', createdAt: now(), updatedAt: now() },
+   342→]
+   343→
+   344→const categories: Category[] = [
+   345→  { id: 1, enterpriseId: 1, name: 'Electronics', description: 'Electronic devices and components', createdAt: now(), updatedAt: now() },
+   346→  { id: 2, enterpriseId: 1, name: 'Furniture', description: 'Office and warehouse furniture', createdAt: now(), updatedAt: now() },
+   347→  { id: 3, enterpriseId: 1, name: 'Raw Materials', description: 'Raw materials for manufacturing', createdAt: now(), updatedAt: now() },
+   348→  { id: 4, enterpriseId: 2, name: 'Software', description: 'Software licenses and SaaS', createdAt: now(), updatedAt: now() },
+   349→  { id: 5, enterpriseId: 2, name: 'Hardware', description: 'Computer hardware', createdAt: now(), updatedAt: now() },
+   350→  { id: 6, enterpriseId: 3, name: 'Imported Goods', description: 'Imported trade goods', createdAt: now(), updatedAt: now() },
+   351→]
+   352→
+   353→const suppliers: Supplier[] = [
+   354→  { id: 1, enterpriseId: 1, name: 'TechCorp Supplies', contactPerson: 'John Smith', email: 'john@techcorp.com', phone: '+1-555-0101', address: '123 Tech Blvd', createdAt: now(), updatedAt: now() },
+   355→  { id: 2, enterpriseId: 1, name: 'Global Materials', contactPerson: 'Sarah Chen', email: 'sarah@globalmat.com', phone: '+1-555-0202', address: '456 Commerce St', createdAt: now(), updatedAt: now() },
+   356→  { id: 3, enterpriseId: 3, name: 'UK Imports Ltd', contactPerson: 'James Brown', email: 'james@ukimports.com', phone: '+44-20-1234', address: '10 Import Lane, London', createdAt: now(), updatedAt: now() },
+   357→]
+   358→
+   359→const products: Product[] = [
+   360→  { id: 1, enterpriseId: 1, name: 'Laptop Pro 15"', sku: 'ACME-ELEC-001', description: 'High-end business laptop', categoryId: 1, price: 1299.99, cost: 850, unit: 'pcs', reorderLevel: 10, isActive: true, createdAt: now(), updatedAt: now() },
+   361→  { id: 2, enterpriseId: 1, name: 'Wireless Keyboard', sku: 'ACME-ELEC-002', description: 'Bluetooth ergonomic keyboard', categoryId: 1, price: 79.99, cost: 25, unit: 'pcs', reorderLevel: 50, isActive: true, createdAt: now(), updatedAt: now() },
+   362→  { id: 3, enterpriseId: 1, name: 'Office Desk', sku: 'ACME-FURN-001', description: 'Adjustable standing desk', categoryId: 2, price: 449.99, cost: 200, unit: 'pcs', reorderLevel: 8, isActive: true, createdAt: now(), updatedAt: now() },
+   363→  { id: 4, enterpriseId: 1, name: 'Network Switch 24-port', sku: 'ACME-ELEC-003', description: 'Enterprise network switch', categoryId: 1, price: 299.99, cost: 140, unit: 'pcs', reorderLevel: 3, isActive: true, createdAt: now(), updatedAt: now() },
+   364→  { id: 5, enterpriseId: 1, name: 'Steel Shelving Unit', sku: 'ACME-FURN-002', description: 'Heavy-duty warehouse shelving', categoryId: 2, price: 189.99, cost: 80, unit: 'pcs', reorderLevel: 5, isActive: true, createdAt: now(), updatedAt: now() },
+   365→  { id: 6, enterpriseId: 2, name: 'Cloud License Pro', sku: 'TECH-SW-001', description: 'Annual cloud software license', categoryId: 4, price: 599.99, cost: 200, unit: 'license', reorderLevel: 0, isActive: true, createdAt: now(), updatedAt: now() },
+   366→  { id: 7, enterpriseId: 3, name: 'Circuit Board A', sku: 'GTRADE-IMP-001', description: 'Imported circuit boards', categoryId: 6, price: 45.50, cost: 18, unit: 'pcs', reorderLevel: 100, isActive: true, createdAt: now(), updatedAt: now() },
+   367→]
+   368→
+   369→const stock: Stock[] = [
+   370→  { id: 1, productId: 1, warehouseId: 1, quantity: 25, createdAt: now(), updatedAt: now() },
+   371→  { id: 2, productId: 2, warehouseId: 1, quantity: 150, createdAt: now(), updatedAt: now() },
+   372→  { id: 3, productId: 3, warehouseId: 1, quantity: 5, createdAt: now(), updatedAt: now() },
+   373→  { id: 4, productId: 4, warehouseId: 1, quantity: 2, createdAt: now(), updatedAt: now() },
+   374→  { id: 5, productId: 1, warehouseId: 2, quantity: 10, createdAt: now(), updatedAt: now() },
+   375→  { id: 6, productId: 2, warehouseId: 3, quantity: 80, createdAt: now(), updatedAt: now() },
+   376→  { id: 7, productId: 5, warehouseId: 1, quantity: 12, createdAt: now(), updatedAt: now() },
+   377→  { id: 8, productId: 1, warehouseId: 4, quantity: 30, createdAt: now(), updatedAt: now() },
+   378→  { id: 9, productId: 6, warehouseId: 5, quantity: 50, createdAt: now(), updatedAt: now() },
+   379→  { id: 10, productId: 7, warehouseId: 6, quantity: 500, createdAt: now(), updatedAt: now() },
+   380→]
+   381→
+   382→const orders: Order[] = [
+   383→  { id: 1, enterpriseId: 1, type: 'purchase', supplierId: 1, warehouseId: 1, status: 'received', totalAmount: 12750, notes: 'Q4 restock order', createdBy: 2, createdAt: now(), updatedAt: now() },
+   384→  { id: 2, enterpriseId: 1, type: 'purchase', supplierId: 2, warehouseId: 1, status: 'pending', totalAmount: 0, notes: 'Awaiting approval', createdBy: 3, createdAt: now(), updatedAt: now() },
+   385→  { id: 3, enterpriseId: 1, type: 'sales', supplierId: null, warehouseId: 1, status: 'shipped', totalAmount: 6499.95, notes: 'Corporate client order', createdBy: 4, createdAt: now(), updatedAt: now() },
+   386→  { id: 4, enterpriseId: 2, type: 'purchase', supplierId: null, warehouseId: 5, status: 'approved', totalAmount: 11999.80, notes: 'Software licenses restock', createdBy: 5, createdAt: now(), updatedAt: now() },
+   387→]
+   388→
+   389→const orderItems: OrderItem[] = [
+   390→  { id: 1, orderId: 1, productId: 1, warehouseId: 1, quantity: 10, unitPrice: 850, createdAt: now(), updatedAt: now() },
+   391→  { id: 2, orderId: 1, productId: 2, warehouseId: 1, quantity: 50, unitPrice: 25, createdAt: now(), updatedAt: now() },
+   392→  { id: 3, orderId: 3, productId: 1, warehouseId: 1, quantity: 5, unitPrice: 1299.99, createdAt: now(), updatedAt: now() },
+   393→  { id: 4, orderId: 4, productId: 6, warehouseId: 5, quantity: 20, unitPrice: 599.99, createdAt: now(), updatedAt: now() },
+   394→]
+   395→
+   396→const auditLogs: AuditLog[] = [
+   397→  { id: 1, userId: 1, enterpriseId: null, action: 'enterprise.create', entity: 'Enterprise', entityId: 1, details: 'Created Acme Corporation', createdAt: now() },
+   398→  { id: 2, userId: 2, enterpriseId: 1, action: 'product.create', entity: 'Product', entityId: 1, details: 'Created Laptop Pro 15"', createdAt: now() },
+   399→  { id: 3, userId: 3, enterpriseId: 1, action: 'order.create', entity: 'Order', entityId: 2, details: 'Created purchase order', createdAt: now() },
+   400→]
+   401→
+   402→// ─── In-Memory Batches & StockOut Data ─────────────────────
+   403→
+   404→const batches: Batch[] = [
+   405→  {
+   406→    id: 1, enterpriseId: 1, warehouseId: 1, batchCode: 'BATCH-2024-001',
+   407→    supplierId: 1, personName: 'John Smith', personPhone: '+1-555-0101', personEmail: 'john@techcorp.com',
+   408→    notes: 'Q4 electronics shipment', status: 'closed',
+   409→    entries: [
+   410→      { id: 1, batchId: 1, productId: 1, warehouseId: 1, quantity: 30, unit: 'pcs', costPerUnit: 850, notes: 'Laptops - Grade A', createdAt: now(), updatedAt: now() },
+   411→      { id: 2, batchId: 1, productId: 2, warehouseId: 1, quantity: 200, unit: 'pcs', costPerUnit: 25, notes: 'Keyboards - Bulk', createdAt: now(), updatedAt: now() },
+   412→    ],
+   413→    createdAt: now(), updatedAt: now(),
+   414→  },
+   415→  {
+   416→    id: 2, enterpriseId: 1, warehouseId: 1, batchCode: 'BATCH-2024-002',
+   417→    supplierId: 2, personName: 'Sarah Chen', personPhone: '+1-555-0202', personEmail: 'sarah@globalmat.com',
+   418→    notes: 'Furniture delivery', status: 'open',
+   419→    entries: [
+   420→      { id: 3, batchId: 2, productId: 3, warehouseId: 1, quantity: 10, unit: 'pcs', costPerUnit: 200, notes: 'Standing desks', createdAt: now(), updatedAt: now() },
+   421→    ],
+   422→    createdAt: now(), updatedAt: now(),
+   423→  },
+   424→]
+   425→
+   426→const stockOutRecorders: StockOutRecorder[] = [
+   427→  {
+   428→    id: 1, enterpriseId: 1, warehouseId: 1, recorderCode: 'OUT-2024-001',
+   429→    personName: 'Client Corp Ltd', personPhone: '+1-555-9001', personEmail: 'orders@clientcorp.com',
+   430→    personAddress: '500 Corporate Blvd, NY', notes: 'Corporate quarterly order',
+   431→    status: 'confirmed',
+   432→    items: [
+   433→      { id: 1, recorderId: 1, productId: 1, warehouseId: 1, quantity: 5, unit: 'pcs', isReturnable: true, returnDeadline: '2025-03-01', notes: 'Rental units', createdAt: now() },
+   434→      { id: 2, recorderId: 1, productId: 2, warehouseId: 1, quantity: 20, unit: 'pcs', isReturnable: false, returnDeadline: null, notes: 'Consumable', createdAt: now() },
+   435→    ],
+   436→    createdBy: 2, createdAt: now(), updatedAt: now(),
+   437→  },
+   438→  {
+   439→    id: 2, enterpriseId: 1, warehouseId: 1, recorderCode: 'OUT-2024-002',
+   440→    personName: 'StartupXYZ', personPhone: '+1-555-9002', personEmail: 'procurement@startupxyz.io',
+   441→    personAddress: '101 Innovation Way, SF', notes: 'New office setup',
+   442→    status: 'draft',
+   443→    items: [
+   444→      { id: 3, recorderId: 2, productId: 3, warehouseId: 1, quantity: 3, unit: 'pcs', isReturnable: true, returnDeadline: '2025-06-01', notes: 'Office desks - try before buy', createdAt: now() },
+   445→    ],
+   446→    createdBy: 3, createdAt: now(), updatedAt: now(),
+   447→  },
+   448→]
+   449→
+   450→// ─── Tenant-Scoped Database Operations ──────────────────────
+   451→
+   452→export const db = {
+   453→  // ── Auth ────────────────────────────────────────────────
+   454→  auth: {
+   455→    /** Login by username + password, returns user if valid */
+   456→    login: async (username: string, password: string): Promise<User | null> => {
+   457→      const u = users.find(u => u.username === username && u.passwordHash === password && u.isActive)
+   458→      return u || null
+   459→    },
+   460→    /** Get user by ID */
+   461→    getUser: async (id: number): Promise<User | null> => {
+   462→      return users.find(u => u.id === id) || null
+   463→    },
+   464→    /** Build AuthContext from user */
+   465→    getAuthContext: (user: User): AuthContext => ({
+   466→      userId: user.id,
+   467→      role: user.role,
+   468→      enterpriseId: user.enterpriseId,
+   469→      branchId: user.branchId,
+   470→      warehouseId: user.warehouseId,
+   471→    }),
+   472→    /** Check if actor can manage a target user */
+   473→    canManageUser: (ctx: AuthContext, target: User): boolean => canManageUser(ctx, target),
+   474→  },
+   475→
+   476→  // ── Enterprises ─────────────────────────────────────────
+   477→  enterprises: {
+   478→    /** List enterprises scoped to the auth context */
+   479→    findMany: async (ctx: AuthContext): Promise<Enterprise[]> => {
+   480→      if (ctx.role === 'super_admin') return [...enterprises]
+   481→      // Non-super admins see only their own enterprise
+   482→      const eid = ctx.enterpriseId
+   483→      if (!eid) return []
+   484→      return enterprises.filter(e => e.id === eid)
+   485→    },
+   486→    findById: async (ctx: AuthContext, id: number): Promise<Enterprise | null> => {
+   487→      const e = enterprises.find(e => e.id === id)
+   488→      if (!e) return null
+   489→      if (!canAccessEnterprise(ctx, e.id)) return null
+   490→      return e
+   491→    },
+   492→    create: async (ctx: AuthContext, d: Partial<Enterprise>): Promise<Enterprise> => {
+   493→      // Only super_admin can create enterprises
+   494→      if (ctx.role !== 'super_admin') throw new Error('FORBIDDEN: Only super_admin can create enterprises')
+   495→      const e: Enterprise = { id: ++nextId, name: d.name!, code: d.code!, contactEmail: d.contactEmail || '', contactPhone: d.contactPhone || '', address: d.address || '', isActive: d.isActive ?? true, maxBranches: d.maxBranches || 5, maxWarehouses: d.maxWarehouses || 10, maxUsers: d.maxUsers || 25, createdAt: now(), updatedAt: now() }
+   496→      enterprises.push(e)
+   497→      persist()
+   498→      return e
+   499→    },
+   500→    update: async (ctx: AuthContext, id: number, d: Partial<Enterprise>): Promise<Enterprise> => {
+   501→      const i = enterprises.findIndex(e => e.id === id)
+   502→      if (i === -1) throw new Error('Not found')
+   503→      if (!canAccessEnterprise(ctx, id)) throw new Error('FORBIDDEN: Cannot access this enterprise')
+   504→      // Only super_admin can change limits; enterprise_admin can update contact info
+   505→      Object.assign(enterprises[i], d, { updatedAt: now() })
+   506→      persist()
+   507→      return enterprises[i]
+   508→    },
+   509→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+   510→      if (ctx.role !== 'super_admin') throw new Error('FORBIDDEN: Only super_admin can delete enterprises')
+   511→      const i = enterprises.findIndex(e => e.id === id)
+   512→      if (i !== -1) enterprises.splice(i, 1)
+   513→      persist()
+   514→    },
+   515→  },
+   516→
+   517→  // ── Features ────────────────────────────────────────────
+   518→  features: {
+   519→    findByEnterprise: async (ctx: AuthContext, eid: number): Promise<EnterpriseFeature[]> => {
+   520→      if (!canAccessEnterprise(ctx, eid)) return []
+   521→      return features.filter(f => f.enterpriseId === eid)
+   522→    },
+   523→    setFeature: async (ctx: AuthContext, eid: number, feature: string, enabled: boolean): Promise<EnterpriseFeature> => {
+   524→      // Only super_admin can toggle features
+   525→      if (ctx.role !== 'super_admin') throw new Error('FORBIDDEN: Only super_admin can toggle enterprise features')
+   526→      const i = features.findIndex(f => f.enterpriseId === eid && f.feature === feature)
+   527→      if (i !== -1) { features[i].enabled = enabled; persist(); return features[i] }
+   528→      const f: EnterpriseFeature = { id: ++nextId, enterpriseId: eid, feature, enabled }
+   529→      features.push(f)
+   530→      persist()
+   531→      return f
+   532→    },
+   533→  },
+   534→
+   535→  // ── Branches ────────────────────────────────────────────
+   536→  branches: {
+   537→    findMany: async (ctx: AuthContext, eid?: number): Promise<Branch[]> => {
+   538→      const targetEid = eid || ctx.enterpriseId
+   539→      if (ctx.role === 'super_admin') {
+   540→        return targetEid ? branches.filter(b => b.enterpriseId === targetEid) : [...branches]
+   541→      }
+   542→      if (!ctx.enterpriseId) return []
+   543→      // enterprise_admin sees all branches in their enterprise
+   544→      if (ctx.role === 'enterprise_admin') return branches.filter(b => b.enterpriseId === ctx.enterpriseId && (!targetEid || b.enterpriseId === targetEid))
+   545→      // branch_admin/warehouse_admin see only their branch
+   546→      return branches.filter(b => b.id === ctx.branchId)
+   547→    },
+   548→    findById: async (ctx: AuthContext, id: number): Promise<Branch | null> => {
+   549→      const b = branches.find(b => b.id === id)
+   550→      if (!b) return null
+   551→      if (!canAccessBranch(ctx, b.enterpriseId, b.id)) return null
+   552→      return b
+   553→    },
+   554→    create: async (ctx: AuthContext, d: Partial<Branch>): Promise<Branch> => {
+   555→      // Only super_admin and enterprise_admin can create branches
+   556→      if (ctx.role !== 'super_admin' && ctx.role !== 'enterprise_admin') throw new Error('FORBIDDEN: Only super_admin or enterprise_admin can create branches')
+   557→      if (ctx.role === 'enterprise_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN: Cannot create branch in another enterprise')
+   558→      const b: Branch = { id: ++nextId, enterpriseId: d.enterpriseId!, name: d.name!, code: d.code!, location: d.location || '', managerName: d.managerName || '', managerEmail: d.managerEmail || '', isActive: d.isActive ?? true, createdAt: now(), updatedAt: now() }
+   559→      branches.push(b)
+   560→      persist()
+   561→      return b
+   562→    },
+   563→    update: async (ctx: AuthContext, id: number, d: Partial<Branch>): Promise<Branch> => {
+   564→      const i = branches.findIndex(b => b.id === id)
+   565→      if (i === -1) throw new Error('Not found')
+   566→      const b = branches[i]
+   567→      if (!canAccessBranch(ctx, b.enterpriseId, b.id)) throw new Error('FORBIDDEN: Cannot access this branch')
+   568→      Object.assign(branches[i], d, { updatedAt: now() })
+   569→      persist()
+   570→      return branches[i]
+   571→    },
+   572→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+   573→      const i = branches.findIndex(b => b.id === id)
+   574→      if (i === -1) throw new Error('Not found')
+   575→      const b = branches[i]
+   576→      if (ctx.role !== 'super_admin' && ctx.role !== 'enterprise_admin') throw new Error('FORBIDDEN')
+   577→      if (!canAccessBranch(ctx, b.enterpriseId, b.id)) throw new Error('FORBIDDEN')
+   578→      branches.splice(i, 1)
+   579→      persist()
+   580→    },
+   581→  },
+   582→
+   583→  // ── Warehouses ─────────────────────────────────────────
+   584→  warehouses: {
+   585→    findMany: async (ctx: AuthContext, eid?: number, bid?: number): Promise<Warehouse[]> => {
+   586→      if (ctx.role === 'super_admin') {
+   587→        return warehouses.filter(w => (!eid || w.enterpriseId === eid) && (!bid || w.branchId === bid))
+   588→      }
+   589→      if (ctx.role === 'enterprise_admin') {
+   590→        return warehouses.filter(w => w.enterpriseId === ctx.enterpriseId && (!bid || w.branchId === bid))
+   591→      }
+   592→      if (ctx.role === 'branch_admin') {
+   593→        return warehouses.filter(w => w.branchId === ctx.branchId)
+   594→      }
+   595→      // warehouse_admin sees only their warehouse
+   596→      return warehouses.filter(w => w.id === ctx.warehouseId)
+   597→    },
+   598→    findById: async (ctx: AuthContext, id: number): Promise<Warehouse | null> => {
+   599→      const w = warehouses.find(w => w.id === id)
+   600→      if (!w) return null
+   601→      if (!canAccessWarehouse(ctx, w.enterpriseId, w.branchId, w.id)) return null
+   602→      return w
+   603→    },
+   604→    create: async (ctx: AuthContext, d: Partial<Warehouse>): Promise<Warehouse> => {
+   605→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN: warehouse_admin cannot create warehouses')
+   606→      if (ctx.role === 'branch_admin') {
+   607→        if (d.branchId !== ctx.branchId) throw new Error('FORBIDDEN: Cannot create warehouse in another branch')
+   608→      }
+   609→      if (ctx.role === 'enterprise_admin') {
+   610→        if (d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN: Cannot create warehouse in another enterprise')
+   611→      }
+   612→      const w: Warehouse = { id: ++nextId, enterpriseId: d.enterpriseId!, branchId: d.branchId!, name: d.name!, code: d.code!, location: d.location || '', capacity: d.capacity || 0, managerName: d.managerName || '', isActive: d.isActive ?? true, createdAt: now(), updatedAt: now() }
+   613→      warehouses.push(w)
+   614→      persist()
+   615→      return w
+   616→    },
+   617→    update: async (ctx: AuthContext, id: number, d: Partial<Warehouse>): Promise<Warehouse> => {
+   618→      const i = warehouses.findIndex(w => w.id === id)
+   619→      if (i === -1) throw new Error('Not found')
+   620→      const w = warehouses[i]
+   621→      if (!canAccessWarehouse(ctx, w.enterpriseId, w.branchId, w.id)) throw new Error('FORBIDDEN')
+   622→      Object.assign(warehouses[i], d, { updatedAt: now() })
+   623→      persist()
+   624→      return warehouses[i]
+   625→    },
+   626→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+   627→      const i = warehouses.findIndex(w => w.id === id)
+   628→      if (i === -1) throw new Error('Not found')
+   629→      const w = warehouses[i]
+   630→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
+   631→      if (!canAccessWarehouse(ctx, w.enterpriseId, w.branchId, w.id)) throw new Error('FORBIDDEN')
+   632→      warehouses.splice(i, 1)
+   633→      persist()
+   634→    },
+   635→  },
+   636→
+   637→  // ── Users ───────────────────────────────────────────────
+   638→  users: {
+   639→    findMany: async (ctx: AuthContext, eid?: number, bid?: number): Promise<User[]> => {
+   640→      if (ctx.role === 'super_admin') {
+   641→        return users.filter(u => (!eid || u.enterpriseId === eid) && (!bid || u.branchId === bid))
+   642→      }
+   643→      if (ctx.role === 'enterprise_admin') {
+   644→        // Enterprise admin sees all users in their enterprise
+   645→        return users.filter(u => u.enterpriseId === ctx.enterpriseId && (!bid || u.branchId === bid))
+   646→      }
+   647→      if (ctx.role === 'branch_admin') {
+   648→        // Branch admin sees users in their branch only
+   649→        return users.filter(u => u.branchId === ctx.branchId)
+   650→      }
+   651→      // Warehouse admin sees only themselves
+   652→      return users.filter(u => u.id === ctx.userId)
+   653→    },
+   654→    findById: async (ctx: AuthContext, id: number): Promise<User | null> => {
+   655→      const u = users.find(u => u.id === id)
+   656→      if (!u) return null
+   657→      // Self-view is always allowed
+   658→      if (u.id === ctx.userId) return u
+   659→      // Otherwise check hierarchy
+   660→      if (ctx.role === 'super_admin') return u
+   661→      if (ctx.role === 'enterprise_admin' && u.enterpriseId === ctx.enterpriseId) return u
+   662→      if (ctx.role === 'branch_admin' && u.branchId === ctx.branchId) return u
+   663→      if (ctx.role === 'warehouse_admin' && u.id === ctx.userId) return u
+   664→      return null
+   665→    },
+   666→    create: async (ctx: AuthContext, d: Partial<User>): Promise<User> => {
+   667→      // Enforce hierarchy: you can only create users below your level
+   668→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN: warehouse_admin cannot create users')
+   669→      if (ctx.role === 'branch_admin') {
+   670→        // Branch admin can only create warehouse_admins in their branch
+   671→        if (d.role !== 'warehouse_admin') throw new Error('FORBIDDEN: branch_admin can only create warehouse_admin users')
+   672→        if (d.branchId !== ctx.branchId) throw new Error('FORBIDDEN: Cannot create user in another branch')
+   673→        if (d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN: Cannot create user in another enterprise')
+   674→      }
+   675→      if (ctx.role === 'enterprise_admin') {
+   676→        // Enterprise admin can create branch_admin and warehouse_admin in their enterprise
+   677→        if (d.role === 'super_admin') throw new Error('FORBIDDEN: Cannot create super_admin')
+   678→        if (d.role === 'enterprise_admin') throw new Error('FORBIDDEN: Cannot create peer enterprise_admin')
+   679→        if (d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN: Cannot create user in another enterprise')
+   680→      }
+   681→      const u: User = { id: ++nextId, enterpriseId: d.enterpriseId || null, branchId: d.branchId || null, warehouseId: d.warehouseId || null, username: d.username!, email: d.email!, fullName: d.fullName!, role: d.role!, isActive: d.isActive ?? true, passwordHash: d.passwordHash || 'admin123', createdAt: now(), updatedAt: now() }
+   682→      users.push(u)
+   683→      persist()
+   684→      return u
+   685→    },
+   686→    update: async (ctx: AuthContext, id: number, d: Partial<User>): Promise<User> => {
+   687→      const i = users.findIndex(u => u.id === id)
+   688→      if (i === -1) throw new Error('Not found')
+   689→      const target = users[i]
+   690→      // Self-update is allowed for non-role changes
+   691→      if (id === ctx.userId && !d.role) {
+   692→        Object.assign(users[i], d, { updatedAt: now() })
+   693→        persist()
+   694→        return users[i]
+   695→      }
+   696→      if (!canManageUser(ctx, target)) throw new Error('FORBIDDEN: Cannot manage this user')
+   697→      Object.assign(users[i], d, { updatedAt: now() })
+   698→      persist()
+   699→      return users[i]
+   700→    },
+   701→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+   702→      const i = users.findIndex(u => u.id === id)
+   703→      if (i === -1) throw new Error('Not found')
+   704→      const target = users[i]
+   705→      if (!canManageUser(ctx, target)) throw new Error('FORBIDDEN: Cannot delete this user')
+   706→      users.splice(i, 1)
+   707→      persist()
+   708→    },
+   709→  },
+   710→
+   711→  // ── Categories ──────────────────────────────────────────
+   712→  categories: {
+   713→    findMany: async (ctx: AuthContext, eid?: number): Promise<Category[]> => {
+   714→      const targetEid = eid || (ctx.role !== 'super_admin' ? ctx.enterpriseId : undefined)
+   715→      if (ctx.role === 'super_admin') return targetEid ? categories.filter(c => c.enterpriseId === targetEid) : [...categories]
+   716→      if (!ctx.enterpriseId) return []
+   717→      return categories.filter(c => c.enterpriseId === ctx.enterpriseId)
+   718→    },
+   719→    create: async (ctx: AuthContext, d: Partial<Category>): Promise<Category> => {
+   720→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
+   721→      if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+   722→      const c: Category = { id: ++nextId, enterpriseId: d.enterpriseId!, name: d.name!, description: d.description || '', createdAt: now(), updatedAt: now() }
+   723→      categories.push(c)
+   724→      persist()
+   725→      return c
+   726→    },
+   727→    update: async (ctx: AuthContext, id: number, d: Partial<Category>): Promise<Category> => {
+   728→      const i = categories.findIndex(c => c.id === id)
+   729→      if (i === -1) throw new Error('Not found')
+   730→      const c = categories[i]
+   731→      if (!canAccessEnterprise(ctx, c.enterpriseId)) throw new Error('FORBIDDEN')
+   732→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
+   733→      Object.assign(categories[i], d, { updatedAt: now() })
+   734→      persist()
+   735→      return categories[i]
+   736→    },
+   737→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+   738→      const i = categories.findIndex(c => c.id === id)
+   739→      if (i === -1) throw new Error('Not found')
+   740→      const c = categories[i]
+   741→      if (!canAccessEnterprise(ctx, c.enterpriseId)) throw new Error('FORBIDDEN')
+   742→      if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
+   743→      categories.splice(i, 1)
+   744→      persist()
+   745→    },
+   746→  },
+   747→
+   748→  // ── Suppliers ───────────────────────────────────────────
+   749→  suppliers: {
+   750→    findMany: async (ctx: AuthContext, eid?: number): Promise<Supplier[]> => {
+   751→      const targetEid = eid || (ctx.role !== 'super_admin' ? ctx.enterpriseId : undefined)
+   752→      if (ctx.role === 'super_admin') return targetEid ? suppliers.filter(s => s.enterpriseId === targetEid) : [...suppliers]
+   753→      if (!ctx.enterpriseId) return []
+   754→      return suppliers.filter(s => s.enterpriseId === ctx.enterpriseId)
+   755→    },
+   756→    create: async (ctx: AuthContext, d: Partial<Supplier>): Promise<Supplier> => {
+   757→      if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
+   758→      if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+   759→      const s: Supplier = { id: ++nextId, enterpriseId: d.enterpriseId!, name: d.name!, contactPerson: d.contactPerson || '', email: d.email || '', phone: d.phone || '', address: d.address || '', createdAt: now(), updatedAt: now() }
+   760→      suppliers.push(s)
+   761→      persist()
+   762→      return s
+   763→    },
+   764→    update: async (ctx: AuthContext, id: number, d: Partial<Supplier>): Promise<Supplier> => {
+   765→      const i = suppliers.findIndex(s => s.id === id)
+   766→      if (i === -1) throw new Error('Not found')
+   767→      if (!canAccessEnterprise(ctx, suppliers[i].enterpriseId)) throw new Error('FORBIDDEN')
+   768→      if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
+   769→      Object.assign(suppliers[i], d, { updatedAt: now() })
+   770→      persist()
+   771→      return suppliers[i]
+   772→    },
+   773→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+   774→      const i = suppliers.findIndex(s => s.id === id)
+   775→      if (i === -1) throw new Error('Not found')
+   776→      if (!canAccessEnterprise(ctx, suppliers[i].enterpriseId)) throw new Error('FORBIDDEN')
+   777→      if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
+   778→      suppliers.splice(i, 1)
+   779→      persist()
+   780→    },
+   781→  },
+   782→
+   783→  // ── Products ────────────────────────────────────────────
+   784→  products: {
+   785→    findMany: async (ctx: AuthContext, eid?: number): Promise<Product[]> => {
+   786→      const targetEid = eid || (ctx.role !== 'super_admin' ? ctx.enterpriseId : undefined)
+   787→      if (ctx.role === 'super_admin') return targetEid ? products.filter(p => p.enterpriseId === targetEid) : [...products]
+   788→      if (!ctx.enterpriseId) return []
+   789→      return products.filter(p => p.enterpriseId === ctx.enterpriseId)
+   790→    },
+   791→    findById: async (ctx: AuthContext, id: number): Promise<Product | null> => {
+   792→      const p = products.find(p => p.id === id)
+   793→      if (!p) return null
+   794→      if (!canAccessEnterprise(ctx, p.enterpriseId)) return null
+   795→      return p
+   796→    },
+   797→    create: async (ctx: AuthContext, d: Partial<Product>): Promise<Product> => {
+   798→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
+   799→      if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+   800→      const p: Product = { id: ++nextId, enterpriseId: d.enterpriseId!, name: d.name!, sku: d.sku!, description: d.description || '', categoryId: d.categoryId || null, price: d.price || 0, cost: d.cost || 0, unit: d.unit || 'pcs', reorderLevel: d.reorderLevel || 0, isActive: d.isActive ?? true, createdAt: now(), updatedAt: now() }
+   801→      products.push(p)
+   802→      // Audit log
+   803→      auditLogs.push({ id: ++nextId, userId: ctx.userId, enterpriseId: d.enterpriseId!, action: 'product.create', entity: 'Product', entityId: p.id, details: `Created product: ${d.name} (${d.sku})`, createdAt: now() })
+   804→      persist()
+   805→      return p
+   806→    },
+   807→    update: async (ctx: AuthContext, id: number, d: Partial<Product>): Promise<Product> => {
+   808→      const i = products.findIndex(p => p.id === id)
+   809→      if (i === -1) throw new Error('Not found')
+   810→      if (!canAccessEnterprise(ctx, products[i].enterpriseId)) throw new Error('FORBIDDEN')
+   811→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
+   812→      Object.assign(products[i], d, { updatedAt: now() })
+   813→      persist()
+   814→      return products[i]
+   815→    },
+   816→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+   817→      const i = products.findIndex(p => p.id === id)
+   818→      if (i === -1) throw new Error('Not found')
+   819→      if (!canAccessEnterprise(ctx, products[i].enterpriseId)) throw new Error('FORBIDDEN')
+   820→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
+   821→      products.splice(i, 1)
+   822→      persist()
+   823→    },
+   824→  },
+   825→
+   826→  // ── Stock ───────────────────────────────────────────────
+   827→  stock: {
+   828→    findMany: async (ctx: AuthContext): Promise<Stock[]> => {
+   829→      if (ctx.role === 'super_admin') return [...stock]
+   830→      // Get warehouse IDs accessible to this user
+   831→      const accessibleWhIds = warehouses
+   832→        .filter(w => {
+   833→          if (ctx.role === 'enterprise_admin') return w.enterpriseId === ctx.enterpriseId
+   834→          if (ctx.role === 'branch_admin') return w.branchId === ctx.branchId
+   835→          if (ctx.role === 'warehouse_admin') return w.id === ctx.warehouseId
+   836→          return false
+   837→        })
+   838→        .map(w => w.id)
+   839→      return stock.filter(s => accessibleWhIds.includes(s.warehouseId))
+   840→    },
+   841→    /** Stock-in: add quantity to a product in a warehouse */
+   842→    stockIn: async (ctx: AuthContext, d: { productId: number; warehouseId: number; quantity: number }): Promise<Stock> => {
+   843→      const wh = warehouses.find(w => w.id === d.warehouseId)
+   844→      if (!wh) throw new Error(`Warehouse #${d.warehouseId} not found`)
+   845→      const prod = products.find(p => p.id === d.productId)
+   846→      if (!prod) throw new Error(`Product #${d.productId} not found. Register the product first before adding stock.`)
+   847→      if (ctx.role === 'warehouse_admin' && ctx.warehouseId !== d.warehouseId) throw new Error('FORBIDDEN: Cannot add stock in another warehouse')
+   848→      if (ctx.role === 'enterprise_admin' && wh.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+   849→      if (ctx.role === 'branch_admin' && wh.branchId !== ctx.branchId) throw new Error('FORBIDDEN')
+   850→      if (d.quantity <= 0) throw new Error('Quantity must be positive')
+   851→      const i = stock.findIndex(s => s.productId === d.productId && s.warehouseId === d.warehouseId)
+   852→      let result: Stock
+   853→      if (i !== -1) { stock[i].quantity += d.quantity; stock[i].updatedAt = now(); result = stock[i] }
+   854→      else { result = { id: ++nextId, productId: d.productId, warehouseId: d.warehouseId, quantity: d.quantity, createdAt: now(), updatedAt: now() }; stock.push(result) }
+   855→      // Audit log (prod already defined above)
+   856→      const whName = wh.name
+   857→      auditLogs.push({ id: ++nextId, userId: ctx.userId, enterpriseId: wh.enterpriseId, action: 'stock.in', entity: 'Stock', entityId: result.id, details: `Stock in: +${d.quantity} ${prod?.unit || 'pcs'} of ${prod?.name || `Product #${d.productId}`} to ${whName}. New total: ${result.quantity}`, createdAt: now() })
+   858→      persist()
+   859→      return result
+   860→    },
+   861→    adjust: async (ctx: AuthContext, d: { productId: number; warehouseId: number; delta: number }): Promise<Stock> => {
+   862→      // Check warehouse access
+   863→      const wh = warehouses.find(w => w.id === d.warehouseId)
+   864→      if (!wh) throw new Error('Warehouse not found')
+   865→      if (ctx.role === 'warehouse_admin' && ctx.warehouseId !== d.warehouseId) throw new Error('FORBIDDEN: Cannot adjust stock in another warehouse')
+   866→      if (ctx.role === 'enterprise_admin' && wh.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+   867→      if (ctx.role === 'branch_admin' && wh.branchId !== ctx.branchId) throw new Error('FORBIDDEN')
+   868→      const i = stock.findIndex(s => s.productId === d.productId && s.warehouseId === d.warehouseId)
+   869→      let result: Stock
+   870→      if (i !== -1) { stock[i].quantity = Math.max(0, stock[i].quantity + d.delta); stock[i].updatedAt = now(); result = stock[i] }
+   871→      else { result = { id: ++nextId, productId: d.productId, warehouseId: d.warehouseId, quantity: Math.max(0, d.delta), createdAt: now(), updatedAt: now() }; stock.push(result) }
+   872→      // Audit log
+   873→      const prod = products.find(p => p.id === d.productId)
+   874→      auditLogs.push({ id: ++nextId, userId: ctx.userId, enterpriseId: wh.enterpriseId, action: 'stock.adjust', entity: 'Stock', entityId: result.id, details: `Stock adjust: ${d.delta > 0 ? '+' : ''}${d.delta} ${prod?.unit || 'pcs'} of ${prod?.name || `Product #${d.productId}`} in ${wh.name}. New total: ${result.quantity}`, createdAt: now() })
+   875→      persist()
+   876→      return result
+   877→    },
+   878→  },
+   879→
+   880→  // ── Orders ──────────────────────────────────────────────
+   881→  orders: {
+   882→    findMany: async (ctx: AuthContext, eid?: number): Promise<Order[]> => {
+   883→      if (ctx.role === 'super_admin') return eid ? orders.filter(o => o.enterpriseId === eid) : [...orders]
+   884→      if (!ctx.enterpriseId) return []
+   885→      if (ctx.role === 'enterprise_admin') return orders.filter(o => o.enterpriseId === ctx.enterpriseId)
+   886→      if (ctx.role === 'branch_admin') {
+   887→        // Branch admin sees orders for warehouses in their branch
+   888→        const whIds = warehouses.filter(w => w.branchId === ctx.branchId).map(w => w.id)
+   889→        return orders.filter(o => o.enterpriseId === ctx.enterpriseId && o.warehouseId && whIds.includes(o.warehouseId))
+   890→      }
+   891→      // Warehouse admin sees only their warehouse orders
+   892→      return orders.filter(o => o.warehouseId === ctx.warehouseId)
+   893→    },
+   894→    findById: async (ctx: AuthContext, id: number): Promise<Order | null> => {
+   895→      const o = orders.find(o => o.id === id)
+   896→      if (!o) return null
+   897→      if (ctx.role === 'super_admin') return o
+   898→      if (o.enterpriseId !== ctx.enterpriseId) return null
+   899→      if (ctx.role === 'branch_admin') {
+   900→        const whIds = warehouses.filter(w => w.branchId === ctx.branchId).map(w => w.id)
+   901→        if (!o.warehouseId || !whIds.includes(o.warehouseId)) return null
+   902→      }
+   903→      if (ctx.role === 'warehouse_admin' && o.warehouseId !== ctx.warehouseId) return null
+   904→      return o
+   905→    },
+   906→    create: async (ctx: AuthContext, d: Partial<Order>): Promise<Order> => {
+   907→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN: warehouse_admin cannot create orders in this context')
+   908→      if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+   909→      const o: Order = { id: ++nextId, enterpriseId: d.enterpriseId!, type: d.type!, supplierId: d.supplierId || null, warehouseId: d.warehouseId || null, status: 'pending', totalAmount: 0, notes: d.notes || '', createdBy: ctx.userId, createdAt: now(), updatedAt: now() }
+   910→      orders.push(o)
+   911→      persist()
+   912→      return o
+   913→    },
+   914→    update: async (ctx: AuthContext, id: number, d: Partial<Order>): Promise<Order> => {
+   915→      const i = orders.findIndex(o => o.id === id)
+   916→      if (i === -1) throw new Error('Not found')
+   917→      const o = orders[i]
+   918→      if (ctx.role === 'super_admin') { Object.assign(orders[i], d, { updatedAt: now() }); persist(); return orders[i] }
+   919→      if (o.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+   920→      Object.assign(orders[i], d, { updatedAt: now() })
+   921→      persist()
+   922→      return orders[i]
+   923→    },
+   924→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+   925→      const i = orders.findIndex(o => o.id === id)
+   926→      if (i === -1) throw new Error('Not found')
+   927→      const o = orders[i]
+   928→      if (ctx.role !== 'super_admin' && o.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+   929→      orders.splice(i, 1)
+   930→      persist()
+   931→    },
+   932→  },
+   933→
+   934→  // ── Order Items ─────────────────────────────────────────
+   935→  orderItems: {
+   936→    findByOrder: async (ctx: AuthContext, orderId: number): Promise<OrderItem[]> => {
+   937→      const o = orders.find(o => o.id === orderId)
+   938→      if (!o) return []
+   939→      // Verify order access
+   940→      if (ctx.role !== 'super_admin' && o.enterpriseId !== ctx.enterpriseId) return []
+   941→      return orderItems.filter(oi => oi.orderId === orderId)
+   942→    },
+   943→    create: async (ctx: AuthContext, d: Partial<OrderItem>): Promise<OrderItem> => {
+   944→      const oi: OrderItem = { id: ++nextId, orderId: d.orderId!, productId: d.productId!, warehouseId: d.warehouseId!, quantity: d.quantity!, unitPrice: d.unitPrice!, createdAt: now(), updatedAt: now() }
+   945→      orderItems.push(oi)
+   946→      persist()
+   947→      return oi
+   948→    },
+   949→  },
+   950→
+   951→  // ── Audit ───────────────────────────────────────────────
+   952→  audit: {
+   953→    findMany: async (ctx: AuthContext, limit = 50): Promise<AuditLog[]> => {
+   954→      if (ctx.role === 'super_admin') return [...auditLogs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, limit)
+   955→      if (!ctx.enterpriseId) return []
+   956→      return auditLogs.filter(a => a.enterpriseId === ctx.enterpriseId).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, limit)
+   957→    },
+   958→    create: async (ctx: AuthContext, d: Partial<AuditLog>): Promise<AuditLog> => {
+   959→      const a: AuditLog = { id: ++nextId, userId: ctx.userId, enterpriseId: ctx.enterpriseId, action: d.action!, entity: d.entity!, entityId: d.entityId || null, details: d.details || '', createdAt: now() }
+   960→      auditLogs.push(a)
+   961→      persist()
+   962→      return a
+   963→    },
+   964→  },
+   965→
+   966→  // ── Dashboard Stats ─────────────────────────────────────
+   967→  stats: {
+   968→    getDashboard: async (ctx: AuthContext) => {
+   969→      const eid = ctx.role === 'super_admin' ? undefined : ctx.enterpriseId
+   970→      const eProds = eid ? products.filter(p => p.enterpriseId === eid) : products
+   971→      const eOrders = eid ? orders.filter(o => o.enterpriseId === eid) : orders
+   972→      const eBranches = eid ? branches.filter(b => b.enterpriseId === eid) : branches
+   973→      const eWarehouses = eid ? warehouses.filter(w => w.enterpriseId === eid) : warehouses
+   974→      const eUsers = eid ? users.filter(u => u.enterpriseId === eid) : users
+   975→
+   976→      // Get accessible warehouse IDs
+   977→      let accessibleWhIds: number[]
+   978→      if (ctx.role === 'super_admin' || ctx.role === 'enterprise_admin') {
+   979→        accessibleWhIds = eWarehouses.map(w => w.id)
+   980→      } else if (ctx.role === 'branch_admin') {
+   981→        accessibleWhIds = warehouses.filter(w => w.branchId === ctx.branchId).map(w => w.id)
+   982→      } else {
+   983→        accessibleWhIds = ctx.warehouseId ? [ctx.warehouseId] : []
+   984→      }
+   985→
+   986→      const accessibleStock = stock.filter(s => accessibleWhIds.includes(s.warehouseId))
+   987→      const totalStockValue = accessibleStock.reduce((sum, s) => {
+   988→        const p = products.find(pp => pp.id === s.productId)
+   989→        return sum + (p ? s.quantity * p.price : 0)
+   990→      }, 0)
+   991→
+   992→      const lowStock = eProds.filter(p => {
+   993→        if (!p.isActive) return false
+   994→        const totalQty = accessibleStock.filter(s => s.productId === p.id).reduce((s, st) => s + st.quantity, 0)
+   995→        return totalQty <= p.reorderLevel
+   996→      })
+   997→
+   998→      return {
+   999→        enterpriseCount: ctx.role === 'super_admin' ? enterprises.length : 1,
+  1000→        branchCount: eBranches.length,
+  1001→        warehouseCount: eWarehouses.length,
+  1002→        userCount: eUsers.length,
+  1003→        productCount: eProds.length,
+  1004→        orderCount: eOrders.length,
+  1005→        pendingOrderCount: eOrders.filter(o => o.status === 'pending').length,
+  1006→        totalStockValue,
+  1007→        lowStockProducts: lowStock.map(p => ({
+  1008→          id: p.id, name: p.name, sku: p.sku, reorderLevel: p.reorderLevel,
+  1009→          totalQty: accessibleStock.filter(s => s.productId === p.id).reduce((s, st) => s + st.quantity, 0)
+  1010→        })),
+  1011→      }
+  1012→    },
+  1013→  },
+  1014→
+  1015→  // ── Batches ────────────────────────────────────────────────
+  1016→  batches: {
+  1017→    findMany: async (ctx: AuthContext, eid?: number, wid?: number): Promise<Batch[]> => {
+  1018→      const targetEid = eid || (ctx.role !== 'super_admin' ? ctx.enterpriseId : undefined)
+  1019→      let result = batches
+  1020→      if (ctx.role === 'super_admin') {
+  1021→        if (targetEid) result = result.filter(b => b.enterpriseId === targetEid)
+  1022→        if (wid) result = result.filter(b => b.warehouseId === wid)
+  1023→        return [...result]
+  1024→      }
+  1025→      if (!ctx.enterpriseId) return []
+  1026→      result = result.filter(b => b.enterpriseId === ctx.enterpriseId)
+  1027→      if (ctx.role === 'branch_admin') {
+  1028→        const whIds = warehouses.filter(w => w.branchId === ctx.branchId).map(w => w.id)
+  1029→        result = result.filter(b => whIds.includes(b.warehouseId))
+  1030→      }
+  1031→      if (ctx.role === 'warehouse_admin') {
+  1032→        result = result.filter(b => b.warehouseId === ctx.warehouseId)
+  1033→      }
+  1034→      if (wid) result = result.filter(b => b.warehouseId === wid)
+  1035→      return result
+  1036→    },
+  1037→    findById: async (ctx: AuthContext, id: number): Promise<Batch | null> => {
+  1038→      const b = batches.find(b => b.id === id)
+  1039→      if (!b) return null
+  1040→      if (ctx.role !== 'super_admin' && b.enterpriseId !== ctx.enterpriseId) return null
+  1041→      return b
+  1042→    },
+  1043→    create: async (ctx: AuthContext, d: Partial<Batch>): Promise<Batch> => {
+  1044→      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
+  1045→      if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1046→      const b: Batch = {
+  1047→        id: ++nextId, enterpriseId: d.enterpriseId!, warehouseId: d.warehouseId!,
+  1048→        batchCode: d.batchCode || `BATCH-${Date.now()}`, supplierId: d.supplierId || null,
+  1049→        personName: d.personName || '', personPhone: d.personPhone || '',
+  1050→        personEmail: d.personEmail || '', notes: d.notes || '',
+  1051→        status: 'open', entries: [], createdAt: now(), updatedAt: now(),
+  1052→      }
+  1053→      batches.push(b)
+  1054→      persist()
+  1055→      return b
+  1056→    },
+  1057→    update: async (ctx: AuthContext, id: number, d: Partial<Batch>): Promise<Batch> => {
+  1058→      const i = batches.findIndex(b => b.id === id)
+  1059→      if (i === -1) throw new Error('Not found')
+  1060→      if (ctx.role !== 'super_admin' && batches[i].enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1061→      Object.assign(batches[i], d, { updatedAt: now() })
+  1062→      persist()
+  1063→      return batches[i]
+  1064→    },
+  1065→    addEntry: async (ctx: AuthContext, batchId: number, d: Partial<BatchEntry>): Promise<BatchEntry> => {
+  1066→      const b = batches.find(b => b.id === batchId)
+  1067→      if (!b) throw new Error(`Batch #${batchId} not found. It may have been deleted or the ID is invalid.`)
+  1068→      if (b.status !== 'open') throw new Error(`Cannot add entries to a ${b.status} batch. Only open batches can receive entries.`)
+  1069→      if (ctx.role !== 'super_admin' && b.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1070→      if (!d.productId) throw new Error('Product is required for batch entry')
+  1071→      if (!d.warehouseId) throw new Error('Warehouse is required for batch entry')
+  1072→      const prod = products.find(p => p.id === d.productId)
+  1073→      if (!prod) throw new Error(`Product #${d.productId} not found`)
+  1074→      const wh = warehouses.find(w => w.id === d.warehouseId)
+  1075→      if (!wh) throw new Error(`Warehouse #${d.warehouseId} not found`)
+  1076→      const qty = d.quantity || 0
+  1077→      if (qty <= 0) throw new Error('Quantity must be positive')
+  1078→      const e: BatchEntry = {
+  1079→        id: ++nextId, batchId, productId: d.productId!, warehouseId: d.warehouseId!,
+  1080→        quantity: qty, unit: d.unit || 'pcs', costPerUnit: d.costPerUnit || 0,
+  1081→        notes: d.notes || '', createdAt: now(), updatedAt: now(),
+  1082→      }
+  1083→      b.entries.push(e)
+  1084→      b.updatedAt = now()
+  1085→      // Immediately update stock: batch entry = stock-in
+  1086→      const si = stock.findIndex(s => s.productId === d.productId! && s.warehouseId === d.warehouseId!)
+  1087→      if (si !== -1) {
+  1088→        stock[si].quantity += qty
+  1089→        stock[si].updatedAt = now()
+  1090→      } else {
+  1091→        const s: Stock = { id: ++nextId, productId: d.productId!, warehouseId: d.warehouseId!, quantity: qty, createdAt: now(), updatedAt: now() }
+  1092→        stock.push(s)
+  1093→      }
+  1094→      // Audit log for batch entry (prod already defined above)
+  1095→      auditLogs.push({ id: ++nextId, userId: ctx.userId, enterpriseId: b.enterpriseId, action: 'batch.add_entry', entity: 'BatchEntry', entityId: e.id, details: `Batch ${b.batchCode}: Added ${qty} ${d.unit || 'pcs'} of ${prod?.name || `Product #${d.productId}`}. Stock updated.`, createdAt: now() })
+  1096→      persist()
+  1097→      return e
+  1098→    },
+  1099→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+  1100→      const i = batches.findIndex(b => b.id === id)
+  1101→      if (i === -1) throw new Error('Not found')
+  1102→      if (ctx.role !== 'super_admin' && batches[i].enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1103→      batches.splice(i, 1)
+  1104→      persist()
+  1105→    },
+  1106→  },
+  1107→
+  1108→  // ── Stock Out Recorders ────────────────────────────────────
+  1109→  stockOut: {
+  1110→    findMany: async (ctx: AuthContext, eid?: number, wid?: number): Promise<StockOutRecorder[]> => {
+  1111→      const targetEid = eid || (ctx.role !== 'super_admin' ? ctx.enterpriseId : undefined)
+  1112→      let result = stockOutRecorders
+  1113→      if (ctx.role === 'super_admin') {
+  1114→        if (targetEid) result = result.filter(r => r.enterpriseId === targetEid)
+  1115→        if (wid) result = result.filter(r => r.warehouseId === wid)
+  1116→        return [...result]
+  1117→      }
+  1118→      if (!ctx.enterpriseId) return []
+  1119→      result = result.filter(r => r.enterpriseId === ctx.enterpriseId)
+  1120→      if (ctx.role === 'branch_admin') {
+  1121→        const whIds = warehouses.filter(w => w.branchId === ctx.branchId).map(w => w.id)
+  1122→        result = result.filter(r => whIds.includes(r.warehouseId))
+  1123→      }
+  1124→      if (ctx.role === 'warehouse_admin') {
+  1125→        result = result.filter(r => r.warehouseId === ctx.warehouseId)
+  1126→      }
+  1127→      if (wid) result = result.filter(r => r.warehouseId === wid)
+  1128→      return result
+  1129→    },
+  1130→    findById: async (ctx: AuthContext, id: number): Promise<StockOutRecorder | null> => {
+  1131→      const r = stockOutRecorders.find(r => r.id === id)
+  1132→      if (!r) return null
+  1133→      if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) return null
+  1134→      return r
+  1135→    },
+  1136→    create: async (ctx: AuthContext, d: Partial<StockOutRecorder>): Promise<StockOutRecorder> => {
+  1137→      if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1138→      const r: StockOutRecorder = {
+  1139→        id: ++nextId, enterpriseId: d.enterpriseId!, warehouseId: d.warehouseId!,
+  1140→        recorderCode: d.recorderCode || `OUT-${Date.now()}`,
+  1141→        personName: d.personName || '', personPhone: d.personPhone || '',
+  1142→        personEmail: d.personEmail || '', personAddress: d.personAddress || '',
+  1143→        notes: d.notes || '',
+  1144→        status: 'draft', items: [],
+  1145→        createdBy: ctx.userId, createdAt: now(), updatedAt: now(),
+  1146→      }
+  1147→      stockOutRecorders.push(r)
+  1148→      persist()
+  1149→      return r
+  1150→    },
+  1151→    update: async (ctx: AuthContext, id: number, d: Partial<StockOutRecorder>): Promise<StockOutRecorder> => {
+  1152→      const i = stockOutRecorders.findIndex(r => r.id === id)
+  1153→      if (i === -1) throw new Error('Not found')
+  1154→      if (ctx.role !== 'super_admin' && stockOutRecorders[i].enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1155→      Object.assign(stockOutRecorders[i], d, { updatedAt: now() })
+  1156→      persist()
+  1157→      return stockOutRecorders[i]
+  1158→    },
+  1159→    addItem: async (ctx: AuthContext, recorderId: number, d: Partial<StockOutItem>): Promise<StockOutItem> => {
+  1160→      const r = stockOutRecorders.find(r => r.id === recorderId)
+  1161→      if (!r) throw new Error(`Stock-out recorder #${recorderId} not found. It may have been deleted.`)
+  1162→      if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1163→      const qty = d.quantity || 0
+  1164→      if (qty <= 0) throw new Error('Quantity must be positive')
+  1165→      if (!d.productId) throw new Error('Product is required')
+  1166→      if (!d.warehouseId) throw new Error('Warehouse is required')
+  1167→      // Check and deduct stock
+  1168→      const si = stock.findIndex(s => s.productId === d.productId! && s.warehouseId === d.warehouseId!)
+  1169→      if (si === -1) {
+  1170→        const prod = products.find(p => p.id === d.productId)
+  1171→        const wh = warehouses.find(w => w.id === d.warehouseId)
+  1172→        throw new Error(`No stock found for ${prod?.name || `product #${d.productId}`} in ${wh?.name || `warehouse #${d.warehouseId}`}. Add stock first before stock-out.`)
+  1173→      }
+  1174→      if (stock[si].quantity < qty) throw new Error(`Insufficient stock: only ${stock[si].quantity} available for ${products.find(p=>p.id===d.productId)?.name||`product #${d.productId}`}, requested ${qty}`)
+  1175→      stock[si].quantity -= qty
+  1176→      stock[si].updatedAt = now()
+  1177→      const item: StockOutItem = {
+  1178→        id: ++nextId, recorderId, productId: d.productId!, warehouseId: d.warehouseId!,
+  1179→        quantity: qty, unit: d.unit || 'pcs',
+  1180→        isReturnable: d.isReturnable ?? false, returnDeadline: d.returnDeadline || null,
+  1181→        notes: d.notes || '', createdAt: now(),
+  1182→      }
+  1183→      r.items.push(item)
+  1184→      r.updatedAt = now()
+  1185→      // Audit log
+  1186→      const prod = products.find(p => p.id === d.productId!)
+  1187→      auditLogs.push({ id: ++nextId, userId: ctx.userId, enterpriseId: r.enterpriseId, action: 'stock_out.add_item', entity: 'StockOutItem', entityId: item.id, details: `Stock out ${qty} ${d.unit || 'pcs'} of ${prod?.name || `Product #${d.productId}`} from warehouse #${d.warehouseId} (recorder #${recorderId}). Stock was ${stock[si].quantity + qty}, now ${stock[si].quantity}`, createdAt: now() })
+  1188→      persist()
+  1189→      return item
+  1190→    },
+  1191→    /** Remove a stock-out item and RESTORE the deducted stock */
+  1192→    removeItem: async (ctx: AuthContext, recorderId: number, itemId: number): Promise<void> => {
+  1193→      const r = stockOutRecorders.find(r => r.id === recorderId)
+  1194→      if (!r) throw new Error(`Stock-out recorder #${recorderId} not found`)
+  1195→      if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1196→      const itemIdx = r.items.findIndex(i => i.id === itemId)
+  1197→      if (itemIdx === -1) throw new Error(`Item #${itemId} not found in recorder #${recorderId}`)
+  1198→      const item = r.items[itemIdx]
+  1199→      const prod = products.find(p => p.id === item.productId)
+  1200→      // Restore the stock that was deducted
+  1201→      const si = stock.findIndex(s => s.productId === item.productId && s.warehouseId === item.warehouseId)
+  1202→      if (si !== -1) {
+  1203→        stock[si].quantity += item.quantity
+  1204→        stock[si].updatedAt = now()
+  1205→      } else {
+  1206→        // If stock entry was deleted somehow, create it back
+  1207→        stock.push({ id: ++nextId, productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, createdAt: now(), updatedAt: now() })
+  1208→      }
+  1209→      r.items.splice(itemIdx, 1)
+  1210→      r.updatedAt = now()
+  1211→      // Audit log
+  1212→      auditLogs.push({ id: ++nextId, userId: ctx.userId, enterpriseId: r.enterpriseId, action: 'stock_out.remove_item', entity: 'StockOutItem', entityId: itemId, details: `Removed stock-out item: restored ${item.quantity} ${item.unit} of ${prod?.name || `Product #${item.productId}`} to warehouse #${item.warehouseId}. Stock restored.`, createdAt: now() })
+  1213→      persist()
+  1214→    },
+  1215→    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+  1216→      const i = stockOutRecorders.findIndex(r => r.id === id)
+  1217→      if (i === -1) throw new Error(`Stock-out recorder #${id} not found`)
+  1218→      if (ctx.role !== 'super_admin' && stockOutRecorders[i].enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+  1219→      const r = stockOutRecorders[i]
+  1220→      // Restore stock for all items in the recorder being deleted
+  1221→      // (Unlike cancellation, deletion implies the recorder was made in error)
+  1222→      for (const item of r.items) {
+  1223→        const si = stock.findIndex(s => s.productId === item.productId && s.warehouseId === item.warehouseId)
+  1224→        if (si !== -1) {
+  1225→          stock[si].quantity += item.quantity
+  1226→          stock[si].updatedAt = now()
+  1227→        } else {
+  1228→          stock.push({ id: ++nextId, productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, createdAt: now(), updatedAt: now() })
+  1229→        }
+  1230→      }
+  1231→      if (r.items.length > 0) {
+  1232→        auditLogs.push({ id: ++nextId, userId: ctx.userId, enterpriseId: r.enterpriseId, action: 'stock_out.delete_recorder', entity: 'StockOutRecorder', entityId: id, details: `Deleted recorder ${r.recorderCode} and restored ${r.items.length} item(s) to stock`, createdAt: now() })
+  1233→      }
+  1234→      stockOutRecorders.splice(i, 1)
+  1235→      persist()
+  1236→    },
+  1237→  },
+  1238→}
+  1239→
+  1240→// Re-export scoping helpers for use in API routes
+  1241→export { canAccessEnterprise, canAccessBranch, canAccessWarehouse, canManageUser }
+  1242→
+  1243→// ─── Load persisted data on startup ────────────────────────
+  1244→loadPersisted()
+  1245→

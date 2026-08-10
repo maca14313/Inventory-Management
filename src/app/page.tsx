@@ -14,14 +14,20 @@ import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   LayoutDashboard, Package, Warehouse as WHIcon, Users, ShoppingCart, Tag,
   Plus, Trash2, Pencil, Search, AlertTriangle, TrendingUp,
   Box, Truck, Building2, GitBranch, Shield, Globe, LogOut, Loader2,
   Key, Lock, ToggleLeft, ToggleRight, Menu, X, ChevronDown, ChevronRight,
-  ClipboardList, ArrowUpFromLine, RotateCcw, Calendar, Check, Eye, LayoutGrid, List,
+  ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw, Calendar, Check, Eye, LayoutGrid, List,
   Sun, Moon, Phone, Mail, MapPin, FileText, Hash, ChevronLeft, Sparkles, ChevronRight as ChevronRightIcon, SkipBack, SkipForward, Printer, Filter, CalendarDays,
+  MessageSquare, Send,
 } from 'lucide-react'
+import {
+  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
+  Tooltip as RTooltip, ResponsiveContainer, Legend, LineChart, Line,
+} from 'recharts'
 import { toast } from '@/hooks/use-toast'
 import { t, type Locale, locales } from '@/lib/i18n'
 import {
@@ -40,8 +46,10 @@ const SORTED_MEASUREMENTS = [...MEASUREMENTS].sort((a, b) => a.localeCompare(b))
 
 const ICONS: Record<string, React.ComponentType<any>> = {
   LayoutDashboard, Package, Warehouse: WHIcon, Users, ShoppingCart, Tag,
-  Box, Truck, Building2, GitBranch, Shield, Globe, ClipboardList, ArrowUpFromLine,
+  Box, Truck, Building2, GitBranch, Shield, Globe, ArrowUpFromLine, ArrowDownToLine, Layers,
 }
+
+const PIE_COLORS = ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316']
 
 interface Enterprise { id: number; name: string; code: string; contactEmail: string; contactPhone: string; address: string; isActive: boolean; maxBranches: number; maxWarehouses: number; maxUsers: number }
 interface Branch { id: number; enterpriseId: number; name: string; code: string; location: string; managerName: string; managerEmail: string; isActive: boolean }
@@ -54,11 +62,13 @@ interface StockItem { id: number; productId: number; warehouseId: number; quanti
 interface Order { id: number; enterpriseId: number; type: 'purchase' | 'sales'; supplierId: number | null; warehouseId: number | null; status: string; totalAmount: number; notes: string; createdBy: number | null }
 interface AuditEntry { id: number; userId: number | null; enterpriseId: number | null; action: string; entity: string; entityId: number | null; details: string; createdAt: string }
 interface Feature { id: number; enterpriseId: number; feature: string; enabled: boolean }
-interface BatchEntry { id: number; batchId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }
-interface Batch { id: number; enterpriseId: number; warehouseId: number; batchCode: string; supplierId: number | null; personName: string; personPhone: string; personEmail: string; notes: string; status: string; entries: BatchEntry[] }
+interface Lot { id: number; lotNumber: string; productId: number; warehouseId: number; quantity: number; remainingQty: number; unit: string; costPerUnit: number; supplierName: string | null; source: string; sourceRef: string | null; notes: string | null; receivedDate: string; closedAt: string | null; status: string; createdAt: string }
+interface StockInItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; createdAt: string }
+interface StockInRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockInItem[]; createdAt: string }
 interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string }
-interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[] }
-interface DashboardStats { enterpriseCount: number; branchCount: number; warehouseCount: number; userCount: number; productCount: number; orderCount: number; pendingOrderCount: number; totalStockValue: number; lowStockProducts: { id: number; name: string; sku: string; reorderLevel: number; totalQty: number }[] }
+interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[]; createdAt: string }
+interface DashboardStats { enterpriseCount: number; branchCount: number; warehouseCount: number; userCount: number; productCount: number; orderCount: number; pendingOrderCount: number; totalStockValue: number; lowStockProducts: { id: number; name: string; sku: string; reorderLevel: number; totalQty: number }[]; totalLots: number; openLots: number; stockInCount: number; stockOutCount: number }
+interface AnalyticsData { stockByWarehouse: { name: string; value: number }[]; stockByCategory: { name: string; value: number }[]; topProducts: { name: string; quantity: number; value: number }[]; recentActivity: { id: number; action: string; entity: string; entityId: number | null; details: string; createdAt: string; userName: string | null }[] }
 
 // Custom Alphabetical Month-Year Date Picker
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -161,23 +171,52 @@ export default function IMSApp() {
   const [categories, setCategories] = useState<Category[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [products, setProducts] = useState<Product[]>([])
+  // Task 5: Products + Stock table pagination & search state
+  const [productSearch, setProductSearch] = useState('')
+  const [productPage, setProductPage] = useState(1)
+  const PRODUCTS_PER_PAGE = 10
+  const [stockPage, setStockPage] = useState(1)
+  const STOCK_PER_PAGE = 10
   const [stockData, setStockData] = useState<StockItem[]>([])
   const [orders, setOrders] = useState<Order[]>([])
   const [auditData, setAuditData] = useState<AuditEntry[]>([])
   const [features, setFeatures] = useState<Feature[]>([])
-  const [batchData, setBatchData] = useState<Batch[]>([])
   const [stockOutData, setStockOutData] = useState<StockOutRecorder[]>([])
+  const [stockInData, setStockInData] = useState<StockInRecorder[]>([])
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null)
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Lots dialog state (Change 2)
+  const [lotsData, setLotsData] = useState<Lot[]>([])
+  const [lotsDialog, setLotsDialog] = useState<{ open: boolean; productId: number; warehouseId: number; productName: string }>({ open: false, productId: 0, warehouseId: 0, productName: '' })
+  const [lotsPage, setLotsPage] = useState(1)
+  const [lotsLoading, setLotsLoading] = useState(false)
+  const LOTS_PER_PAGE = 8
+
+  // Products Tab 2: multi-item register rows
+  const [registerRows, setRegisterRows] = useState<{ name: string; sku: string; categoryId: number | null; unit: string; price: number; cost: number; reorderLevel: number; quantity: number; costPerUnit: number; supplierName: string; notes: string }[]>([])
+  const [registerWarehouseId, setRegisterWarehouseId] = useState<number | null>(null)
+  const [registerSubmitting, setRegisterSubmitting] = useState(false)
+
+  // AI Assistant widget
+  const [aiChat, setAiChat] = useState<{ open: boolean; messages: { role: 'user' | 'assistant'; content: string }[]; input: string; loading: boolean }>({
+    open: false,
+    messages: [{ role: 'assistant', content: 'Hello! I can help you with inventory questions. Ask me about stock, products, or warehouses.' }],
+    input: '',
+    loading: false,
+  })
 
   const [dlgOpen, setDlgOpen] = useState(false)
   const [dlgType, setDlgType] = useState('')
   const [dlgData, setDlgData] = useState<any>({})
   const [dlgEdit, setDlgEdit] = useState<any>(null)
   const [stockOutMode, setStockOutMode] = useState<'pic' | 'table'>('pic')
-  const [expandedBatch, setExpandedBatch] = useState<number | null>(null)
+  const [stockInMode, setStockInMode] = useState<'pic' | 'table'>('pic')
   const [expandedOut, setExpandedOut] = useState<number | null>(null)
   const [expandingOutId, setExpandingOutId] = useState<number | null>(null)
+  const [expandedIn, setExpandedIn] = useState<number | null>(null)
+  const [expandingInId, setExpandingInId] = useState<number | null>(null)
 
   // Stock Out Pick mode: search + per-product inputs
   const [stockOutSearch, setStockOutSearch] = useState('')
@@ -271,6 +310,115 @@ export default function IMSApp() {
     return s ? s.quantity : 0
   }
 
+  // ─── Stock In state (mirrors Stock Out, emerald theme) ─────────────
+  const [stockInSearch, setStockInSearch] = useState('')
+  const [stockSearch, setStockSearch] = useState('')
+  const [stockInPickInputs, setStockInPickInputs] = useState<Record<string, { productId: number; qty: number; unit: string; costPerUnit: number; notes: string }>>({})
+  const [stockInTableRowInputs, setStockInTableRowInputs] = useState<Record<string, { qty: number; unit: string; costPerUnit: number; notes: string }>>({})
+  const [stockInItemPage, setStockInItemPage] = useState(1)
+  const [stockInProductPage, setStockInProductPage] = useState(1)
+  const STOCK_IN_ITEMS_PER_PAGE = 10
+  const STOCK_IN_PRODUCTS_PER_PAGE = 8
+  const [stockInPickSelectPage, setStockInPickSelectPage] = useState(1)
+  const STOCK_IN_PICK_SELECT_PER_PAGE = 20
+  const [stockInRecPage, setStockInRecPage] = useState(1)
+  const STOCK_IN_REC_PER_PAGE = 5
+  const [stockInFilterDateFrom, setStockInFilterDateFrom] = useState('')
+  const [stockInFilterDateTo, setStockInFilterDateTo] = useState('')
+  const [stockInFilterStatus, setStockInFilterStatus] = useState('')
+  const [stockInFilterPerson, setStockInFilterPerson] = useState('')
+  const [pendingStockInItems, setPendingStockInItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }[]>>({})
+  const getPendingInItems = (recorderId: number) => pendingStockInItems[recorderId] || []
+  const addPendingInItem = (recorderId: number, item: { productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }) => {
+    setPendingStockInItems(prev => {
+      const existing = (prev[recorderId] || [])
+      const dupIdx = existing.findIndex(i => i.productId === item.productId && i.unit === item.unit && i.warehouseId === item.warehouseId)
+      if (dupIdx >= 0) {
+        const updated = [...existing]
+        updated[dupIdx] = { ...updated[dupIdx], quantity: updated[dupIdx].quantity + item.quantity }
+        return { ...prev, [recorderId]: updated }
+      }
+      return { ...prev, [recorderId]: [...existing, { ...item, tempId: Date.now() + Math.random() }] }
+    })
+  }
+  const removePendingInItem = (recorderId: number, tempId: number) => {
+    setPendingStockInItems(prev => ({
+      ...prev,
+      [recorderId]: (prev[recorderId] || []).filter(i => i.tempId !== tempId)
+    }))
+  }
+  const clearPendingInItems = (recorderId: number) => {
+    setPendingStockInItems(prev => ({ ...prev, [recorderId]: [] }))
+  }
+  const submitPendingInItems = async (recorderId: number, enterpriseId: number) => {
+    const items = pendingStockInItems[recorderId] || []
+    if (items.length === 0) { toast({ title: 'No items to submit', variant: 'destructive' }); return }
+    setSubmittingRecorder(recorderId)
+    let submittedCount = 0
+    let lastError = ''
+    try {
+      for (const item of items) {
+        try {
+          await apiFetch(`/stock-in/${recorderId}/item`, {
+            method: 'POST',
+            body: JSON.stringify({ productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, unit: item.unit, costPerUnit: item.costPerUnit, notes: item.notes || '', enterpriseId })
+          })
+          submittedCount++
+        } catch (e: any) {
+          lastError = e.message
+          break
+        }
+      }
+      if (submittedCount > 0) {
+        toast({ title: `${submittedCount} item(s) added successfully${lastError ? `. Stopped: ${lastError}` : ''}` })
+        clearPendingInItems(recorderId)
+      } else {
+        toast({ title: lastError || 'Failed to add items', variant: 'destructive' })
+      }
+      await loadData(false)
+    } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData(false) }
+    setSubmittingRecorder(null)
+  }
+  const getInRowInput = (productId: number) => stockInTableRowInputs[String(productId)] || { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }
+  const updateInRowInput = (productId: number, updates: Partial<{ qty: number; unit: string; costPerUnit: number; notes: string }>) => {
+    setStockInTableRowInputs(prev => ({ ...prev, [String(productId)]: { ...((prev[String(productId)]) || { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }), ...updates } }))
+  }
+
+  // ─── Lots dialog (Change 2) ─────────────────────────────────────────
+  const viewLots = async (productId: number, warehouseId: number, productName: string) => {
+    setLotsDialog({ open: true, productId, warehouseId, productName })
+    setLotsData([]); setLotsPage(1); setLotsLoading(true)
+    try {
+      const res = await fetch(`${BASE}/api/lots?productId=${productId}&warehouseId=${warehouseId}`, { headers: { ...auth.getAuthHeaders() } })
+      const data = await res.json()
+      setLotsData(Array.isArray(data) ? data : [])
+    } catch (e: any) {
+      console.error('viewLots error:', e)
+      setLotsData([])
+    }
+    setLotsLoading(false)
+  }
+
+  // ─── AI assistant: send message ─────────────────────────────────────
+  const sendAiMessage = async () => {
+    const msg = aiChat.input.trim()
+    if (!msg || aiChat.loading) return
+    const newMessages = [...aiChat.messages, { role: 'user' as const, content: msg }]
+    setAiChat({ ...aiChat, messages: newMessages, input: '', loading: true })
+    try {
+      const res = await fetch(`${BASE}/api/ai-assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() },
+        body: JSON.stringify({ message: msg })
+      })
+      const data = await res.json()
+      const reply = data.reply || 'Sorry, I could not process that.'
+      setAiChat({ ...aiChat, messages: [...newMessages, { role: 'assistant', content: reply }], loading: false })
+    } catch (e: any) {
+      setAiChat({ ...aiChat, messages: [...newMessages, { role: 'assistant', content: `Error: ${e.message}` }], loading: false })
+    }
+  }
+
   const role = auth.role
   const eid = auth.enterpriseId
 
@@ -292,18 +440,20 @@ export default function IMSApp() {
       const h = { 'Content-Type': 'application/json', ...auth.getAuthHeaders() }
       const fArr = (url: string) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err); return [] } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return [] })
       const fObj = (url: string, fallback: any = null) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err); return fallback } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return fallback })
-      const defaultStats: DashboardStats = { enterpriseCount: 0, branchCount: 0, warehouseCount: 0, userCount: 0, productCount: 0, orderCount: 0, pendingOrderCount: 0, totalStockValue: 0, lowStockProducts: [] }
-      const [s, e, b, w, u, c, sup, p, st, o, a, feat, bat, so] = await Promise.all([
+      const defaultStats: DashboardStats = { enterpriseCount: 0, branchCount: 0, warehouseCount: 0, userCount: 0, productCount: 0, orderCount: 0, pendingOrderCount: 0, totalStockValue: 0, lowStockProducts: [], totalLots: 0, openLots: 0, stockInCount: 0, stockOutCount: 0 }
+      const defaultAnalytics: AnalyticsData = { stockByWarehouse: [], stockByCategory: [], topProducts: [], recentActivity: [] }
+      const [s, e, b, w, u, c, sup, p, st, o, a, feat, so, si, an] = await Promise.all([
         fObj('/dashboard', defaultStats), fArr('/enterprises'), fArr('/branches'), fArr('/warehouses'), fArr('/users'),
         fArr('/categories'), fArr('/suppliers'), fArr('/products'), fArr('/stock'), fArr('/orders'),
-        fArr('/audit'), fArr('/features'), fArr('/batches'), fArr('/stock-out'),
+        fArr('/audit'), fArr('/features'), fArr('/stock-out'), fArr('/stock-in'), fObj('/analytics', defaultAnalytics),
       ])
       // Ensure stats is always a proper object with all required fields
       const safeStats: DashboardStats = s && typeof s === 'object' && !Array.isArray(s) ? { ...defaultStats, ...s } : defaultStats
+      const safeAnalytics: AnalyticsData = an && typeof an === 'object' && !Array.isArray(an) ? { ...defaultAnalytics, ...an } : defaultAnalytics
       setStats(safeStats); setEnterprises(Array.isArray(e) ? e : []); setBranches(Array.isArray(b) ? b : []); setWarehouses(Array.isArray(w) ? w : [])
       setAllUsers(Array.isArray(u) ? u : []); setCategories(Array.isArray(c) ? c : []); setSuppliers(Array.isArray(sup) ? sup : []); setProducts(Array.isArray(p) ? p : [])
       setStockData(Array.isArray(st) ? st : []); setOrders(Array.isArray(o) ? o : []); setAuditData(Array.isArray(a) ? a : []); setFeatures(Array.isArray(feat) ? feat : [])
-      setBatchData(Array.isArray(bat) ? bat : []); setStockOutData(Array.isArray(so) ? so : [])
+      setStockOutData(Array.isArray(so) ? so : []); setStockInData(Array.isArray(si) ? si : []); setAnalyticsData(safeAnalytics)
     } catch (e: any) { console.error('loadData error:', e) }
     if (showGlobalLoading) setLoading(false)
   }, [auth.isLoggedIn, auth.userId, auth.role, auth.enterpriseId, auth.branchId, auth.warehouseId])
@@ -345,7 +495,7 @@ export default function IMSApp() {
   const statusBadge = (status: string) => <Badge className={`${statusColor(status)} border-0 text-[11px] font-semibold`}>{status.replace(/_/g, ' ')}</Badge>
 
   const navItems = getNavItemsForRole(role!).concat([
-    { key: 'batches', label: 'Batches', icon: 'ClipboardList', href: '/batches', permission: 'stock:view' as Permission },
+    { key: 'stockIn', label: 'Stock In', icon: 'ArrowDownToLine', href: '/stock-in', permission: 'stock:view' as Permission },
     { key: 'stockOut', label: 'Stock Out', icon: 'ArrowUpFromLine', href: '/stock-out', permission: 'orders:view' as Permission },
     { key: 'features', label: 'Features', icon: 'ToggleLeft', href: '/features', permission: 'enterprises:set_features' as Permission },
   ]).filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)
@@ -370,9 +520,9 @@ export default function IMSApp() {
             <div className="space-y-2"><Label className="text-muted-foreground text-xs font-medium">Demo Accounts (password: admin123)</Label>
               <div className="grid grid-cols-1 gap-1.5">{[
                 { u: 'superadmin', label: 'Super Admin', desc: 'Full system', color: 'from-purple-500 to-pink-500' },
-                { u: 'acmeadmin', label: 'Enterprise Admin', desc: 'Acme Corp', color: 'from-blue-500 to-cyan-500' },
-                { u: 'northadmin', label: 'Branch Admin', desc: 'North Division', color: 'from-orange-500 to-amber-500' },
-                { u: 'bostonwh', label: 'Warehouse Admin', desc: 'Boston WH', color: 'from-emerald-500 to-teal-500' },
+                { u: 'acme_admin', label: 'Enterprise Admin', desc: 'Acme Corp', color: 'from-blue-500 to-cyan-500' },
+                { u: 'acme_hq_admin', label: 'Branch Admin', desc: 'Acme HQ', color: 'from-orange-500 to-amber-500' },
+                { u: 'acme_wh1_admin', label: 'Warehouse Admin', desc: 'Acme WH1', color: 'from-emerald-500 to-teal-500' },
               ].map(d => (
                 <button key={d.u} onClick={() => { setLoginUser(d.u); setLoginPass('admin123') }}
                   className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all text-sm flex items-center gap-3 ${loginUser === d.u ? 'bg-blue-50 border-blue-300 dark:bg-blue-500/10 dark:border-blue-500/30' : 'bg-muted/30 border-transparent hover:bg-muted/60'}`}>
@@ -394,13 +544,23 @@ export default function IMSApp() {
 
   // ─── PAGE RENDERER ──────────────────────────────────────
   const renderPage = () => {
+    // Task 5: derived pagination values for Products + Stock tables
+    const filteredProducts = products.filter(p => !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase()))
+    const productTotalPages = Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE) || 1
+    const safeProductPage = Math.min(productPage, productTotalPages)
+    const pagedProducts = filteredProducts.slice((safeProductPage - 1) * PRODUCTS_PER_PAGE, safeProductPage * PRODUCTS_PER_PAGE)
+    const filteredStock = stockData.filter(s => { const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId); const q = stockSearch.toLowerCase(); return !q || (prod?.name || '').toLowerCase().includes(q) || (wh?.name || '').toLowerCase().includes(q) })
+    const stockTotalPages = Math.ceil(filteredStock.length / STOCK_PER_PAGE) || 1
+    const safeStockPage = Math.min(stockPage, stockTotalPages)
+    const pagedStock = filteredStock.slice((safeStockPage - 1) * STOCK_PER_PAGE, safeStockPage * STOCK_PER_PAGE)
+
     if (loading) return <div className="space-y-4 py-8"><div className="flex items-center justify-center gap-3"><Loader2 className="w-6 h-6 animate-spin text-blue-500" /><span className="text-muted-foreground text-sm">Loading data...</span></div><div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{Array.from({length:4}).map((_,i)=><div key={i} className="h-20 rounded-xl bg-muted/40 animate-pulse" />)}</div><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{Array.from({length:3}).map((_,i)=><div key={i} className="h-16 rounded-xl bg-muted/30 animate-pulse" />)}</div></div>
 
     // ─── DASHBOARD
     if (page === 'dashboard') return (
       <div className="space-y-6">
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navDashboard')}</h1><Badge className="bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400 border-0 font-medium">{ROLE_LABELS[role!]}</Badge></div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
           {stats && [
             { key: 'enterpriseCount', label: t(locale, 'kpiEnterprises'), icon: Building2, gradient: 'from-purple-500 to-pink-500' },
             { key: 'branchCount', label: t(locale, 'kpiBranches'), icon: GitBranch, gradient: 'from-orange-500 to-amber-500' },
@@ -410,6 +570,10 @@ export default function IMSApp() {
             { key: 'orderCount', label: t(locale, 'navOrders'), icon: ShoppingCart, gradient: 'from-yellow-500 to-orange-500' },
             { key: 'pendingOrderCount', label: t(locale, 'kpiPendingOrders'), icon: AlertTriangle, gradient: 'from-red-500 to-pink-500' },
             { key: 'totalStockValue', label: t(locale, 'kpiStockValue'), icon: TrendingUp, gradient: 'from-emerald-500 to-green-500' },
+            { key: 'totalLots', label: 'Total Lots', icon: Layers, gradient: 'from-violet-500 to-purple-500' },
+            { key: 'openLots', label: 'Open Lots', icon: Layers, gradient: 'from-amber-500 to-yellow-500' },
+            { key: 'stockInCount', label: 'Stock In', icon: ArrowDownToLine, gradient: 'from-emerald-500 to-teal-500' },
+            { key: 'stockOutCount', label: 'Stock Out', icon: ArrowUpFromLine, gradient: 'from-orange-500 to-red-500' },
           ].map(k => (
             <Card key={k.key} className="overflow-hidden border-0 shadow-sm"><CardContent className="p-3 sm:p-4">
               <div className="flex items-center gap-3">
@@ -428,6 +592,42 @@ export default function IMSApp() {
               <span className="font-medium">{p.name} <span className="text-muted-foreground font-normal">({p.sku})</span></span>
               <div className="flex items-center gap-3"><span className="text-muted-foreground">Current: <span className="text-red-600 dark:text-red-400 font-bold">{p.totalQty}</span></span><span className="text-muted-foreground">Reorder: {p.reorderLevel}</span></div>
             </div>))}</div></CardContent></Card>
+        )}
+        {analyticsData && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><BarChart className="w-4 h-4 text-emerald-500" /> Stock by Warehouse</CardTitle></CardHeader>
+              <CardContent>
+                {analyticsData.stockByWarehouse.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">No data</div> :
+                  <div className="h-64"><ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={analyticsData.stockByWarehouse}><CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" /><XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" /><YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" /><RTooltip /><Bar dataKey="value" fill="#10b981" radius={[4,4,0,0]} name="Stock Value" /></BarChart>
+                  </ResponsiveContainer></div>}
+              </CardContent></Card>
+            <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><PieChart className="w-4 h-4 text-blue-500" /> Stock by Category</CardTitle></CardHeader>
+              <CardContent>
+                {analyticsData.stockByCategory.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">No data</div> :
+                  <div className="h-64"><ResponsiveContainer width="100%" height="100%">
+                    <PieChart><Pie data={analyticsData.stockByCategory} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={90} paddingAngle={2}>{analyticsData.stockByCategory.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}</Pie><RTooltip /><Legend wrapperStyle={{ fontSize: 11 }} /></PieChart>
+                  </ResponsiveContainer></div>}
+              </CardContent></Card>
+            <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4 text-violet-500" /> Top Products (by Quantity)</CardTitle></CardHeader>
+              <CardContent>
+                {analyticsData.topProducts.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">No data</div> :
+                  <div className="h-64"><ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={analyticsData.topProducts} layout="vertical" margin={{ left: 20, right: 20 }}><CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" /><XAxis type="number" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" /><YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={100} stroke="hsl(var(--muted-foreground))" /><RTooltip /><Bar dataKey="quantity" fill="#8b5cf6" radius={[0,4,4,0]} /></BarChart>
+                  </ResponsiveContainer></div>}
+              </CardContent></Card>
+            <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> Recent Activity</CardTitle></CardHeader>
+              <CardContent>
+                {analyticsData.recentActivity.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">No recent activity</div> :
+                  <div className="max-h-80 overflow-y-auto space-y-2 pr-1">{analyticsData.recentActivity.map(act => (
+                    <div key={act.id} className="bg-muted/40 rounded-lg p-2.5 flex items-start gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center shrink-0 text-white text-[10px] font-bold">{(act.userName || 'U').charAt(0).toUpperCase()}</div>
+                      <div className="flex-1 min-w-0"><div className="flex items-center gap-1.5 flex-wrap"><span className="text-xs font-semibold">{act.userName || 'System'}</span><span className="font-mono text-[10px] text-blue-500 bg-blue-50 dark:bg-blue-500/10 px-1.5 py-0.5 rounded">{act.action}</span><span className="text-[10px] text-muted-foreground">{act.entity}</span></div>
+                      {act.details && <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{act.details}</div>}
+                      <div className="text-[10px] text-muted-foreground/70 mt-0.5">{new Date(act.createdAt).toLocaleString()}</div></div>
+                    </div>))}</div>}
+              </CardContent></Card>
+          </div>
         )}
       </div>
     )
@@ -497,54 +697,157 @@ export default function IMSApp() {
       </div>
     )
 
-    // ─── PRODUCTS
+    // ─── PRODUCTS (two tabs: List + New Products)
     if (page === 'products' && hasPermission(role!, 'products:view')) return (
       <div className="space-y-5">
-        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navProducts')}</h1>
+        <div className="flex items-center justify-between flex-wrap gap-2"><h1 className="text-2xl font-bold">{t(locale, 'navProducts')}</h1>
           <div className="flex gap-2">
             {hasPermission(role!, 'products:create') && <Button onClick={() => { setDlgType('registerItem'); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />Register Item</Button>}
-            {hasPermission(role!, 'stock:adjust') && <Button onClick={() => { setDlgType('stockIn'); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm"><ArrowUpFromLine className="w-4 h-4 mr-1.5" />Stock In</Button>}
             {hasPermission(role!, 'products:create') && <Button onClick={() => openCreate('product')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newProduct')}</Button>}
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{products.map(p => {
-          const cat = categories.find(c => c.id === p.categoryId)
-          const totalQty = stockData.filter(s => s.productId === p.id).reduce((sum, s) => sum + s.quantity, 0)
-          const isLow = totalQty <= p.reorderLevel
-          return (<Card key={p.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4">
-            <div className="flex items-start justify-between mb-2"><div className="flex items-center gap-2"><div className={`w-9 h-9 rounded-xl ${isLow ? 'bg-gradient-to-br from-red-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-500'} flex items-center justify-center shrink-0`}><Package className="w-4 h-4 text-white" /></div>
-              <div><div className="font-semibold text-sm">{p.name}</div><div className="text-[11px] text-muted-foreground font-mono">{p.sku}</div></div></div>
-              <div className="flex gap-1">{hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="ghost" onClick={() => { setDlgType('stockIn'); setDlgEdit({productId:p.id}); setDlgData({productId:p.id,quantity:''}); setDlgOpen(true) }} className="h-7 w-7 p-0 text-emerald-600"><ArrowUpFromLine className="w-3 h-3" /></Button>}
-                {hasPermission(role!, 'products:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('product', p)} className="h-7 w-7 p-0"><Pencil className="w-3 h-3" /></Button>}
-                {hasPermission(role!, 'products:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/products/${p.id}`)} disabled={isCrudLoading('remove', `/products/${p.id}`)} className="text-red-500 h-7 w-7 p-0">{isCrudLoading('remove', `/products/${p.id}`) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}</Button>}</div></div>
-            <div className="text-xs text-muted-foreground mb-2">{cat?.name || '—'}</div>
-            <div className="flex items-center justify-between"><span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{fmt(p.price)}</span><span className="text-xs text-muted-foreground">Cost: {fmt(p.cost)}</span></div>
-            <div className="flex items-center justify-between mt-1"><span className={`text-sm font-bold ${isLow ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{totalQty} {p.unit}</span>{isLow && <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[10px]">Low Stock</Badge>}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5">Reorder: {p.reorderLevel}</div>
-          </CardContent></Card>)})}</div>
+        <Tabs defaultValue="list">
+          <TabsList>
+            <TabsTrigger value="list">List</TabsTrigger>
+            <TabsTrigger value="newProducts">New Products</TabsTrigger>
+          </TabsList>
+          <TabsContent value="list" className="mt-4">
+            {/* Task 5: responsive table with search + pagination + N records + safePage + mobile column hiding */}
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+              <div className="relative w-full sm:w-64"><Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search products..." className="pl-8" value={productSearch} onChange={e => { setProductSearch(e.target.value); setProductPage(1) }} /></div>
+              <Badge variant="outline" className="text-[11px] font-medium">{filteredProducts.length} records</Badge>
+            </div>
+            <div className="rounded-md border overflow-x-auto"><Table>
+              <TableHeader><TableRow>
+                <TableHead className="h-8 text-xs">Product</TableHead>
+                <TableHead className="h-8 text-xs">Category</TableHead>
+                <TableHead className="h-8 text-xs text-right">Price</TableHead>
+                <TableHead className="h-8 text-xs text-right hidden sm:table-cell">Cost</TableHead>
+                <TableHead className="h-8 text-xs text-right">In Stock</TableHead>
+                <TableHead className="h-8 text-xs text-right hidden sm:table-cell">Reorder</TableHead>
+                <TableHead className="h-8 text-xs text-center">Status</TableHead>
+                <TableHead className="h-8 text-xs text-right">Actions</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {pagedProducts.length === 0 && <TableRow><TableCell colSpan={8} className="text-center text-sm text-muted-foreground py-8">No products found</TableCell></TableRow>}
+                {pagedProducts.map(p => {
+                  const cat = categories.find(c => c.id === p.categoryId)
+                  const totalQty = stockData.filter(s => s.productId === p.id).reduce((sum, s) => sum + s.quantity, 0)
+                  const isLow = totalQty <= p.reorderLevel
+                  return (<TableRow key={p.id}>
+                    <TableCell className="py-2"><div className="font-medium text-sm">{p.name}</div><div className="text-[10px] text-muted-foreground font-mono">{p.sku}</div></TableCell>
+                    <TableCell className="py-2 text-xs text-muted-foreground">{cat?.name || '—'}</TableCell>
+                    <TableCell className="py-2 text-xs text-right font-semibold text-emerald-600 dark:text-emerald-400">{fmt(p.price)}</TableCell>
+                    <TableCell className="py-2 text-xs text-right text-muted-foreground hidden sm:table-cell">{fmt(p.cost)}</TableCell>
+                    <TableCell className="py-2 text-xs text-right"><span className={`font-bold ${isLow ? 'text-red-600 dark:text-red-400' : ''}`}>{totalQty}</span> <span className="text-muted-foreground text-[10px]">{p.unit}</span></TableCell>
+                    <TableCell className="py-2 text-xs text-right text-muted-foreground hidden sm:table-cell">{p.reorderLevel}</TableCell>
+                    <TableCell className="py-2 text-center">{p.isActive ? <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[10px]">Active</Badge> : <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-0 text-[10px]">Inactive</Badge>}</TableCell>
+                    <TableCell className="py-2 text-right"><div className="flex gap-0.5 justify-end">
+                      {hasPermission(role!, 'products:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('product', p)} className="h-7 w-7 p-0"><Pencil className="w-3 h-3" /></Button>}
+                      {hasPermission(role!, 'products:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/products/${p.id}`)} disabled={isCrudLoading('remove', `/products/${p.id}`)} className="text-red-500 h-7 w-7 p-0">{isCrudLoading('remove', `/products/${p.id}`) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}</Button>}
+                    </div></TableCell>
+                  </TableRow>)})}
+              </TableBody>
+            </Table></div>
+            <Pager page={safeProductPage} totalPages={productTotalPages} onPageChange={setProductPage} />
+          </TabsContent>
+          <TabsContent value="newProducts" className="mt-4">
+            <Card className="border-emerald-200 dark:border-emerald-500/20 shadow-sm">
+              <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Package className="w-4 h-4 text-emerald-500" /> Multi-Item Product Registration</CardTitle>
+                <CardDescription className="text-xs">Register multiple products at once with initial stock. Each product with quantity &gt; 0 creates a Lot automatically.</CardDescription></CardHeader>
+              <CardContent className="space-y-3">
+                <div className="bg-emerald-50/50 dark:bg-emerald-500/5 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={WHIcon}>Destination Warehouse</SectionHeader>
+                  <Select value={registerWarehouseId ? String(registerWarehouseId) : undefined} onValueChange={v => setRegisterWarehouseId(parseInt(v))}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w => w.isActive).map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select>
+                </div>
+                <div className="rounded-md border overflow-x-auto"><Table>
+                  <TableHeader><TableRow>
+                    <TableHead className="h-7 text-[10px] min-w-[140px]">Name</TableHead>
+                    <TableHead className="h-7 text-[10px] min-w-[110px]">SKU</TableHead>
+                    <TableHead className="h-7 text-[10px] min-w-[120px]">Category</TableHead>
+                    <TableHead className="h-7 text-[10px] min-w-[80px]">Unit</TableHead>
+                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Price</TableHead>
+                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Cost</TableHead>
+                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Reorder</TableHead>
+                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Init Qty</TableHead>
+                    <TableHead className="h-7 w-10"></TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {registerRows.length === 0 && <TableRow><TableCell colSpan={9} className="text-center text-xs text-muted-foreground py-4">No rows. Click "Add Row" to begin.</TableCell></TableRow>}
+                    {registerRows.map((row, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="py-1"><Input value={row.name} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], name: e.target.value }; setRegisterRows(n) }} placeholder="Product name" className="h-7 text-[11px] rounded-md" /></TableCell>
+                        <TableCell className="py-1"><Input value={row.sku} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], sku: e.target.value }; setRegisterRows(n) }} placeholder="SKU-001" className="h-7 text-[11px] rounded-md" /></TableCell>
+                        <TableCell className="py-1"><Select value={row.categoryId ? String(row.categoryId) : undefined} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}><SelectTrigger className="h-7 text-[11px] rounded-md"><SelectValue placeholder="—" /></SelectTrigger><SelectContent>{categories.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent></Select></TableCell>
+                        <TableCell className="py-1"><Select value={row.unit} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], unit: v }; setRegisterRows(n) }}><SelectTrigger className="h-7 text-[11px] rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-40">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+                        <TableCell className="py-1"><Input type="number" step="0.01" value={row.price || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], price: parseFloat(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
+                        <TableCell className="py-1"><Input type="number" step="0.01" value={row.cost || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], cost: parseFloat(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
+                        <TableCell className="py-1"><Input type="number" value={row.reorderLevel || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], reorderLevel: parseInt(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
+                        <TableCell className="py-1"><Input type="number" min="0" value={row.quantity || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], quantity: parseInt(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
+                        <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => setRegisterRows(registerRows.filter((_, i) => i !== idx))} className="text-red-500 h-6 w-6 p-0"><Trash2 className="w-3 h-3" /></Button></TableCell>
+                      </TableRow>))}
+                  </TableBody>
+                </Table></div>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <Button size="sm" variant="outline" onClick={() => setRegisterRows([...registerRows, { name: '', sku: '', categoryId: null, unit: 'piece', price: 0, cost: 0, reorderLevel: 0, quantity: 0, costPerUnit: 0, supplierName: '', notes: '' }])} className="text-emerald-600 border-emerald-200 hover:bg-emerald-50"><Plus className="w-3.5 h-3.5 mr-1.5" />Add Row</Button>
+                  <Button size="sm" disabled={registerSubmitting || !registerWarehouseId || registerRows.filter(r => r.name && r.sku).length === 0} onClick={async () => {
+                    if (!registerWarehouseId) { toast({ title: 'Select a warehouse', variant: 'destructive' }); return }
+                    const valid = registerRows.filter(r => r.name && r.sku)
+                    if (valid.length === 0) { toast({ title: 'Add at least one row with name+SKU', variant: 'destructive' }); return }
+                    setRegisterSubmitting(true)
+                    try {
+                      const res = await apiFetch<{ products: any[]; lotsCreated: number }>('/products/register', { method: 'POST', body: JSON.stringify({ warehouseId: registerWarehouseId, items: valid.map(r => ({ name: r.name.trim(), sku: r.sku.trim(), categoryId: r.categoryId || null, price: r.price, cost: r.cost, unit: r.unit, reorderLevel: r.reorderLevel, quantity: r.quantity, costPerUnit: r.cost, supplierName: r.supplierName || null, notes: r.notes || null })) }) })
+                      toast({ title: `Registered ${res.products?.length || valid.length} product(s)${res.lotsCreated ? `, ${res.lotsCreated} lot(s) created` : ''}` })
+                      setRegisterRows([])
+                      await loadData()
+                    } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
+                    setRegisterSubmitting(false)
+                  }} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white">{registerSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}Register All</Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     )
 
-    // ─── STOCK
+    // ─── STOCK (Task 5: responsive table; Task 7: no page-level action buttons, row-level Stock In + View Lots)
     if (page === 'stock' && hasPermission(role!, 'stock:view')) return (
       <div className="space-y-5">
-        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navStock')}</h1>
-          <div className="flex gap-2">
-            {hasPermission(role!, 'products:create') && <Button onClick={() => { setDlgType('registerItem'); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />Register Item</Button>}
-            {hasPermission(role!, 'stock:adjust') && <Button onClick={() => { setDlgType('stockIn'); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-sm"><ArrowUpFromLine className="w-4 h-4 mr-1.5" />Stock In</Button>}
+        <div className="flex items-center justify-between flex-wrap gap-2"><div><h1 className="text-2xl font-bold">{t(locale, 'navStock')}</h1>
+          <p className="text-xs text-muted-foreground mt-1">Use the row-level Stock In button below, or open the Stock In page in the sidebar for multi-item receipts.</p></div>
+          <div className="flex items-center gap-2">
+            <div className="relative w-full sm:w-64"><Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search stock..." className="pl-8" value={stockSearch} onChange={e => { setStockSearch(e.target.value); setStockPage(1) }} /></div>
+            <Badge variant="outline" className="text-[11px] font-medium">{filteredStock.length} records</Badge>
           </div></div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{stockData.map(s => {
-          const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId); const isLow = prod ? s.quantity <= prod.reorderLevel : false
-          return (<Card key={s.id} className="shadow-sm"><CardContent className="p-4">
-            <div className="flex items-center justify-between mb-2"><div className="font-semibold text-sm">{prod?.name || `Product #${s.productId}`}</div>
-              {isLow ? <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[11px]">Low</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[11px]">OK</Badge>}</div>
-            <div className="text-xs text-muted-foreground mb-2">{wh?.name || `WH #${s.warehouseId}`}</div>
-            <div className="flex items-center justify-between"><span className="text-xl font-bold">{s.quantity}</span><span className="text-xs text-muted-foreground">Value: {prod ? fmt(s.quantity * prod.price) : '—'}</span></div>
-            <div className="flex gap-2 mt-3">
-              {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => { setDlgType('stockIn'); setDlgEdit({productId:s.productId}); setDlgData({productId:s.productId,warehouseId:s.warehouseId,quantity:''}); setDlgOpen(true) }} className="flex-1 text-xs text-emerald-600 border-emerald-200 hover:bg-emerald-50"><ArrowUpFromLine className="w-3 h-3 mr-1" />Stock In</Button>}
-              {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => openEdit('stock', s)} className="flex-1 text-xs">Adjust</Button>}
-            </div>
-          </CardContent></Card>)})}</div>
+        <div className="rounded-md border overflow-x-auto"><Table>
+          <TableHeader><TableRow>
+            <TableHead className="h-8 text-xs">Product</TableHead>
+            <TableHead className="h-8 text-xs">Warehouse</TableHead>
+            <TableHead className="h-8 text-xs text-right">Quantity</TableHead>
+            <TableHead className="h-8 text-xs text-right">Value</TableHead>
+            <TableHead className="h-8 text-xs text-center">Status</TableHead>
+            <TableHead className="h-8 text-xs text-right">Actions</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {pagedStock.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">No stock found</TableCell></TableRow>}
+            {pagedStock.map(s => {
+              const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId); const isLow = prod ? s.quantity <= prod.reorderLevel : false
+              return (<TableRow key={s.id}>
+                <TableCell className="py-2"><div className="font-medium text-sm">{prod?.name || `Product #${s.productId}`}</div>{prod && <div className="text-[10px] text-muted-foreground font-mono">{prod.sku}</div>}</TableCell>
+                <TableCell className="py-2 text-xs text-muted-foreground">{wh?.name || `WH #${s.warehouseId}`}</TableCell>
+                <TableCell className="py-2 text-right"><span className={`text-sm font-bold ${isLow ? 'text-red-600 dark:text-red-400' : ''}`}>{s.quantity}</span></TableCell>
+                <TableCell className="py-2 text-right text-xs text-muted-foreground">{prod ? fmt(s.quantity * prod.price) : '—'}</TableCell>
+                <TableCell className="py-2 text-center">{isLow ? <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[10px]">Low</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[10px]">OK</Badge>}</TableCell>
+                <TableCell className="py-2 text-right"><div className="flex gap-1 justify-end">
+                  {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => { setDlgType('stockIn'); setDlgEdit({productId:s.productId}); setDlgData({productId:s.productId,warehouseId:s.warehouseId,quantity:''}); setDlgOpen(true) }} className="text-xs text-emerald-600 border-emerald-200 hover:bg-emerald-50 h-7"><ArrowUpFromLine className="w-3 h-3 mr-1" />Stock In</Button>}
+                  <Button size="sm" variant="ghost" onClick={() => viewLots(s.productId, s.warehouseId, prod?.name || `Product #${s.productId}`)} className="text-xs text-violet-600 hover:bg-violet-50 h-7" title="View Lots"><Layers className="w-3 h-3 mr-1" />Lots</Button>
+                  {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => openEdit('stock', s)} className="text-xs h-7">Adjust</Button>}
+                </div></TableCell>
+              </TableRow>)})}
+          </TableBody>
+        </Table></div>
+        <Pager page={safeStockPage} totalPages={stockTotalPages} onPageChange={setStockPage} />
       </div>
     )
 
@@ -595,41 +898,158 @@ export default function IMSApp() {
       </div>
     )
 
-    // ─── BATCHES (Register Items)
-    if (page === 'batches') return (
-      <div className="space-y-5">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div><h1 className="text-2xl font-bold flex items-center gap-2"><ClipboardList className="w-6 h-6 text-blue-500" /> Inventory Batches</h1>
-            <p className="text-sm text-muted-foreground mt-1">Register items into inventory. Each batch groups entries under one person. Entries immediately update stock.</p></div>
-          <Button onClick={() => openCreate('batch')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />New Batch</Button></div>
-        <div className="grid gap-3">{batchData.map(b => { const wh = warehouses.find(w => w.id === b.warehouseId); const isExp = expandedBatch === b.id
-          return (<Card key={b.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4">
-            <div className="flex items-center justify-between cursor-pointer" onClick={() => setExpandedBatch(isExp ? null : b.id)}>
-              <div className="flex items-center gap-3"><div className={`w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center shrink-0 transition-transform ${isExp ? 'rotate-90' : 'rotate-0'}`}><ChevronRight className="w-4 h-4 text-white" /></div>
-                <div><div className="font-semibold text-sm flex items-center gap-2">{b.batchCode} {statusBadge(b.status)}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2"><span>{b.personName}</span><span>·</span><span>{wh?.name || '—'}</span><span>·</span><span>{b.entries.length} entries</span></div></div></div>
-              <span className="text-xs text-muted-foreground">{new Date(b.createdAt).toLocaleDateString()}</span></div>
-            {isExp && (<div className="mt-4 space-y-3 border-t pt-4">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                <div className="flex items-center gap-1.5 text-muted-foreground"><Phone className="w-3 h-3" />{b.personPhone || '—'}</div>
-                <div className="flex items-center gap-1.5 text-muted-foreground"><Mail className="w-3 h-3" />{b.personEmail || '—'}</div>
-                {b.notes && <div className="flex items-center gap-1.5 text-muted-foreground"><FileText className="w-3 h-3" />{b.notes}</div>}
-              </div>
-              {b.entries.length > 0 && <div className="space-y-2">{b.entries.map(e => { const prod = products.find(p => p.id === e.productId); const currentStock = stockData.filter(s => s.productId === e.productId).reduce((sum, s) => sum + s.quantity, 0)
-                return (<div key={e.id} className="bg-muted/40 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2"><Package className="w-4 h-4 text-blue-500" /><div><div className="text-sm font-medium">{prod?.name || `Product #${e.productId}`}</div>{e.notes && <div className="text-[11px] text-muted-foreground">{e.notes}</div>}</div></div>
-                  <div className="flex items-center gap-4 text-xs"><span className="font-bold text-base">{e.quantity}</span><span className="text-muted-foreground">{e.unit}</span><span className="text-muted-foreground">@ {fmt(e.costPerUnit)}/{e.unit}</span><span className="font-semibold">{fmt(e.quantity * e.costPerUnit)}</span><span className="text-emerald-600 dark:text-emerald-400">Stock: {currentStock}</span></div>
-                </div>)})}</div>}
-              {b.status === 'open' && <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => { setDlgType('batchEntry'); setDlgEdit(null); setDlgData({ batchId: b.id, warehouseId: b.warehouseId }); setDlgOpen(true) }} className="w-full sm:w-auto"><Plus className="w-3.5 h-3.5 mr-1.5" />Add Entry</Button>
-                <Button size="sm" variant="outline" onClick={async () => { try { await crud.update(`/batches/${b.id}`, { status: 'closed' }); } catch(e: any) { toast({ title: e.message, variant: 'destructive' }) } }} className="w-full sm:w-auto text-amber-600 border-amber-200 hover:bg-amber-50">Close Batch</Button>
-              </div>}
-            </div>)}
-          </CardContent></Card>)})}</div>
+    // ─── STOCK OUT RECORDER
+    // ─── STOCK IN (Task 1-b + Task 6: mirrors Stock Out, emerald theme)
+    if (page === 'stockIn') return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><ArrowDownToLine className="w-4 h-4 text-emerald-500" />Stock In</h1></div>
+          <Button size="sm" onClick={() => openCreate('stockInRecorder')} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Receipt</Button>
+        </div>
+
+        {/* ── Filters ── */}
+        <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
+          <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
+          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date From</Label><div className="w-32"><CustomDatePicker compact value={stockInFilterDateFrom} onChange={v => { setStockInFilterDateFrom(v); setStockInRecPage(1) }} /></div></div>
+          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date To</Label><div className="w-32"><CustomDatePicker compact value={stockInFilterDateTo} onChange={v => { setStockInFilterDateTo(v); setStockInRecPage(1) }} /></div></div>
+          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Status</Label><Select value={stockInFilterStatus || '_all'} onValueChange={v => { setStockInFilterStatus(v === '_all' ? '' : v); setStockInRecPage(1) }}><SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="submitted">Submitted</SelectItem></SelectContent></Select></div>
+          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Supplier</Label><Input value={stockInFilterPerson} onChange={e => { setStockInFilterPerson(e.target.value); setStockInRecPage(1) }} placeholder="Search name..." className="h-7 text-xs w-32" /></div>
+          {(stockInFilterDateFrom || stockInFilterDateTo || stockInFilterStatus || stockInFilterPerson) && <Button size="sm" variant="ghost" onClick={() => { setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInRecPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
+        </div>
+
+        {(() => {
+          let filtered = [...stockInData].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          if (stockInFilterDateFrom) filtered = filtered.filter(r => new Date(r.createdAt) >= new Date(stockInFilterDateFrom + 'T00:00:00'))
+          if (stockInFilterDateTo) filtered = filtered.filter(r => new Date(r.createdAt) <= new Date(stockInFilterDateTo + 'T23:59:59'))
+          if (stockInFilterStatus) filtered = filtered.filter(r => r.status === stockInFilterStatus)
+          if (stockInFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockInFilterPerson.toLowerCase()))
+
+          const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
+          const recPaged = filtered.slice((stockInRecPage - 1) * STOCK_IN_REC_PER_PAGE, stockInRecPage * STOCK_IN_REC_PER_PAGE)
+
+          return (<>
+            {recPaged.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No receipts found</div>}
+            {recPaged.map(r => { const isExp = expandedIn === r.id; const isExpanding = expandingInId === r.id; const pendingItems = getPendingInItems(r.id); const totalItems = r.items.length + pendingItems.length
+              return (<Card key={r.id} className="shadow-sm"><CardContent className="p-2.5">
+                <div className="flex items-center justify-between cursor-pointer" onClick={() => { if (isExp) { setExpandedIn(null) } else { setExpandingInId(r.id); setTimeout(() => { setExpandedIn(r.id); setExpandingInId(null) }, 200) } }}>
+                  <div className="flex items-center gap-1.5">{isExpanding ? <Loader2 className="w-3 h-3 animate-spin text-emerald-500" /> : <ChevronRight className={`w-3.5 h-3.5 text-emerald-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />}
+                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
+                    {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openEdit('stockInRecorder', r) }} className="h-5 w-5 p-0 text-muted-foreground"><Pencil className="w-2.5 h-2.5" /></Button>}
+                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); crud.remove(`/stock-in/${r.id}`) }} disabled={isCrudLoading('remove', `/stock-in/${r.id}`)} className="h-5 w-5 p-0 text-red-500">{isCrudLoading('remove', `/stock-in/${r.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button>}
+                  </div>
+                </div>
+                {isExp && (<div className="mt-2 space-y-2 border-t pt-2">
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                    {r.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5" />{r.personPhone}</span>}
+                    {r.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5" />{r.personEmail}</span>}
+                    {r.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" />{r.personAddress}</span>}
+                    {r.notes && <span className="flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{r.notes}</span>}
+                  </div>
+
+                  {/* ── Items Table (saved + pending) with pagination ── */}
+                  {(() => { const allItems = [...r.items.map(i => ({ ...i, _pending: false })), ...pendingItems.map(i => ({ ...i, id: i.tempId, _pending: true }))] as any[]
+                    const totalPages = Math.ceil(allItems.length / STOCK_IN_ITEMS_PER_PAGE); const paged = allItems.slice((stockInItemPage - 1) * STOCK_IN_ITEMS_PER_PAGE, stockInItemPage * STOCK_IN_ITEMS_PER_PAGE)
+                    const totalQty = allItems.reduce((sum: number, i: any) => sum + i.quantity, 0)
+                    const totalValue = allItems.reduce((sum: number, i: any) => sum + (i.quantity * (i.costPerUnit || 0)), 0)
+                    return (<div id={`stockin-print-${r.id}`}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Items ({totalItems}) · Total Qty: {totalQty} · Value: {fmt(totalValue)}</span>
+                        <Button size="sm" variant="outline" onClick={() => { const w = window.open('', '_blank', 'width=800,height=600'); if (!w) return; w.document.write('<html><head><title>Stock In - ' + r.recorderCode + '</title><style>body{font-family:system-ui,sans-serif;padding:24px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}th{background:#f1f5f9;font-weight:600}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.saved{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}h2{font-size:18px;margin:0}p{color:#64748b;font-size:13px;margin:4px 0}.summary{margin-top:8px;font-size:13px;color:#334155;font-weight:600}</style></head><body>'); w.document.write('<h2>' + r.recorderCode + '</h2>'); w.document.write('<p>Date: ' + new Date(r.createdAt).toLocaleString() + '</p>'); w.document.write('<p>Supplier: ' + r.personName + (r.personPhone ? ' | Phone: ' + r.personPhone : '') + (r.personEmail ? ' | Email: ' + r.personEmail : '') + '</p>'); if (r.personAddress) w.document.write('<p>Address: ' + r.personAddress + '</p>'); if (r.notes) w.document.write('<p>Notes: ' + r.notes + '</p>'); w.document.write('<table><thead><tr><th>Product</th><th style="text-align:right">Qty</th><th>Unit</th><th style="text-align:right">Cost/Unit</th><th style="text-align:right">Total</th><th>Status</th></tr></thead><tbody>'); allItems.forEach((item: any) => { const prod = products.find((p: any) => p.id === item.productId); w.document.write('<tr><td>' + (prod?.name || '#'+item.productId) + '</td><td style="text-align:right">' + item.quantity + '</td><td>' + item.unit + '</td><td style="text-align:right">' + (item.costPerUnit || 0).toFixed(2) + '</td><td style="text-align:right">' + ((item.costPerUnit || 0) * item.quantity).toFixed(2) + '</td><td><span class="badge ' + (item._pending ? 'pending' : 'saved') + '">' + (item._pending ? 'Pending' : 'Saved') + '</span></td></tr>') }); w.document.write('</tbody></table>'); w.document.write('<p class="summary">Total Items: ' + totalItems + ' · Total Qty: ' + totalQty + ' · Total Value: $' + totalValue.toFixed(2) + '</p>'); w.document.write('</body></html>'); w.document.close(); w.print() }} className="h-5 text-[10px] gap-0.5"><Printer className="w-2.5 h-2.5" />Print</Button>
+                      </div>
+                      {totalItems > 0 ? (<>
+                        <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-6 text-[10px] text-right w-24">Total</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
+                        </TableRow></TableHeader><TableBody>
+                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+                            return (<TableRow key={item.id} className={item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed' : ''}>
+                              <TableCell className="py-1 text-[11px] font-medium">{prod?.name || `#${item.productId}`}</TableCell>
+                              <TableCell className="py-1 text-[11px] text-right font-mono">{item.quantity}</TableCell>
+                              <TableCell className="py-1 text-[11px] text-muted-foreground">{item.unit}</TableCell>
+                              <TableCell className="py-1 text-[11px] text-right font-mono">{fmt(item.costPerUnit || 0)}</TableCell>
+                              <TableCell className="py-1 text-[11px] text-right font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</TableCell>
+                              <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
+                              <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></TableCell>
+                            </TableRow>)})}
+                        </TableBody></Table></div>
+                        <Pager page={stockInItemPage} totalPages={totalPages} onPageChange={setStockInItemPage} />
+                      </>) : <div className="text-[10px] text-muted-foreground text-center py-2">No items yet</div>}
+                    </div>)})()}
+
+                  {/* Submit pending button */}
+                  {pendingItems.length > 0 && (
+                    <div className="flex items-center gap-1.5">
+                      <Button size="sm" disabled={submittingRecorder === r.id} onClick={() => submitPendingInItems(r.id, r.enterpriseId || eid || 0)} className="bg-emerald-600 text-white h-6 text-[11px]">{submittingRecorder === r.id ? <Loader2 className="w-2.5 h-2.5 mr-0.5 animate-spin" /> : <Check className="w-2.5 h-2.5 mr-0.5" />}Submit {pendingItems.length}</Button>
+                      <Button size="sm" variant="ghost" onClick={() => clearPendingInItems(r.id)} className="h-6 text-[11px] text-muted-foreground" disabled={submittingRecorder === r.id}>Clear</Button>
+                    </div>
+                  )}
+
+                  {/* ── Add Items Section ── */}
+                  <div className="bg-muted/30 rounded-md p-2">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Add Items</span>
+                      <div className="flex items-center bg-muted rounded-md p-0.5">
+                        <button onClick={() => setStockInMode('pic')} className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${stockInMode === 'pic' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-muted-foreground'}`}><LayoutGrid className="w-2.5 h-2.5 inline mr-0.5" />Pick</button>
+                        <button onClick={() => setStockInMode('table')} className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${stockInMode === 'table' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-muted-foreground'}`}><List className="w-2.5 h-2.5 inline mr-0.5" />Table</button>
+                      </div>
+                    </div>
+
+                    {/* ── Pick Mode ── */}
+                    {stockInMode === 'pic' ? (
+                      (() => {
+                        const sel = (stockInPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) as { productId: number; qty: number; unit: string; costPerUnit: number; notes: string }
+                        const filteredProds = products.filter(p => !stockInSearch || p.name.toLowerCase().includes(stockInSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockInSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name))
+                        const selTotalPages = Math.ceil(filteredProds.length / STOCK_IN_PICK_SELECT_PER_PAGE)
+                        const selPaged = filteredProds.slice((stockInPickSelectPage - 1) * STOCK_IN_PICK_SELECT_PER_PAGE, stockInPickSelectPage * STOCK_IN_PICK_SELECT_PER_PAGE)
+                        return (<div className="space-y-1.5">
+                          <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockInSearch} onChange={e => { setStockInSearch(e.target.value); setStockInPickSelectPage(1) }} className="h-6 text-[11px] pl-7" /></div>
+                          <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
+                          </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-emerald-300 dark:border-b-emerald-600">
+                            <TableCell className="py-0.5"><Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}><SelectTrigger className="h-5 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">
+                              {selPaged.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span></SelectItem>)}
+                              {selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}
+                            </SelectContent></Select></TableCell>
+                            <TableCell className="py-0.5"><Input type="number" min={1} value={sel.qty || 1} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+                            <TableCell className="py-0.5"><Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+                            <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={sel.costPerUnit || ''} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], costPerUnit: parseFloat(e.target.value) || 0 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+                            <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '' }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+                          </TableRow></TableBody></Table></div>
+                          {selTotalPages > 1 && <div className="flex items-center justify-between pt-1"><span className="text-[10px] text-muted-foreground">Products page {stockInPickSelectPage}/{selTotalPages}</span><div className="flex gap-0.5"><Button size="sm" variant="outline" disabled={stockInPickSelectPage <= 1} onClick={() => setStockInPickSelectPage(p => p - 1)} className="h-5 w-5 p-0"><ChevronLeft className="w-2.5 h-2.5" /></Button><Button size="sm" variant="outline" disabled={stockInPickSelectPage >= selTotalPages} onClick={() => setStockInPickSelectPage(p => p + 1)} className="h-5 w-5 p-0"><ChevronRight className="w-2.5 h-2.5" /></Button></div></div>}
+                        </div>)
+                      })()
+                    ) : (
+                      // ── Table Mode ──
+                      (() => { const sortedProds = [...products].sort((a, b) => a.name.localeCompare(b.name)); const totalPages = Math.ceil(sortedProds.length / STOCK_IN_PRODUCTS_PER_PAGE); const paged = sortedProds.slice((stockInProductPage - 1) * STOCK_IN_PRODUCTS_PER_PAGE, stockInProductPage * STOCK_IN_PRODUCTS_PER_PAGE)
+                        return (<div>
+                          <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
+                          </TableRow></TableHeader><TableBody>
+                            {paged.map(prod => { const inp = getInRowInput(prod.id)
+                              return (<TableRow key={prod.id}>
+                                <TableCell className="py-0.5 text-[11px]"><span className="font-medium">{prod.name}</span> <span className="text-muted-foreground font-mono text-[10px]">{prod.sku}</span></TableCell>
+                                <TableCell className="py-0.5"><Input type="number" min={1} value={inp.qty} onChange={e => updateInRowInput(prod.id, { qty: parseInt(e.target.value) || 1 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+                                <TableCell className="py-0.5"><Select value={inp.unit} onValueChange={v => updateInRowInput(prod.id, { unit: v })}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+                                <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={inp.costPerUnit || ''} onChange={e => updateInRowInput(prod.id, { costPerUnit: parseFloat(e.target.value) || 0 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+                                <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '' }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+                              </TableRow>)})}
+                          </TableBody></Table></div>
+                          <Pager page={stockInProductPage} totalPages={totalPages} onPageChange={setStockInProductPage} />
+                        </div>)
+                      })()
+                    )}
+                  </div>
+                </div>)}
+              </CardContent></Card>)})}
+            <Pager page={stockInRecPage} totalPages={recTotalPages} onPageChange={setStockInRecPage} />
+          </>)
+        })()}
       </div>
     )
 
-    // ─── STOCK OUT RECORDER
+    // ─── STOCK OUT
     if (page === 'stockOut') return (
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
@@ -711,7 +1131,7 @@ export default function IMSApp() {
                   {/* Submit pending button */}
                   {pendingItems.length > 0 && (
                     <div className="flex items-center gap-1.5">
-                      <Button size="sm" disabled={submittingRecorder === r.id} onClick={() => submitPendingItems(r.id, r.enterpriseId || eid)} className="bg-emerald-600 text-white h-6 text-[11px]">{submittingRecorder === r.id ? <Loader2 className="w-2.5 h-2.5 mr-0.5 animate-spin" /> : <Check className="w-2.5 h-2.5 mr-0.5" />}Submit {pendingItems.length}</Button>
+                      <Button size="sm" disabled={submittingRecorder === r.id} onClick={() => submitPendingItems(r.id, r.enterpriseId || eid || 0)} className="bg-emerald-600 text-white h-6 text-[11px]">{submittingRecorder === r.id ? <Loader2 className="w-2.5 h-2.5 mr-0.5 animate-spin" /> : <Check className="w-2.5 h-2.5 mr-0.5" />}Submit {pendingItems.length}</Button>
                       <Button size="sm" variant="ghost" onClick={() => clearPendingItems(r.id)} className="h-6 text-[11px] text-muted-foreground" disabled={submittingRecorder === r.id}>Clear</Button>
                     </div>
                   )}
@@ -729,7 +1149,7 @@ export default function IMSApp() {
                     {/* ── Pick Mode: single row with Select dropdown that has paginated content ── */}
                     {stockOutMode === 'pic' ? (
                       (() => {
-                        const sel = stockOutPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }
+                        const sel = (stockOutPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }) as { productId: number; qty: number; unit: string; isReturnable: boolean; returnDeadline: string }
                         const filteredProds = products.filter(p => !stockOutSearch || p.name.toLowerCase().includes(stockOutSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockOutSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name))
                         const selTotalPages = Math.ceil(filteredProds.length / STOCK_OUT_PICK_SELECT_PER_PAGE)
                         const selPaged = filteredProds.slice((stockOutPickSelectPage - 1) * STOCK_OUT_PICK_SELECT_PER_PAGE, stockOutPickSelectPage * STOCK_OUT_PICK_SELECT_PER_PAGE)
@@ -853,7 +1273,7 @@ export default function IMSApp() {
         </aside>
 
         {/* Main */}
-        <main className="flex-1 min-w-0">
+        <main className="flex-1 min-w-0 flex flex-col">
           <header className="lg:hidden sticky top-0 z-30 bg-card/90 backdrop-blur-md border-b px-4 py-3 flex items-center gap-3">
             <button onClick={() => setSidebarOpen(true)} className="text-muted-foreground p-1 hover:bg-muted rounded-lg"><Menu className="w-5 h-5" /></button>
             <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center"><Box className="w-3.5 h-3.5 text-white" /></div>
@@ -864,7 +1284,8 @@ export default function IMSApp() {
               </button>
             </div>
           </header>
-          <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">{renderPage()}</div>
+          <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full flex-1">{renderPage()}</div>
+          <footer className="mt-auto border-t bg-card px-4 py-3 text-center text-xs text-muted-foreground">Enterprise IMS • Multi-Tenant Inventory Management</footer>
         </main>
 
         {/* DIALOG */}
@@ -1062,53 +1483,6 @@ export default function IMSApp() {
                 </div>
               </>}
 
-              {/* ─── Batch ─── */}
-              {dlgType === 'batch' && <>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Hash}>Details</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={Hash}>Batch Code</IconLabel><Input value={dlgData.batchCode||''} onChange={e=>setDlgData({...dlgData,batchCode:e.target.value})} placeholder={`BATCH-${Date.now()}`} className="h-8 text-sm rounded-md" /></div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={WHIcon}>Destination</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{warehouses.map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Users}>Person</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={dlgData.personName||''} onChange={e=>setDlgData({...dlgData,personName:e.target.value})} className="h-8 text-sm rounded-md" /></div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={dlgData.personPhone||''} onChange={e=>setDlgData({...dlgData,personPhone:e.target.value})} className="h-8 text-sm rounded-md" /></div>
-                    <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={dlgData.personEmail||''} onChange={e=>setDlgData({...dlgData,personEmail:e.target.value})} className="h-8 text-sm rounded-md" /></div>
-                  </div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={FileText}>Notes</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
-                </div>
-              </>}
-
-              {/* ─── BatchEntry ─── */}
-              {dlgType === 'batchEntry' && <>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Package}>Product</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel><Select value={dlgData.productId ? String(dlgData.productId) : undefined} onValueChange={v=>setDlgData({...dlgData,productId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{products.map(p=><SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent></Select></div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Hash}>Quantity</SectionHeader>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1"><IconLabel icon={Hash}>Quantity</IconLabel><Input type="number" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
-                    <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
-                  </div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={TrendingUp}>Pricing</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={TrendingUp}>Cost Per Unit</IconLabel><Input type="number" step="0.01" value={dlgData.costPerUnit||''} onChange={e=>setDlgData({...dlgData,costPerUnit:parseFloat(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
-                </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={FileText}>Notes</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Input value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="h-8 text-sm rounded-md" /></div>
-                </div>
-              </>}
-
               {/* ─── StockOut ─── */}
               {dlgType === 'stockOut' && <>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
@@ -1188,6 +1562,27 @@ export default function IMSApp() {
                 </div>
               </>}
 
+              {/* ─── Stock In Recorder (Task 1-b: mirrors Stock Out recorder) ─── */}
+              {dlgType === 'stockInRecorder' && <>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={WHIcon}>Warehouse</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w=>w.isActive).map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Truck}>Supplier</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={Users}>Supplier Name</IconLabel><Input value={dlgData.personName||''} onChange={e=>setDlgData({...dlgData,personName:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={dlgData.personPhone||''} onChange={e=>setDlgData({...dlgData,personPhone:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+                    <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={dlgData.personEmail||''} onChange={e=>setDlgData({...dlgData,personEmail:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+                  </div>
+                  <div className="space-y-1"><IconLabel icon={MapPin}>Address</IconLabel><Input value={dlgData.personAddress||''} onChange={e=>setDlgData({...dlgData,personAddress:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={FileText}>Notes</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="h-8 text-sm rounded-md min-h-[60px]" /></div>
+                </div>
+              </>}
+
             </div>
             <DialogFooter><Button variant="ghost" onClick={()=>setDlgOpen(false)} className="text-muted-foreground" disabled={dlgSubmitting}>{t(locale,'cancel')}</Button>
               <Button disabled={dlgSubmitting} onClick={async () => {
@@ -1198,8 +1593,8 @@ export default function IMSApp() {
                 if (dlgType==='product') { if(!sd.enterpriseId) sd.enterpriseId=eid; if(!sd.categoryId||sd.categoryId===0) sd.categoryId=null }
                 if (dlgType==='branch'&&!sd.enterpriseId) sd.enterpriseId=eid
                 if (dlgType==='warehouse'&&!sd.enterpriseId) sd.enterpriseId=eid
-                if (dlgType==='batch'&&!sd.enterpriseId) sd.enterpriseId=eid
                 if (dlgType==='stockOut'&&!sd.enterpriseId) sd.enterpriseId=eid
+                if (dlgType==='stockInRecorder'&&!sd.enterpriseId) sd.enterpriseId=eid
                 if (dlgType==='stock') await crud.create('/stock',{productId:dlgData.productId,warehouseId:dlgData.warehouseId,delta:dlgData.delta})
                 else if (dlgType==='registerItem') {
                   // Register Item: create product + stock-in in one step
@@ -1237,18 +1632,14 @@ export default function IMSApp() {
                   }
                   await loadData()
                 }
-                else if (dlgType==='batchEntry') {
-                  const batchId = sd.batchId
-                  if (!batchId) { toast({ title: 'No batch selected', variant: 'destructive' }); return }
-                  if (!sd.enterpriseId) sd.enterpriseId = eid
-                  await crud.create(`/batches/${batchId}/entry`, sd)
-                }
                 else if (dlgType==='stockOutItem') {
                   const recorderId = sd.recorderId
                   if (!recorderId) { toast({ title: 'No recorder selected', variant: 'destructive' }); return }
                   if (!sd.enterpriseId) sd.enterpriseId = eid
                   await crud.create(`/stock-out/${recorderId}/item`, sd)
                 }
+                else if (dlgEdit && dlgType==='stockInRecorder') await crud.update(`/stock-in/${dlgEdit.id}`, sd)
+                else if (dlgType==='stockInRecorder') await crud.create('/stock-in', sd)
                 else if (dlgEdit) await crud.update(dlgType==='stockOut' ? `/stock-out/${dlgEdit.id}` : `/${dlgType}s/${dlgEdit.id}`,sd)
                 else if (dlgType==='stockOut') await crud.create('/stock-out', sd)
                 else await crud.create(`/${dlgType}s`, sd)
@@ -1258,6 +1649,70 @@ export default function IMSApp() {
               }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{dlgSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}{dlgEdit?t(locale,'save'):t(locale,'add')}</Button></DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* ─── LOTS DIALOG (Change 2: View Lots for a product×warehouse) ─── */}
+        <Dialog open={lotsDialog.open} onOpenChange={o => setLotsDialog(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-2xl w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Layers className="w-4 h-4 text-violet-500" />Lots for {lotsDialog.productName}</DialogTitle></DialogHeader>
+            <div className="max-h-[60vh] overflow-y-auto pr-1">
+              {lotsLoading ? <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-violet-500" /></div> : lotsData.length === 0 ? <div className="text-center text-sm text-muted-foreground py-8">No lots found for this product in this warehouse.</div> : (
+                <div className="rounded-md border overflow-x-auto"><Table>
+                  <TableHeader><TableRow>
+                    <TableHead className="h-7 text-[10px]">Lot Number</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right">Quantity</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right">Remaining</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right">Cost/Unit</TableHead>
+                    <TableHead className="h-7 text-[10px]">Supplier</TableHead>
+                    <TableHead className="h-7 text-[10px]">Source</TableHead>
+                    <TableHead className="h-7 text-[10px]">Received</TableHead>
+                    <TableHead className="h-7 text-[10px] text-center">Status</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {lotsData.slice((lotsPage - 1) * LOTS_PER_PAGE, lotsPage * LOTS_PER_PAGE).map(l => (
+                      <TableRow key={l.id}>
+                        <TableCell className="py-1.5 text-[11px] font-mono">{l.lotNumber}</TableCell>
+                        <TableCell className="py-1.5 text-[11px] text-right font-mono">{l.quantity}</TableCell>
+                        <TableCell className="py-1.5 text-[11px] text-right font-mono">{l.remainingQty}</TableCell>
+                        <TableCell className="py-1.5 text-[11px] text-right">{fmt(l.costPerUnit)}</TableCell>
+                        <TableCell className="py-1.5 text-[11px] text-muted-foreground">{l.supplierName || '—'}</TableCell>
+                        <TableCell className="py-1.5 text-[11px]"><Badge className={`${l.source === 'stock_in' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : l.source === 'register_item' ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'} border-0 text-[9px]`}>{l.source.replace('_', ' ')}</Badge></TableCell>
+                        <TableCell className="py-1.5 text-[11px] text-muted-foreground">{new Date(l.receivedDate).toLocaleDateString()}</TableCell>
+                        <TableCell className="py-1.5 text-center">{l.status === 'open' ? <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[9px]">Open</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[9px]">Closed</Badge>}</TableCell>
+                      </TableRow>))}
+                  </TableBody>
+                </Table></div>
+              )}
+            </div>
+            {lotsData.length > LOTS_PER_PAGE && <Pager page={lotsPage} totalPages={Math.ceil(lotsData.length / LOTS_PER_PAGE)} onPageChange={setLotsPage} />}
+            <DialogFooter><Button variant="ghost" onClick={() => setLotsDialog(s => ({ ...s, open: false }))} className="text-muted-foreground">{t(locale, 'cancel')}</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── AI ASSISTANT WIDGET (Task 1: floating chat) ─── */}
+        {!aiChat.open ? (
+          <button onClick={() => setAiChat({ ...aiChat, open: true })} className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-gradient-to-br from-violet-600 to-purple-600 text-white shadow-lg shadow-violet-500/30 flex items-center justify-center hover:scale-105 transition" title="AI Inventory Assistant">
+            <MessageSquare className="w-6 h-6" />
+          </button>
+        ) : (
+          <div className="fixed bottom-6 right-6 z-50 w-[90vw] max-w-sm h-96 bg-card border rounded-2xl shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between p-3 border-b bg-gradient-to-r from-violet-600 to-purple-600 text-white rounded-t-2xl">
+              <div className="flex items-center gap-2"><Sparkles className="w-4 h-4" /><span className="font-semibold text-sm">AI Inventory Assistant</span></div>
+              <button onClick={() => setAiChat({ ...aiChat, open: false })} className="text-white/80 hover:text-white"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-muted/20">
+              {aiChat.messages.map((m, i) => (
+                <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] px-3 py-2 rounded-lg text-xs ${m.role === 'user' ? 'bg-violet-600 text-white rounded-br-none' : 'bg-muted text-foreground rounded-bl-none'}`}>{m.content}</div>
+                </div>
+              ))}
+              {aiChat.loading && <div className="flex justify-start"><div className="bg-muted px-3 py-2 rounded-lg text-xs flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" />Thinking...</div></div>}
+            </div>
+            <div className="flex gap-2 p-3 border-t bg-card rounded-b-2xl">
+              <Input value={aiChat.input} onChange={e => setAiChat({ ...aiChat, input: e.target.value })} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAiMessage() } }} placeholder="Ask about inventory..." className="h-9 text-sm" />
+              <Button size="sm" disabled={aiChat.loading || !aiChat.input.trim()} onClick={sendAiMessage} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-9 px-3">{aiChat.loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}</Button>
+            </div>
+          </div>
+        )}
       </div>
     </TooltipProvider>
   )

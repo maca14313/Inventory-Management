@@ -1,0 +1,274 @@
+  1150→                {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1151→                  <SectionHeader icon={Building2}>Organization</SectionHeader>
+  1152→                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><Select value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : undefined} onValueChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{enterprises.map(e=><SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>)}</SelectContent></Select></div>
+  1153→                </div>}
+  1154→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1155→                  <SectionHeader icon={GitBranch}>Assignment</SectionHeader>
+  1156→                  <div className="space-y-1"><IconLabel icon={GitBranch}>Branch</IconLabel><Select value={dlgData.branchId ? String(dlgData.branchId) : '0'} onValueChange={v=>setDlgData({...dlgData,branchId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="None" /></SelectTrigger><SelectContent><SelectItem value="0">None</SelectItem>{branches.filter(b=>!dlgData.enterpriseId||b.enterpriseId===dlgData.enterpriseId).map(b=><SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent></Select></div>
+  1157→                </div>
+  1158→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1159→                  <SectionHeader icon={Shield}>Role</SectionHeader>
+  1160→                  <div className="space-y-1"><IconLabel icon={Shield}>Role</IconLabel><Select value={dlgData.role || undefined} onValueChange={v=>setDlgData({...dlgData,role:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{(MANAGEABLE_ROLES[role!]||[]).map(r=><SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}</SelectContent></Select></div>
+  1161→                </div>
+  1162→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1163→                  <SectionHeader icon={Users}>Identity</SectionHeader>
+  1164→                  <div className="space-y-1"><IconLabel icon={Users}>Full Name</IconLabel><Input value={dlgData.fullName||''} onChange={e=>setDlgData({...dlgData,fullName:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1165→                </div>
+  1166→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1167→                  <SectionHeader icon={Key}>Credentials</SectionHeader>
+  1168→                  <div className="grid grid-cols-2 gap-2">
+  1169→                    <div className="space-y-1"><IconLabel icon={Key}>Username</IconLabel><Input value={dlgData.username||''} onChange={e=>setDlgData({...dlgData,username:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1170→                    <div className="space-y-1"><IconLabel icon={Lock}>Password</IconLabel><Input type="password" value={dlgData.passwordHash||''} onChange={e=>setDlgData({...dlgData,passwordHash:e.target.value})} placeholder="admin123" className="h-8 text-sm rounded-md" /></div>
+  1171→                  </div>
+  1172→                </div>
+  1173→              </>}
+  1174→
+  1175→              {/* ─── Product ─── */}
+  1176→              {dlgType === 'product' && <>
+  1177→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1178→                  <SectionHeader icon={Tag}>Details</SectionHeader>
+  1179→                  <div className="space-y-1"><IconLabel icon={Tag}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1180→                  <div className="space-y-1"><IconLabel icon={Hash}>SKU</IconLabel><Input value={dlgData.sku||''} onChange={e=>setDlgData({...dlgData,sku:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1181→                </div>
+  1182→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1183→                  <SectionHeader icon={Box}>Measurement</SectionHeader>
+  1184→                  <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
+  1185→                </div>
+  1186→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1187→                  <SectionHeader icon={TrendingUp}>Pricing</SectionHeader>
+  1188→                  <div className="grid grid-cols-2 gap-2">
+  1189→                    <div className="space-y-1"><IconLabel icon={TrendingUp}>Price</IconLabel><Input type="number" step="0.01" value={dlgData.price||''} onChange={e=>setDlgData({...dlgData,price:parseFloat(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1190→                    <div className="space-y-1"><IconLabel icon={TrendingUp}>Cost</IconLabel><Input type="number" step="0.01" value={dlgData.cost||''} onChange={e=>setDlgData({...dlgData,cost:parseFloat(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1191→                  </div>
+  1192→                </div>
+  1193→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1194→                  <SectionHeader icon={AlertTriangle}>Inventory</SectionHeader>
+  1195→                  <div className="space-y-1"><IconLabel icon={AlertTriangle}>Reorder Level</IconLabel><Input type="number" value={dlgData.reorderLevel||0} onChange={e=>setDlgData({...dlgData,reorderLevel:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1196→                </div>
+  1197→              </>}
+  1198→
+  1199→              {/* ─── Register Item (Product + Stock In) ─── */}
+  1200→              {dlgType === 'registerItem' && <>
+  1201→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1202→                  <SectionHeader icon={Package}>Product Details</SectionHeader>
+  1203→                  <div className="space-y-1"><IconLabel icon={Tag}>Product Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} placeholder="e.g. Wireless Mouse" className="h-8 text-sm rounded-md" /></div>
+  1204→                  <div className="grid grid-cols-2 gap-2">
+  1205→                    <div className="space-y-1"><IconLabel icon={Hash}>SKU</IconLabel><Input value={dlgData.sku||''} onChange={e=>setDlgData({...dlgData,sku:e.target.value})} placeholder="e.g. ITEM-001" className="h-8 text-sm rounded-md" /></div>
+  1206→                    <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
+  1207→                  </div>
+  1208→                  <div className="space-y-1"><IconLabel icon={Tag}>Category</IconLabel><Select value={dlgData.categoryId ? String(dlgData.categoryId) : undefined} onValueChange={v=>setDlgData({...dlgData,categoryId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select category..." /></SelectTrigger><SelectContent>{categories.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=><SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent></Select></div>
+  1209→                </div>
+  1210→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1211→                  <SectionHeader icon={TrendingUp}>Pricing</SectionHeader>
+  1212→                  <div className="grid grid-cols-2 gap-2">
+  1213→                    <div className="space-y-1"><IconLabel icon={TrendingUp}>Selling Price</IconLabel><Input type="number" step="0.01" value={dlgData.price||''} onChange={e=>setDlgData({...dlgData,price:parseFloat(e.target.value)||0})} placeholder="0.00" className="h-8 text-sm rounded-md" /></div>
+  1214→                    <div className="space-y-1"><IconLabel icon={TrendingUp}>Cost Price</IconLabel><Input type="number" step="0.01" value={dlgData.cost||''} onChange={e=>setDlgData({...dlgData,cost:parseFloat(e.target.value)||0})} placeholder="0.00" className="h-8 text-sm rounded-md" /></div>
+  1215→                  </div>
+  1216→                  <div className="space-y-1"><IconLabel icon={AlertTriangle}>Reorder Level</IconLabel><Input type="number" value={dlgData.reorderLevel||0} onChange={e=>setDlgData({...dlgData,reorderLevel:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1217→                </div>
+  1218→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1219→                  <SectionHeader icon={WHIcon}>Stock Registration</SectionHeader>
+  1220→                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w=>w.isActive).map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+  1221→                  <div className="space-y-1"><IconLabel icon={ArrowUpFromLine}>Initial Quantity</IconLabel><Input type="number" min="0" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} placeholder="Enter quantity..." className="h-8 text-sm rounded-md" /></div>
+  1222→                </div>
+  1223→              </>}
+  1224→
+  1225→              {/* ─── Stock ─── */}
+  1226→              {dlgType === 'stock' && <>
+  1227→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1228→                  <SectionHeader icon={Package}>Product</SectionHeader>
+  1229→                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel><Input value={products.find(p=>p.id===dlgData.productId)?.name||''} disabled className="h-9 rounded-lg bg-muted" /></div>
+  1230→                </div>
+  1231→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1232→                  <SectionHeader icon={Hash}>Quantity</SectionHeader>
+  1233→                  <div className="space-y-1"><IconLabel icon={Hash}>Current Qty</IconLabel><Input value={dlgData.quantity||0} disabled className="h-9 rounded-lg bg-muted" /></div>
+  1234→                </div>
+  1235→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1236→                  <SectionHeader icon={TrendingUp}>Adjustment</SectionHeader>
+  1237→                  <div className="space-y-1"><IconLabel icon={TrendingUp}>Adjustment (+/-)</IconLabel><Input type="number" value={dlgData.delta||0} onChange={e=>setDlgData({...dlgData,delta:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1238→                </div>
+  1239→              </>}
+  1240→
+  1241→              {/* ─── Stock In ─── */}
+  1242→              {dlgType === 'stockIn' && <>
+  1243→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1244→                  <SectionHeader icon={Package}>Product</SectionHeader>
+  1245→                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel>
+  1246→                    {dlgEdit ? <Input value={products.find(p=>p.id===dlgEdit.productId)?.name||products.find(p=>p.id===dlgData.productId)?.name||''} disabled className="h-9 rounded-lg bg-muted" />
+  1247→                    : <Select value={dlgData.productId ? String(dlgData.productId) : undefined} onValueChange={v=>setDlgData({...dlgData,productId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-60">{products.filter(p=>p.isActive).sort((a,b)=>a.name.localeCompare(b.name)).map(p=><SelectItem key={p.id} value={String(p.id)}>{p.name} ({p.sku})</SelectItem>)}</SelectContent></Select>}
+  1248→                  </div>
+  1249→                </div>
+  1250→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1251→                  <SectionHeader icon={WHIcon}>Warehouse</SectionHeader>
+  1252→                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w=>w.isActive).map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+  1253→                </div>
+  1254→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1255→                  <SectionHeader icon={ArrowUpFromLine}>Quantity In</SectionHeader>
+  1256→                  <div className="space-y-1"><IconLabel icon={ArrowUpFromLine}>Quantity</IconLabel><Input type="number" min="1" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} placeholder="Enter quantity..." className="h-8 text-sm rounded-md" /></div>
+  1257→                  {dlgData.productId && <div className="text-[11px] text-muted-foreground mt-1">Current stock: {stockData.filter(s=>s.productId===dlgData.productId).reduce((sum,s)=>sum+s.quantity,0)} {products.find(p=>p.id===dlgData.productId)?.unit || 'pcs'} across all warehouses</div>}
+  1258→                </div>
+  1259→              </>}
+  1260→
+  1261→              {/* ─── Order ─── */}
+  1262→              {dlgType === 'order' && <>
+  1263→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1264→                  <SectionHeader icon={ShoppingCart}>Type</SectionHeader>
+  1265→                  <div className="space-y-1"><IconLabel icon={ShoppingCart}>Type</IconLabel><Select value={dlgData.type||'purchase'} onValueChange={v=>setDlgData({...dlgData,type:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="purchase">Purchase</SelectItem><SelectItem value="sales">Sales</SelectItem></SelectContent></Select></div>
+  1266→                </div>
+  1267→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1268→                  <SectionHeader icon={WHIcon}>Destination</SectionHeader>
+  1269→                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{warehouses.map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+  1270→                </div>
+  1271→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1272→                  <SectionHeader icon={FileText}>Notes</SectionHeader>
+  1273→                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
+  1274→                </div>
+  1275→              </>}
+  1276→
+  1277→              {/* ─── StockOut ─── */}
+  1278→              {dlgType === 'stockOut' && <>
+  1279→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1280→                  <SectionHeader icon={WHIcon}>Warehouse</SectionHeader>
+  1281→                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{warehouses.map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+  1282→                </div>
+  1283→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1284→                  <SectionHeader icon={Users}>Person</SectionHeader>
+  1285→                  <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={dlgData.personName||''} onChange={e=>setDlgData({...dlgData,personName:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1286→                </div>
+  1287→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1288→                  <SectionHeader icon={Phone}>Contact</SectionHeader>
+  1289→                  <div className="grid grid-cols-2 gap-2">
+  1290→                    <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={dlgData.personPhone||''} onChange={e=>setDlgData({...dlgData,personPhone:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1291→                    <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={dlgData.personEmail||''} onChange={e=>setDlgData({...dlgData,personEmail:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1292→                  </div>
+  1293→                </div>
+  1294→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1295→                  <SectionHeader icon={MapPin}>Location</SectionHeader>
+  1296→                  <div className="space-y-1"><IconLabel icon={MapPin}>Address</IconLabel><Input value={dlgData.personAddress||''} onChange={e=>setDlgData({...dlgData,personAddress:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1297→                </div>
+  1298→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1299→                  <SectionHeader icon={FileText}>Notes</SectionHeader>
+  1300→                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
+  1301→                </div>
+  1302→              </>}
+  1303→
+  1304→              {/* ─── StockOutItem ─── */}
+  1305→              {dlgType === 'stockOutItem' && <>
+  1306→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1307→                  <SectionHeader icon={Package}>Product</SectionHeader>
+  1308→                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel><Select value={dlgData.productId ? String(dlgData.productId) : undefined} onValueChange={v=>setDlgData({...dlgData,productId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{products.map(p=><SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+  1309→                </div>
+  1310→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1311→                  <SectionHeader icon={Hash}>Quantity</SectionHeader>
+  1312→                  <div className="grid grid-cols-2 gap-2">
+  1313→                    <div className="space-y-1"><IconLabel icon={Hash}>Quantity</IconLabel><Input type="number" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1314→                    <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
+  1315→                  </div>
+  1316→                </div>
+  1317→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1318→                  <SectionHeader icon={RotateCcw}>Return</SectionHeader>
+  1319→                  <div className="flex items-center gap-3 py-1"><IconLabel icon={RotateCcw}>Returnable?</IconLabel><Switch checked={dlgData.isReturnable||false} onCheckedChange={v=>setDlgData({...dlgData,isReturnable:v})} /></div>
+  1320→                  {dlgData.isReturnable && <div className="space-y-1"><IconLabel icon={Calendar}>Return Deadline</IconLabel><CustomDatePicker value={dlgData.returnDeadline||''} onChange={v=>setDlgData({...dlgData,returnDeadline:v})} /></div>}
+  1321→                </div>
+  1322→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1323→                  <SectionHeader icon={FileText}>Notes</SectionHeader>
+  1324→                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Input value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1325→                </div>
+  1326→              </>}
+  1327→
+  1328→              {/* ─── Supplier ─── */}
+  1329→              {dlgType === 'supplier' && <>
+  1330→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1331→                  <SectionHeader icon={Truck}>Company</SectionHeader>
+  1332→                  <div className="space-y-1"><IconLabel icon={Truck}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1333→                </div>
+  1334→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1335→                  <SectionHeader icon={Users}>Contact</SectionHeader>
+  1336→                  <div className="space-y-1"><IconLabel icon={Users}>Contact Person</IconLabel><Input value={dlgData.contactPerson||''} onChange={e=>setDlgData({...dlgData,contactPerson:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1337→                  <div className="grid grid-cols-2 gap-2">
+  1338→                    <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={dlgData.email||''} onChange={e=>setDlgData({...dlgData,email:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1339→                    <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={dlgData.phone||''} onChange={e=>setDlgData({...dlgData,phone:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1340→                  </div>
+  1341→                </div>
+  1342→              </>}
+  1343→
+  1344→              {/* ─── Category ─── */}
+  1345→              {dlgType === 'category' && <>
+  1346→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1347→                  <SectionHeader icon={Tag}>Details</SectionHeader>
+  1348→                  <div className="space-y-1"><IconLabel icon={Tag}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1349→                </div>
+  1350→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1351→                  <SectionHeader icon={FileText}>Description</SectionHeader>
+  1352→                  <div className="space-y-1"><IconLabel icon={FileText}>Description</IconLabel><Input value={dlgData.description||''} onChange={e=>setDlgData({...dlgData,description:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1353→                </div>
+  1354→              </>}
+  1355→
+  1356→            </div>
+  1357→            <DialogFooter><Button variant="ghost" onClick={()=>setDlgOpen(false)} className="text-muted-foreground" disabled={dlgSubmitting}>{t(locale,'cancel')}</Button>
+  1358→              <Button disabled={dlgSubmitting} onClick={async () => {
+  1359→                setDlgSubmitting(true)
+  1360→                try {
+  1361→                const sd = {...dlgData}
+  1362→                if (dlgType==='user') { if(!sd.enterpriseId) sd.enterpriseId=eid; if(!sd.branchId||sd.branchId===0) sd.branchId=auth.branchId; if(!sd.warehouseId||sd.warehouseId===6) sd.warehouseId=null; if(!sd.passwordHash) sd.passwordHash='admin123' }
+  1363→                if (dlgType==='product') { if(!sd.enterpriseId) sd.enterpriseId=eid; if(!sd.categoryId||sd.categoryId===0) sd.categoryId=null }
+  1364→                if (dlgType==='branch'&&!sd.enterpriseId) sd.enterpriseId=eid
+  1365→                if (dlgType==='warehouse'&&!sd.enterpriseId) sd.enterpriseId=eid
+  1366→                if (dlgType==='stockOut'&&!sd.enterpriseId) sd.enterpriseId=eid
+  1367→                if (dlgType==='stock') await crud.create('/stock',{productId:dlgData.productId,warehouseId:dlgData.warehouseId,delta:dlgData.delta})
+  1368→                else if (dlgType==='registerItem') {
+  1369→                  // Register Item: create product + stock-in in one step
+  1370→                  if (!dlgData.name?.trim()) { toast({ title: 'Enter product name', variant: 'destructive' }); return }
+  1371→                  if (!dlgData.sku?.trim()) { toast({ title: 'Enter SKU', variant: 'destructive' }); return }
+  1372→                  if (!dlgData.warehouseId) { toast({ title: 'Select a warehouse', variant: 'destructive' }); return }
+  1373→                  if (!dlgData.quantity || dlgData.quantity <= 0) { toast({ title: 'Enter a positive quantity', variant: 'destructive' }); return }
+  1374→                  if (!eid) { toast({ title: 'No enterprise selected', variant: 'destructive' }); return }
+  1375→                  const productData = { enterpriseId: eid, name: dlgData.name.trim(), sku: dlgData.sku.trim(), description: dlgData.description || '', categoryId: dlgData.categoryId || null, price: dlgData.price || 0, cost: dlgData.cost || 0, unit: dlgData.unit || 'pcs', reorderLevel: dlgData.reorderLevel || 0, isActive: true }
+  1376→                  let prodRes: any = null
+  1377→                  try {
+  1378→                    prodRes = await apiFetch('/products', { method: 'POST', body: JSON.stringify(productData) })
+  1379→                  } catch (e: any) {
+  1380→                    toast({ title: `Failed to create product: ${e.message}`, variant: 'destructive' })
+  1381→                    return
+  1382→                  }
+  1383→                  if (!prodRes || !prodRes.id) { toast({ title: 'Failed to create product - no ID returned', variant: 'destructive' }); return }
+  1384→                  try {
+  1385→                    await apiFetch('/stock', { method: 'POST', body: JSON.stringify({ action: 'stockIn', productId: prodRes.id, warehouseId: dlgData.warehouseId, quantity: dlgData.quantity }) })
+  1386→                    toast({ title: `Registered: ${dlgData.name} with ${dlgData.quantity} ${dlgData.unit || 'pcs'}` })
+  1387→                  } catch (e: any) {
+  1388→                    toast({ title: `Product created but stock-in failed: ${e.message}. Add stock manually.`, variant: 'destructive' })
+  1389→                  }
+  1390→                  await loadData()
+  1391→                }
+  1392→                else if (dlgType==='stockIn') {
+  1393→                  if (!dlgData.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }
+  1394→                  if (!dlgData.warehouseId) { toast({ title: 'Select a warehouse', variant: 'destructive' }); return }
+  1395→                  if (!dlgData.quantity || dlgData.quantity <= 0) { toast({ title: 'Enter a positive quantity', variant: 'destructive' }); return }
+  1396→                  try {
+  1397→                    await apiFetch('/stock', { method: 'POST', body: JSON.stringify({ action: 'stockIn', productId: dlgData.productId, warehouseId: dlgData.warehouseId, quantity: dlgData.quantity }) })
+  1398→                    toast({ title: `Stock in: +${dlgData.quantity} added` })
+  1399→                  } catch (e: any) {
+  1400→                    toast({ title: `Stock in failed: ${e.message}`, variant: 'destructive' })
+  1401→                  }
+  1402→                  await loadData()
+  1403→                }
+  1404→                else if (dlgType==='stockOutItem') {
+  1405→                  const recorderId = sd.recorderId
+  1406→                  if (!recorderId) { toast({ title: 'No recorder selected', variant: 'destructive' }); return }
+  1407→                  if (!sd.enterpriseId) sd.enterpriseId = eid
+  1408→                  await crud.create(`/stock-out/${recorderId}/item`, sd)
+  1409→                }
+  1410→                else if (dlgEdit) await crud.update(dlgType==='stockOut' ? `/stock-out/${dlgEdit.id}` : `/${dlgType}s/${dlgEdit.id}`,sd)
+  1411→                else if (dlgType==='stockOut') await crud.create('/stock-out', sd)
+  1412→                else await crud.create(`/${dlgType}s`, sd)
+  1413→                } catch(e: any) { toast({ title: e.message, variant: 'destructive' }) }
+  1414→                setDlgSubmitting(false)
+  1415→                setDlgOpen(false)
+  1416→              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{dlgSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}{dlgEdit?t(locale,'save'):t(locale,'add')}</Button></DialogFooter>
+  1417→          </DialogContent>
+  1418→        </Dialog>
+  1419→      </div>
+  1420→    </TooltipProvider>
+  1421→  )
+  1422→}
+  1423→

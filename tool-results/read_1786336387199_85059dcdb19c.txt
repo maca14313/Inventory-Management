@@ -1,0 +1,1423 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+     4→import { useTheme } from 'next-themes'
+     5→import { Button } from '@/components/ui/button'
+     6→import { Input } from '@/components/ui/input'
+     7→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+     8→import { Badge } from '@/components/ui/badge'
+     9→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+    10→import { Label } from '@/components/ui/label'
+    11→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    12→import { Textarea } from '@/components/ui/textarea'
+    13→import { Switch } from '@/components/ui/switch'
+    14→import { Separator } from '@/components/ui/separator'
+    15→import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+    16→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    17→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    18→import {
+    19→  LayoutDashboard, Package, Warehouse as WHIcon, Users, ShoppingCart, Tag,
+    20→  Plus, Trash2, Pencil, Search, AlertTriangle, TrendingUp,
+    21→  Box, Truck, Building2, GitBranch, Shield, Globe, LogOut, Loader2,
+    22→  Key, Lock, ToggleLeft, ToggleRight, Menu, X, ChevronDown, ChevronRight,
+    23→  ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw, Calendar, Check, Eye, LayoutGrid, List,
+    24→  Sun, Moon, Phone, Mail, MapPin, FileText, Hash, ChevronLeft, Sparkles, ChevronRight as ChevronRightIcon, SkipBack, SkipForward, Printer, Filter, CalendarDays,
+    25→  MessageSquare, Send,
+    26→} from 'lucide-react'
+    27→import {
+    28→  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
+    29→  Tooltip as RTooltip, ResponsiveContainer, Legend, LineChart, Line,
+    30→} from 'recharts'
+    31→import { toast } from '@/hooks/use-toast'
+    32→import { t, type Locale, locales } from '@/lib/i18n'
+    33→import {
+    34→  type RoleLevel, type Permission, type EnterpriseAbility,
+    35→  ROLE_HIERARCHY, ROLE_LABELS, ROLE_DESCRIPTIONS,
+    36→  ALL_ABILITIES, ABILITY_LABELS,
+    37→  PERMISSION_GROUPS, MANAGEABLE_ROLES,
+    38→  hasPermission, canManageRole, getPermissions, getNavItemsForRole,
+    39→} from '@/lib/rbac'
+    40→import { useAuthStore } from '@/lib/auth-store'
+    41→import { apiFetch } from '@/lib/api'
+    42→import { MEASUREMENTS } from '@/lib/db'
+    43→
+    44→const BASE = process.env.NEXT_PUBLIC_BASE_PATH || ''
+    45→const SORTED_MEASUREMENTS = [...MEASUREMENTS].sort((a, b) => a.localeCompare(b))
+    46→
+    47→const ICONS: Record<string, React.ComponentType<any>> = {
+    48→  LayoutDashboard, Package, Warehouse: WHIcon, Users, ShoppingCart, Tag,
+    49→  Box, Truck, Building2, GitBranch, Shield, Globe, ArrowUpFromLine, ArrowDownToLine, Layers,
+    50→}
+    51→
+    52→const PIE_COLORS = ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316']
+    53→
+    54→interface Enterprise { id: number; name: string; code: string; contactEmail: string; contactPhone: string; address: string; isActive: boolean; maxBranches: number; maxWarehouses: number; maxUsers: number }
+    55→interface Branch { id: number; enterpriseId: number; name: string; code: string; location: string; managerName: string; managerEmail: string; isActive: boolean }
+    56→interface Warehouse { id: number; enterpriseId: number; branchId: number; name: string; code: string; location: string; capacity: number; managerName: string; isActive: boolean }
+    57→interface User { id: number; enterpriseId: number | null; branchId: number | null; warehouseId: number | null; username: string; email: string; fullName: string; role: RoleLevel; isActive: boolean }
+    58→interface Category { id: number; enterpriseId: number; name: string; description: string }
+    59→interface Supplier { id: number; enterpriseId: number; name: string; contactPerson: string; email: string; phone: string; address: string }
+    60→interface Product { id: number; enterpriseId: number; name: string; sku: string; description: string; categoryId: number | null; price: number; cost: number; unit: string; reorderLevel: number; isActive: boolean }
+    61→interface StockItem { id: number; productId: number; warehouseId: number; quantity: number }
+    62→interface Order { id: number; enterpriseId: number; type: 'purchase' | 'sales'; supplierId: number | null; warehouseId: number | null; status: string; totalAmount: number; notes: string; createdBy: number | null }
+    63→interface AuditEntry { id: number; userId: number | null; enterpriseId: number | null; action: string; entity: string; entityId: number | null; details: string; createdAt: string }
+    64→interface Feature { id: number; enterpriseId: number; feature: string; enabled: boolean }
+    65→interface Lot { id: number; lotNumber: string; productId: number; warehouseId: number; quantity: number; remainingQty: number; unit: string; costPerUnit: number; supplierName: string | null; source: string; sourceRef: string | null; notes: string | null; receivedDate: string; closedAt: string | null; status: string; createdAt: string }
+    66→interface StockInItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; createdAt: string }
+    67→interface StockInRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockInItem[]; createdAt: string }
+    68→interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string }
+    69→interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[]; createdAt: string }
+    70→interface DashboardStats { enterpriseCount: number; branchCount: number; warehouseCount: number; userCount: number; productCount: number; orderCount: number; pendingOrderCount: number; totalStockValue: number; lowStockProducts: { id: number; name: string; sku: string; reorderLevel: number; totalQty: number }[]; totalLots: number; openLots: number; stockInCount: number; stockOutCount: number }
+    71→interface AnalyticsData { stockByWarehouse: { name: string; value: number }[]; stockByCategory: { name: string; value: number }[]; topProducts: { name: string; quantity: number; value: number }[]; recentActivity: { id: number; action: string; entity: string; entityId: number | null; details: string; createdAt: string; userName: string | null }[] }
+    72→
+    73→// Custom Alphabetical Month-Year Date Picker
+    74→const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+    75→function CustomDatePicker({ value, onChange, compact }: { value: string; onChange: (v: string) => void; compact?: boolean }) {
+    76→  const [open, setOpen] = useState(false)
+    77→  const today = new Date()
+    78→  const [year, setYear] = useState(today.getFullYear())
+    79→  const [month, setMonth] = useState(today.getMonth())
+    80→  const parsed = value ? new Date(value + 'T00:00:00') : null
+    81→
+    82→  const years = Array.from({ length: 10 }, (_, i) => today.getFullYear() - 2 + i)
+    83→  // Months sorted alphabetically
+    84→  const alphaMonths = MONTHS.map((m, i) => ({ name: m, index: i })).sort((a, b) => a.name.localeCompare(b.name))
+    85→
+    86→  const daysInMonth = new Date(year, month + 1, 0).getDate()
+    87→  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
+    88→
+    89→  const selectDate = (d: number) => {
+    90→    const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    91→    onChange(iso)
+    92→    setOpen(false)
+    93→  }
+    94→
+    95→  return (
+    96→    <div className="relative">
+    97→      <button type="button" onClick={() => setOpen(!open)}
+    98→        className={`w-full flex items-center gap-2 rounded-lg border border-input bg-background text-foreground hover:bg-accent transition ${compact ? 'px-2 py-1 text-xs' : 'px-3 py-2 text-sm'}`}>
+    99→        <Calendar className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-muted-foreground shrink-0`} />
+   100→        {parsed ? parsed.toLocaleDateString() : <span className="text-muted-foreground">Pick a date</span>}
+   101→      </button>
+   102→      {open && (
+   103→        <div className="absolute z-50 mt-1 w-64 rounded-xl border bg-popover p-3 shadow-xl">
+   104→          <div className="flex gap-2 mb-3">
+   105→            <Select value={String(year)} onValueChange={v => setYear(parseInt(v))}>
+   106→              <SelectTrigger className="h-8 text-xs flex-1"><SelectValue /></SelectTrigger>
+   107→              <SelectContent>{years.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
+   108→            </Select>
+   109→            <Select value={String(month)} onValueChange={v => setMonth(parseInt(v))}>
+   110→              <SelectTrigger className="h-8 text-xs flex-1"><SelectValue /></SelectTrigger>
+   111→              <SelectContent className="max-h-48">
+   112→                {alphaMonths.map(m => <SelectItem key={m.index} value={String(m.index)}>{m.name}</SelectItem>)}
+   113→              </SelectContent>
+   114→            </Select>
+   115→          </div>
+   116→          <div className="grid grid-cols-7 gap-1">
+   117→            {days.map(d => {
+   118→              const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+   119→              const isSelected = value === iso
+   120→              return <button key={d} onClick={() => selectDate(d)}
+   121→                className={`h-7 w-7 rounded-md text-xs font-medium transition ${isSelected ? 'bg-blue-600 text-white' : 'hover:bg-accent text-foreground'}`}>{d}</button>
+   122→            })}
+   123→          </div>
+   124→        </div>
+   125→      )}
+   126→    </div>
+   127→  )
+   128→}
+   129→
+   130→// ─── Helper: icon-prefixed label
+   131→function IconLabel({ icon: Icon, children }: { icon: React.ComponentType<any>; children: React.ReactNode }) {
+   132→  return <Label className="text-xs font-medium flex items-center gap-1.5"><Icon className="w-3.5 h-3.5 text-muted-foreground" />{children}</Label>
+   133→}
+   134→
+   135→// ─── Helper: section header
+   136→function SectionHeader({ icon: Icon, children }: { icon: React.ComponentType<any>; children: React.ReactNode }) {
+   137→  return <div className="flex items-center gap-2 pb-1"><Icon className="w-4 h-4 text-blue-500" /><span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{children}</span></div>
+   138→}
+   139→
+   140→// ─── Pagination helper
+   141→function Pager({ page, totalPages, onPageChange }: { page: number; totalPages: number; onPageChange: (p: number) => void }) {
+   142→  if (totalPages <= 1) return null
+   143→  return (
+   144→    <div className="flex items-center justify-between pt-2">
+   145→      <span className="text-[11px] text-muted-foreground">Page {page} of {totalPages}</span>
+   146→      <div className="flex items-center gap-1">
+   147→        <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => onPageChange(1)} className="h-7 w-7 p-0"><SkipBack className="w-3 h-3" /></Button>
+   148→        <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => onPageChange(page - 1)} className="h-7 w-7 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+   149→        <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)} className="h-7 w-7 p-0"><ChevronRight className="w-3 h-3" /></Button>
+   150→        <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => onPageChange(totalPages)} className="h-7 w-7 p-0"><SkipForward className="w-3 h-3" /></Button>
+   151→      </div>
+   152→    </div>
+   153→  )
+   154→}
+   155→
+   156→export default function IMSApp() {
+   157→  const auth = useAuthStore()
+   158→  const { theme, setTheme } = useTheme()
+   159→  const [mounted, setMounted] = useState(false)
+   160→  const [locale, setLocale] = useState<Locale>('en')
+   161→  const [page, setPage] = useState('dashboard')
+   162→  const [sidebarOpen, setSidebarOpen] = useState(false)
+   163→  const [loginUser, setLoginUser] = useState('superadmin')
+   164→  const [loginPass, setLoginPass] = useState('admin123')
+   165→  const [loginLoading, setLoginLoading] = useState(false)
+   166→
+   167→  const [enterprises, setEnterprises] = useState<Enterprise[]>([])
+   168→  const [branches, setBranches] = useState<Branch[]>([])
+   169→  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+   170→  const [allUsers, setAllUsers] = useState<User[]>([])
+   171→  const [categories, setCategories] = useState<Category[]>([])
+   172→  const [suppliers, setSuppliers] = useState<Supplier[]>([])
+   173→  const [products, setProducts] = useState<Product[]>([])
+   174→  const [stockData, setStockData] = useState<StockItem[]>([])
+   175→  const [orders, setOrders] = useState<Order[]>([])
+   176→  const [auditData, setAuditData] = useState<AuditEntry[]>([])
+   177→  const [features, setFeatures] = useState<Feature[]>([])
+   178→  const [stockOutData, setStockOutData] = useState<StockOutRecorder[]>([])
+   179→  const [stockInData, setStockInData] = useState<StockInRecorder[]>([])
+   180→  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null)
+   181→  const [stats, setStats] = useState<DashboardStats | null>(null)
+   182→  const [loading, setLoading] = useState(false)
+   183→
+   184→  // Lots dialog state (Change 2)
+   185→  const [lotsData, setLotsData] = useState<Lot[]>([])
+   186→  const [lotsDialog, setLotsDialog] = useState<{ open: boolean; productId: number; warehouseId: number; productName: string }>({ open: false, productId: 0, warehouseId: 0, productName: '' })
+   187→  const [lotsPage, setLotsPage] = useState(1)
+   188→  const [lotsLoading, setLotsLoading] = useState(false)
+   189→  const LOTS_PER_PAGE = 8
+   190→
+   191→  // Products Tab 2: multi-item register rows
+   192→  const [registerRows, setRegisterRows] = useState<{ name: string; sku: string; categoryId: number | null; unit: string; price: number; cost: number; reorderLevel: number; quantity: number; costPerUnit: number; supplierName: string; notes: string }[]>([])
+   193→  const [registerWarehouseId, setRegisterWarehouseId] = useState<number | null>(null)
+   194→  const [registerSubmitting, setRegisterSubmitting] = useState(false)
+   195→
+   196→  // AI Assistant widget
+   197→  const [aiChat, setAiChat] = useState<{ open: boolean; messages: { role: 'user' | 'assistant'; content: string }[]; input: string; loading: boolean }>({
+   198→    open: false,
+   199→    messages: [{ role: 'assistant', content: 'Hello! I can help you with inventory questions. Ask me about stock, products, or warehouses.' }],
+   200→    input: '',
+   201→    loading: false,
+   202→  })
+   203→
+   204→  const [dlgOpen, setDlgOpen] = useState(false)
+   205→  const [dlgType, setDlgType] = useState('')
+   206→  const [dlgData, setDlgData] = useState<any>({})
+   207→  const [dlgEdit, setDlgEdit] = useState<any>(null)
+   208→  const [stockOutMode, setStockOutMode] = useState<'pic' | 'table'>('pic')
+   209→  const [stockInMode, setStockInMode] = useState<'pic' | 'table'>('pic')
+   210→  const [expandedOut, setExpandedOut] = useState<number | null>(null)
+   211→  const [expandingOutId, setExpandingOutId] = useState<number | null>(null)
+   212→  const [expandedIn, setExpandedIn] = useState<number | null>(null)
+   213→  const [expandingInId, setExpandingInId] = useState<number | null>(null)
+   214→
+   215→  // Stock Out Pick mode: search + per-product inputs
+   216→  const [stockOutSearch, setStockOutSearch] = useState('')
+   217→  const [stockOutPickInputs, setStockOutPickInputs] = useState<Record<string, { qty: number; unit: string; isReturnable: boolean; returnDeadline: string }>>({})
+   218→  // Stock Out Table mode: per-product row inputs (keyed by productId)
+   219→  const [stockOutTableRowInputs, setStockOutTableRowInputs] = useState<Record<string, { qty: number; unit: string; isReturnable: boolean; returnDeadline: string }>>({})
+   220→  // Pagination
+   221→  const [stockOutItemPage, setStockOutItemPage] = useState(1)
+   222→  const [stockOutProductPage, setStockOutProductPage] = useState(1)
+   223→  const STOCK_OUT_ITEMS_PER_PAGE = 10
+   224→  const STOCK_OUT_PRODUCTS_PER_PAGE = 8
+   225→  // Loading states for buttons
+   226→  const [submittingRecorder, setSubmittingRecorder] = useState<number | null>(null)
+   227→  const [addingItem, setAddingItem] = useState(false)
+   228→  const [dlgSubmitting, setDlgSubmitting] = useState(false)
+   229→  // Pick mode: pagination inside select dropdown
+   230→  const [stockOutPickSelectPage, setStockOutPickSelectPage] = useState(1)
+   231→  const STOCK_OUT_PICK_SELECT_PER_PAGE = 20
+   232→  // Stock Out recorder list filters & pagination
+   233→  const [stockOutRecPage, setStockOutRecPage] = useState(1)
+   234→  const STOCK_OUT_REC_PER_PAGE = 5
+   235→  const [stockOutFilterDateFrom, setStockOutFilterDateFrom] = useState('')
+   236→  const [stockOutFilterDateTo, setStockOutFilterDateTo] = useState('')
+   237→  const [stockOutFilterStatus, setStockOutFilterStatus] = useState('')
+   238→  const [stockOutFilterPerson, setStockOutFilterPerson] = useState('')
+   239→  // Pending items per recorder (local array before API submission)
+   240→  const [pendingStockOutItems, setPendingStockOutItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string }[]>>({})
+   241→  let _pendingTempId = 0
+   242→  const getNextTempId = () => --_pendingTempId
+   243→  const getPendingItems = (recorderId: number) => pendingStockOutItems[recorderId] || []
+   244→  const addPendingItem = (recorderId: number, item: Omit<typeof pendingStockOutItems extends Record<number, (infer T)[]> ? T : never, 'tempId'>) => {
+   245→    setPendingStockOutItems(prev => {
+   246→      const existing = (prev[recorderId] || [])
+   247→      const dupIdx = existing.findIndex(i => i.productId === item.productId && i.unit === item.unit && i.warehouseId === item.warehouseId)
+   248→      if (dupIdx >= 0) {
+   249→        // Sum up quantity for same product+unit+warehouse
+   250→        const updated = [...existing]
+   251→        updated[dupIdx] = { ...updated[dupIdx], quantity: updated[dupIdx].quantity + item.quantity }
+   252→        return { ...prev, [recorderId]: updated }
+   253→      }
+   254→      return { ...prev, [recorderId]: [...existing, { ...item, tempId: Date.now() + Math.random() }] }
+   255→    })
+   256→  }
+   257→  const removePendingItem = (recorderId: number, tempId: number) => {
+   258→    setPendingStockOutItems(prev => ({
+   259→      ...prev,
+   260→      [recorderId]: (prev[recorderId] || []).filter(i => i.tempId !== tempId)
+   261→    }))
+   262→  }
+   263→  const clearPendingItems = (recorderId: number) => {
+   264→    setPendingStockOutItems(prev => ({ ...prev, [recorderId]: [] }))
+   265→  }
+   266→  // Submit all pending items for a recorder to the API
+   267→  const submitPendingItems = async (recorderId: number, enterpriseId: number) => {
+   268→    const items = pendingStockOutItems[recorderId] || []
+   269→    if (items.length === 0) { toast({ title: 'No items to submit', variant: 'destructive' }); return }
+   270→    setSubmittingRecorder(recorderId)
+   271→    let submittedCount = 0
+   272→    let lastError = ''
+   273→    try {
+   274→      for (const item of items) {
+   275→        try {
+   276→          await apiFetch(`/stock-out/${recorderId}/item`, {
+   277→            method: 'POST',
+   278→            body: JSON.stringify({ productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, unit: item.unit, isReturnable: item.isReturnable, returnDeadline: item.returnDeadline || null, notes: item.notes || '', enterpriseId })
+   279→          })
+   280→          submittedCount++
+   281→        } catch (e: any) {
+   282→          lastError = e.message
+   283→          break // Stop on first error - stock may be insufficient for remaining items
+   284→        }
+   285→      }
+   286→      if (submittedCount > 0) {
+   287→        toast({ title: `${submittedCount} item(s) added successfully${lastError ? `. Stopped: ${lastError}` : ''}` })
+   288→        clearPendingItems(recorderId)
+   289→      } else {
+   290→        toast({ title: lastError || 'Failed to add items', variant: 'destructive' })
+   291→      }
+   292→      await loadData(false) // ALWAYS refresh to reflect partial or full changes
+   293→    } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData(false) }
+   294→    setSubmittingRecorder(null)
+   295→  }
+   296→  // Table mode: get/set per-product row input
+   297→  const getRowInput = (productId: number) => stockOutTableRowInputs[String(productId)] || { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }
+   298→  const updateRowInput = (productId: number, updates: Partial<{ qty: number; unit: string; isReturnable: boolean; returnDeadline: string }>) => {
+   299→    setStockOutTableRowInputs(prev => ({ ...prev, [String(productId)]: { ...((prev[String(productId)]) || { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }), ...updates } }))
+   300→  }
+   301→  // Helper: get available stock for a product in a warehouse
+   302→  const getAvailableStock = (productId: number, warehouseId: number): number => {
+   303→    const s = stockData.find(s => s.productId === productId && s.warehouseId === warehouseId)
+   304→    return s ? s.quantity : 0
+   305→  }
+   306→
+   307→  // ─── Stock In state (mirrors Stock Out, emerald theme) ─────────────
+   308→  const [stockInSearch, setStockInSearch] = useState('')
+   309→  const [stockSearch, setStockSearch] = useState('')
+   310→  const [stockInPickInputs, setStockInPickInputs] = useState<Record<string, { productId: number; qty: number; unit: string; costPerUnit: number; notes: string }>>({})
+   311→  const [stockInTableRowInputs, setStockInTableRowInputs] = useState<Record<string, { qty: number; unit: string; costPerUnit: number; notes: string }>>({})
+   312→  const [stockInItemPage, setStockInItemPage] = useState(1)
+   313→  const [stockInProductPage, setStockInProductPage] = useState(1)
+   314→  const STOCK_IN_ITEMS_PER_PAGE = 10
+   315→  const STOCK_IN_PRODUCTS_PER_PAGE = 8
+   316→  const [stockInPickSelectPage, setStockInPickSelectPage] = useState(1)
+   317→  const STOCK_IN_PICK_SELECT_PER_PAGE = 20
+   318→  const [stockInRecPage, setStockInRecPage] = useState(1)
+   319→  const STOCK_IN_REC_PER_PAGE = 5
+   320→  const [stockInFilterDateFrom, setStockInFilterDateFrom] = useState('')
+   321→  const [stockInFilterDateTo, setStockInFilterDateTo] = useState('')
+   322→  const [stockInFilterStatus, setStockInFilterStatus] = useState('')
+   323→  const [stockInFilterPerson, setStockInFilterPerson] = useState('')
+   324→  const [pendingStockInItems, setPendingStockInItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }[]>>({})
+   325→  const getPendingInItems = (recorderId: number) => pendingStockInItems[recorderId] || []
+   326→  const addPendingInItem = (recorderId: number, item: { productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }) => {
+   327→    setPendingStockInItems(prev => {
+   328→      const existing = (prev[recorderId] || [])
+   329→      const dupIdx = existing.findIndex(i => i.productId === item.productId && i.unit === item.unit && i.warehouseId === item.warehouseId)
+   330→      if (dupIdx >= 0) {
+   331→        const updated = [...existing]
+   332→        updated[dupIdx] = { ...updated[dupIdx], quantity: updated[dupIdx].quantity + item.quantity }
+   333→        return { ...prev, [recorderId]: updated }
+   334→      }
+   335→      return { ...prev, [recorderId]: [...existing, { ...item, tempId: Date.now() + Math.random() }] }
+   336→    })
+   337→  }
+   338→  const removePendingInItem = (recorderId: number, tempId: number) => {
+   339→    setPendingStockInItems(prev => ({
+   340→      ...prev,
+   341→      [recorderId]: (prev[recorderId] || []).filter(i => i.tempId !== tempId)
+   342→    }))
+   343→  }
+   344→  const clearPendingInItems = (recorderId: number) => {
+   345→    setPendingStockInItems(prev => ({ ...prev, [recorderId]: [] }))
+   346→  }
+   347→  const submitPendingInItems = async (recorderId: number, enterpriseId: number) => {
+   348→    const items = pendingStockInItems[recorderId] || []
+   349→    if (items.length === 0) { toast({ title: 'No items to submit', variant: 'destructive' }); return }
+   350→    setSubmittingRecorder(recorderId)
+   351→    let submittedCount = 0
+   352→    let lastError = ''
+   353→    try {
+   354→      for (const item of items) {
+   355→        try {
+   356→          await apiFetch(`/stock-in/${recorderId}/item`, {
+   357→            method: 'POST',
+   358→            body: JSON.stringify({ productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, unit: item.unit, costPerUnit: item.costPerUnit, notes: item.notes || '', enterpriseId })
+   359→          })
+   360→          submittedCount++
+   361→        } catch (e: any) {
+   362→          lastError = e.message
+   363→          break
+   364→        }
+   365→      }
+   366→      if (submittedCount > 0) {
+   367→        toast({ title: `${submittedCount} item(s) added successfully${lastError ? `. Stopped: ${lastError}` : ''}` })
+   368→        clearPendingInItems(recorderId)
+   369→      } else {
+   370→        toast({ title: lastError || 'Failed to add items', variant: 'destructive' })
+   371→      }
+   372→      await loadData(false)
+   373→    } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData(false) }
+   374→    setSubmittingRecorder(null)
+   375→  }
+   376→  const getInRowInput = (productId: number) => stockInTableRowInputs[String(productId)] || { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }
+   377→  const updateInRowInput = (productId: number, updates: Partial<{ qty: number; unit: string; costPerUnit: number; notes: string }>) => {
+   378→    setStockInTableRowInputs(prev => ({ ...prev, [String(productId)]: { ...((prev[String(productId)]) || { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }), ...updates } }))
+   379→  }
+   380→
+   381→  // ─── Lots dialog (Change 2) ─────────────────────────────────────────
+   382→  const viewLots = async (productId: number, warehouseId: number, productName: string) => {
+   383→    setLotsDialog({ open: true, productId, warehouseId, productName })
+   384→    setLotsData([]); setLotsPage(1); setLotsLoading(true)
+   385→    try {
+   386→      const res = await fetch(`${BASE}/api/lots?productId=${productId}&warehouseId=${warehouseId}`, { headers: { ...auth.getAuthHeaders() } })
+   387→      const data = await res.json()
+   388→      setLotsData(Array.isArray(data) ? data : [])
+   389→    } catch (e: any) {
+   390→      console.error('viewLots error:', e)
+   391→      setLotsData([])
+   392→    }
+   393→    setLotsLoading(false)
+   394→  }
+   395→
+   396→  // ─── AI assistant: send message ─────────────────────────────────────
+   397→  const sendAiMessage = async () => {
+   398→    const msg = aiChat.input.trim()
+   399→    if (!msg || aiChat.loading) return
+   400→    const newMessages = [...aiChat.messages, { role: 'user' as const, content: msg }]
+   401→    setAiChat({ ...aiChat, messages: newMessages, input: '', loading: true })
+   402→    try {
+   403→      const res = await fetch(`${BASE}/api/ai-assistant`, {
+   404→        method: 'POST',
+   405→        headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() },
+   406→        body: JSON.stringify({ message: msg })
+   407→      })
+   408→      const data = await res.json()
+   409→      const reply = data.reply || 'Sorry, I could not process that.'
+   410→      setAiChat({ ...aiChat, messages: [...newMessages, { role: 'assistant', content: reply }], loading: false })
+   411→    } catch (e: any) {
+   412→      setAiChat({ ...aiChat, messages: [...newMessages, { role: 'assistant', content: `Error: ${e.message}` }], loading: false })
+   413→    }
+   414→  }
+   415→
+   416→  const role = auth.role
+   417→  const eid = auth.enterpriseId
+   418→
+   419→  const handleLogin = useCallback(async () => {
+   420→    setLoginLoading(true)
+   421→    try {
+   422→      const res = await fetch(`${BASE}/api/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: loginUser, password: loginPass }) })
+   423→      const data = await res.json()
+   424→      if (!res.ok) { toast({ title: data.error || 'Login failed', variant: 'destructive' }); setLoginLoading(false); return }
+   425→      auth.login(data); setPage('dashboard'); toast({ title: `Welcome, ${data.fullName}` })
+   426→    } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
+   427→    setLoginLoading(false)
+   428→  }, [loginUser, loginPass, auth])
+   429→
+   430→  const loadData = useCallback(async (showGlobalLoading = false) => {
+   431→    if (!auth.isLoggedIn) return
+   432→    if (showGlobalLoading) setLoading(true)
+   433→    try {
+   434→      const h = { 'Content-Type': 'application/json', ...auth.getAuthHeaders() }
+   435→      const fArr = (url: string) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err); return [] } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return [] })
+   436→      const fObj = (url: string, fallback: any = null) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err); return fallback } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return fallback })
+   437→      const defaultStats: DashboardStats = { enterpriseCount: 0, branchCount: 0, warehouseCount: 0, userCount: 0, productCount: 0, orderCount: 0, pendingOrderCount: 0, totalStockValue: 0, lowStockProducts: [], totalLots: 0, openLots: 0, stockInCount: 0, stockOutCount: 0 }
+   438→      const defaultAnalytics: AnalyticsData = { stockByWarehouse: [], stockByCategory: [], topProducts: [], recentActivity: [] }
+   439→      const [s, e, b, w, u, c, sup, p, st, o, a, feat, so, si, an] = await Promise.all([
+   440→        fObj('/dashboard', defaultStats), fArr('/enterprises'), fArr('/branches'), fArr('/warehouses'), fArr('/users'),
+   441→        fArr('/categories'), fArr('/suppliers'), fArr('/products'), fArr('/stock'), fArr('/orders'),
+   442→        fArr('/audit'), fArr('/features'), fArr('/stock-out'), fArr('/stock-in'), fObj('/analytics', defaultAnalytics),
+   443→      ])
+   444→      // Ensure stats is always a proper object with all required fields
+   445→      const safeStats: DashboardStats = s && typeof s === 'object' && !Array.isArray(s) ? { ...defaultStats, ...s } : defaultStats
+   446→      const safeAnalytics: AnalyticsData = an && typeof an === 'object' && !Array.isArray(an) ? { ...defaultAnalytics, ...an } : defaultAnalytics
+   447→      setStats(safeStats); setEnterprises(Array.isArray(e) ? e : []); setBranches(Array.isArray(b) ? b : []); setWarehouses(Array.isArray(w) ? w : [])
+   448→      setAllUsers(Array.isArray(u) ? u : []); setCategories(Array.isArray(c) ? c : []); setSuppliers(Array.isArray(sup) ? sup : []); setProducts(Array.isArray(p) ? p : [])
+   449→      setStockData(Array.isArray(st) ? st : []); setOrders(Array.isArray(o) ? o : []); setAuditData(Array.isArray(a) ? a : []); setFeatures(Array.isArray(feat) ? feat : [])
+   450→      setStockOutData(Array.isArray(so) ? so : []); setStockInData(Array.isArray(si) ? si : []); setAnalyticsData(safeAnalytics)
+   451→    } catch (e: any) { console.error('loadData error:', e) }
+   452→    if (showGlobalLoading) setLoading(false)
+   453→  }, [auth.isLoggedIn, auth.userId, auth.role, auth.enterpriseId, auth.branchId, auth.warehouseId])
+   454→
+   455→  useEffect(() => { setMounted(true) }, [])
+   456→  useEffect(() => { if (auth.isLoggedIn) loadData(true) }, [auth.isLoggedIn, auth.userId])
+   457→
+   458→  const [crudLoading, setCrudLoading] = useState<Set<string>>(new Set())
+   459→  const crudKey = (action: string, ep: string) => `${action}:${ep}`
+   460→  const isCrudLoading = (action: string, ep: string) => crudLoading.has(crudKey(action, ep))
+   461→  const crud = {
+   462→    create: async (ep: string, d: any) => { const k = crudKey('create', ep); setCrudLoading(prev => new Set(prev).add(k)); try { await apiFetch(ep, { method: 'POST', body: JSON.stringify(d) }); toast({ title: 'Created successfully' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setCrudLoading(prev => { const n = new Set(prev); n.delete(k); return n }) } },
+   463→    createSilent: async (ep: string, d: any) => { const k = crudKey('create', ep); setCrudLoading(prev => new Set(prev).add(k)); try { await apiFetch(ep, { method: 'POST', body: JSON.stringify(d) }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData() } finally { setCrudLoading(prev => { const n = new Set(prev); n.delete(k); return n }) } },
+   464→    update: async (ep: string, d: any) => { const k = crudKey('update', ep); setCrudLoading(prev => new Set(prev).add(k)); try { await apiFetch(ep, { method: 'PUT', body: JSON.stringify(d) }); toast({ title: 'Updated successfully' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData() } finally { setCrudLoading(prev => { const n = new Set(prev); n.delete(k); return n }) } },
+   465→    remove: async (ep: string) => { const k = crudKey('remove', ep); setCrudLoading(prev => new Set(prev).add(k)); try { await apiFetch(ep, { method: 'DELETE' }); toast({ title: 'Deleted' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData() } finally { setCrudLoading(prev => { const n = new Set(prev); n.delete(k); return n }) } },
+   466→  }
+   467→
+   468→  const openCreate = (type: string) => { setDlgType(type); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }
+   469→  const openEdit = (type: string, item: any) => { setDlgType(type); setDlgEdit(item); setDlgData({ ...item }); setDlgOpen(true) }
+   470→
+   471→  const fmt = (n: number) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(n)
+   472→  const fmtN = (n: number) => new Intl.NumberFormat(locale).format(n)
+   473→  const statusColor = (status: string) => {
+   474→    const m: Record<string, string> = {
+   475→      received: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400',
+   476→      approved: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400',
+   477→      pending: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400',
+   478→      shipped: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-400',
+   479→      cancelled: 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400',
+   480→      draft: 'bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400',
+   481→      confirmed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400',
+   482→      open: 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400',
+   483→      closed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400',
+   484→      partial_return: 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400',
+   485→      returned: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400',
+   486→    }
+   487→    return m[status] || 'bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400'
+   488→  }
+   489→  const statusBadge = (status: string) => <Badge className={`${statusColor(status)} border-0 text-[11px] font-semibold`}>{status.replace(/_/g, ' ')}</Badge>
+   490→
+   491→  const navItems = getNavItemsForRole(role!).concat([
+   492→    { key: 'stockIn', label: 'Stock In', icon: 'ArrowDownToLine', href: '/stock-in', permission: 'stock:view' as Permission },
+   493→    { key: 'stockOut', label: 'Stock Out', icon: 'ArrowUpFromLine', href: '/stock-out', permission: 'orders:view' as Permission },
+   494→    { key: 'features', label: 'Features', icon: 'ToggleLeft', href: '/features', permission: 'enterprises:set_features' as Permission },
+   495→  ]).filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)
+   496→
+   497→  // ─── LOGIN ──────────────────────────────────────────────
+   498→  if (!auth.isLoggedIn) {
+   499→    const dir = locales.find(l => l.code === locale)?.dir || 'ltr'
+   500→    if (!mounted) return <div suppressHydrationWarning className="min-h-screen bg-background" />
+   501→    return (
+   502→      <div dir={dir} suppressHydrationWarning className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 flex items-center justify-center p-4">
+   503→        <Card className="w-full max-w-md shadow-2xl border-0">
+   504→          <CardHeader className="text-center pb-3">
+   505→            <div className="mx-auto mb-3 w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25"><Box className="w-8 h-8 text-white" /></div>
+   506→            <CardTitle className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">{t(locale, 'loginTitle')}</CardTitle>
+   507→            <CardDescription className="text-muted-foreground">{t(locale, 'loginSubtitle')}</CardDescription>
+   508→          </CardHeader>
+   509→          <CardContent className="space-y-4">
+   510→            <div className="space-y-1"><Label className="text-sm font-medium">Username</Label><Input value={loginUser} onChange={e => setLoginUser(e.target.value)} className="h-10" /></div>
+   511→            <div className="space-y-1"><Label className="text-sm font-medium">{t(locale, 'labelPassword')}</Label><Input type="password" value={loginPass} onChange={e => setLoginPass(e.target.value)} className="h-10" /></div>
+   512→            <Button onClick={handleLogin} disabled={loginLoading} className="w-full h-10 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg shadow-blue-500/25">{loginLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Key className="w-4 h-4 mr-2" />}{t(locale, 'loginButton')}</Button>
+   513→            <Separator />
+   514→            <div className="space-y-2"><Label className="text-muted-foreground text-xs font-medium">Demo Accounts (password: admin123)</Label>
+   515→              <div className="grid grid-cols-1 gap-1.5">{[
+   516→                { u: 'superadmin', label: 'Super Admin', desc: 'Full system', color: 'from-purple-500 to-pink-500' },
+   517→                { u: 'acme_admin', label: 'Enterprise Admin', desc: 'Acme Corp', color: 'from-blue-500 to-cyan-500' },
+   518→                { u: 'acme_hq_admin', label: 'Branch Admin', desc: 'Acme HQ', color: 'from-orange-500 to-amber-500' },
+   519→                { u: 'acme_wh1_admin', label: 'Warehouse Admin', desc: 'Acme WH1', color: 'from-emerald-500 to-teal-500' },
+   520→              ].map(d => (
+   521→                <button key={d.u} onClick={() => { setLoginUser(d.u); setLoginPass('admin123') }}
+   522→                  className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all text-sm flex items-center gap-3 ${loginUser === d.u ? 'bg-blue-50 border-blue-300 dark:bg-blue-500/10 dark:border-blue-500/30' : 'bg-muted/30 border-transparent hover:bg-muted/60'}`}>
+   523→                  <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${d.color} flex items-center justify-center text-white text-xs font-bold shrink-0`}>{d.label.charAt(0)}</div>
+   524→                  <div><span className="font-semibold">{d.label}</span><span className="text-muted-foreground ml-1.5 text-xs">— {d.desc}</span></div>
+   525→                </button>
+   526→              ))}</div>
+   527→            </div>
+   528→            <div className="flex gap-2 justify-center pt-1">{locales.map(l => (
+   529→              <button key={l.code} onClick={() => setLocale(l.code)} className={`px-3 py-1 rounded-lg text-xs font-medium transition ${locale === l.code ? 'bg-blue-600 text-white' : 'bg-muted text-muted-foreground hover:bg-accent'}`}>{l.name}</button>
+   530→            ))}</div>
+   531→          </CardContent>
+   532→        </Card>
+   533→      </div>
+   534→    )
+   535→  }
+   536→
+   537→  const dir = locales.find(l => l.code === locale)?.dir || 'ltr'
+   538→
+   539→  // ─── PAGE RENDERER ──────────────────────────────────────
+   540→  const renderPage = () => {
+   541→    if (loading) return <div className="space-y-4 py-8"><div className="flex items-center justify-center gap-3"><Loader2 className="w-6 h-6 animate-spin text-blue-500" /><span className="text-muted-foreground text-sm">Loading data...</span></div><div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{Array.from({length:4}).map((_,i)=><div key={i} className="h-20 rounded-xl bg-muted/40 animate-pulse" />)}</div><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{Array.from({length:3}).map((_,i)=><div key={i} className="h-16 rounded-xl bg-muted/30 animate-pulse" />)}</div></div>
+   542→
+   543→    // ─── DASHBOARD
+   544→    if (page === 'dashboard') return (
+   545→      <div className="space-y-6">
+   546→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navDashboard')}</h1><Badge className="bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400 border-0 font-medium">{ROLE_LABELS[role!]}</Badge></div>
+   547→        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+   548→          {stats && [
+   549→            { key: 'enterpriseCount', label: t(locale, 'kpiEnterprises'), icon: Building2, gradient: 'from-purple-500 to-pink-500' },
+   550→            { key: 'branchCount', label: t(locale, 'kpiBranches'), icon: GitBranch, gradient: 'from-orange-500 to-amber-500' },
+   551→            { key: 'warehouseCount', label: t(locale, 'kpiWarehouses'), icon: WHIcon, gradient: 'from-cyan-500 to-teal-500' },
+   552→            { key: 'userCount', label: 'Users', icon: Users, gradient: 'from-green-500 to-emerald-500' },
+   553→            { key: 'productCount', label: t(locale, 'kpiProducts'), icon: Package, gradient: 'from-blue-500 to-indigo-500' },
+   554→            { key: 'orderCount', label: t(locale, 'navOrders'), icon: ShoppingCart, gradient: 'from-yellow-500 to-orange-500' },
+   555→            { key: 'pendingOrderCount', label: t(locale, 'kpiPendingOrders'), icon: AlertTriangle, gradient: 'from-red-500 to-pink-500' },
+   556→            { key: 'totalStockValue', label: t(locale, 'kpiStockValue'), icon: TrendingUp, gradient: 'from-emerald-500 to-green-500' },
+   557→            { key: 'totalLots', label: 'Total Lots', icon: Layers, gradient: 'from-violet-500 to-purple-500' },
+   558→            { key: 'openLots', label: 'Open Lots', icon: Layers, gradient: 'from-amber-500 to-yellow-500' },
+   559→            { key: 'stockInCount', label: 'Stock In', icon: ArrowDownToLine, gradient: 'from-emerald-500 to-teal-500' },
+   560→            { key: 'stockOutCount', label: 'Stock Out', icon: ArrowUpFromLine, gradient: 'from-orange-500 to-red-500' },
+   561→          ].map(k => (
+   562→            <Card key={k.key} className="overflow-hidden border-0 shadow-sm"><CardContent className="p-3 sm:p-4">
+   563→              <div className="flex items-center gap-3">
+   564→                <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${k.gradient} flex items-center justify-center shrink-0`}>
+   565→                  <k.icon className="w-4 h-4 text-white" />
+   566→                </div>
+   567→                <div><div className="text-lg sm:text-xl font-bold">{k.key === 'totalStockValue' ? fmt(stats[k.key as keyof DashboardStats] as number) : fmtN(stats[k.key as keyof DashboardStats] as number)}</div>
+   568→                  <div className="text-[11px] text-muted-foreground font-medium">{k.label}</div></div>
+   569→              </div></CardContent></Card>
+   570→          ))}
+   571→        </div>
+   572→        {stats && stats.lowStockProducts.length > 0 && (
+   573→          <Card className="border-red-200 dark:border-red-500/20 shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-red-500 flex items-center gap-2 text-sm"><AlertTriangle className="w-4 h-4" /> {t(locale, 'lowStockAlerts')}</CardTitle></CardHeader>
+   574→          <CardContent><div className="space-y-2">{stats.lowStockProducts.map(p => (
+   575→            <div key={p.id} className="flex flex-col sm:flex-row sm:items-center justify-between text-sm bg-red-50 dark:bg-red-500/10 rounded-lg px-3 py-2 gap-1">
+   576→              <span className="font-medium">{p.name} <span className="text-muted-foreground font-normal">({p.sku})</span></span>
+   577→              <div className="flex items-center gap-3"><span className="text-muted-foreground">Current: <span className="text-red-600 dark:text-red-400 font-bold">{p.totalQty}</span></span><span className="text-muted-foreground">Reorder: {p.reorderLevel}</span></div>
+   578→            </div>))}</div></CardContent></Card>
+   579→        )}
+   580→        {analyticsData && (
+   581→          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+   582→            <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><BarChart className="w-4 h-4 text-emerald-500" /> Stock by Warehouse</CardTitle></CardHeader>
+   583→              <CardContent>
+   584→                {analyticsData.stockByWarehouse.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">No data</div> :
+   585→                  <div className="h-64"><ResponsiveContainer width="100%" height="100%">
+   586→                    <BarChart data={analyticsData.stockByWarehouse}><CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" /><XAxis dataKey="name" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" /><YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" /><RTooltip /><Bar dataKey="value" fill="#10b981" radius={[4,4,0,0]} name="Stock Value" /></BarChart>
+   587→                  </ResponsiveContainer></div>}
+   588→              </CardContent></Card>
+   589→            <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><PieChart className="w-4 h-4 text-blue-500" /> Stock by Category</CardTitle></CardHeader>
+   590→              <CardContent>
+   591→                {analyticsData.stockByCategory.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">No data</div> :
+   592→                  <div className="h-64"><ResponsiveContainer width="100%" height="100%">
+   593→                    <PieChart><Pie data={analyticsData.stockByCategory} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={90} paddingAngle={2}>{analyticsData.stockByCategory.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}</Pie><RTooltip /><Legend wrapperStyle={{ fontSize: 11 }} /></PieChart>
+   594→                  </ResponsiveContainer></div>}
+   595→              </CardContent></Card>
+   596→            <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4 text-violet-500" /> Top Products (by Quantity)</CardTitle></CardHeader>
+   597→              <CardContent>
+   598→                {analyticsData.topProducts.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">No data</div> :
+   599→                  <div className="h-64"><ResponsiveContainer width="100%" height="100%">
+   600→                    <BarChart data={analyticsData.topProducts} layout="vertical" margin={{ left: 20, right: 20 }}><CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" /><XAxis type="number" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" /><YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={100} stroke="hsl(var(--muted-foreground))" /><RTooltip /><Bar dataKey="quantity" fill="#8b5cf6" radius={[0,4,4,0]} /></BarChart>
+   601→                  </ResponsiveContainer></div>}
+   602→              </CardContent></Card>
+   603→            <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Sparkles className="w-4 h-4 text-amber-500" /> Recent Activity</CardTitle></CardHeader>
+   604→              <CardContent>
+   605→                {analyticsData.recentActivity.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">No recent activity</div> :
+   606→                  <div className="max-h-80 overflow-y-auto space-y-2 pr-1">{analyticsData.recentActivity.map(act => (
+   607→                    <div key={act.id} className="bg-muted/40 rounded-lg p-2.5 flex items-start gap-2">
+   608→                      <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-500 flex items-center justify-center shrink-0 text-white text-[10px] font-bold">{(act.userName || 'U').charAt(0).toUpperCase()}</div>
+   609→                      <div className="flex-1 min-w-0"><div className="flex items-center gap-1.5 flex-wrap"><span className="text-xs font-semibold">{act.userName || 'System'}</span><span className="font-mono text-[10px] text-blue-500 bg-blue-50 dark:bg-blue-500/10 px-1.5 py-0.5 rounded">{act.action}</span><span className="text-[10px] text-muted-foreground">{act.entity}</span></div>
+   610→                      {act.details && <div className="text-[11px] text-muted-foreground mt-0.5 truncate">{act.details}</div>}
+   611→                      <div className="text-[10px] text-muted-foreground/70 mt-0.5">{new Date(act.createdAt).toLocaleString()}</div></div>
+   612→                    </div>))}</div>}
+   613→              </CardContent></Card>
+   614→          </div>
+   615→        )}
+   616→      </div>
+   617→    )
+   618→
+   619→    // ─── ENTERPRISES
+   620→    if (page === 'enterprises' && hasPermission(role!, 'enterprises:view')) return (
+   621→      <div className="space-y-5">
+   622→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navEnterprises')}</h1>
+   623→          {hasPermission(role!, 'enterprises:create') && <Button onClick={() => openCreate('enterprise')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newEnterprise')}</Button>}</div>
+   624→        <div className="grid gap-3">{enterprises.map(e => (
+   625→          <Card key={e.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+   626→            <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold shrink-0">{e.name.charAt(0)}</div>
+   627→              <div><div className="font-semibold">{e.name}</div><div className="text-xs text-muted-foreground">{e.code} · {e.address}</div></div></div>
+   628→            <div className="flex items-center gap-2"><Badge className="bg-muted text-muted-foreground border-0 text-xs">B:{e.maxBranches} W:{e.maxWarehouses} U:{e.maxUsers}</Badge>
+   629→              {hasPermission(role!, 'enterprises:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('enterprise', e)}><Pencil className="w-3.5 h-3.5" /></Button>}
+   630→              {hasPermission(role!, 'enterprises:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/enterprises/${e.id}`)} disabled={isCrudLoading('remove', `/enterprises/${e.id}`)} className="text-red-500">{isCrudLoading('remove', `/enterprises/${e.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}</div>
+   631→          </CardContent></Card>))}</div>
+   632→      </div>
+   633→    )
+   634→
+   635→    // ─── BRANCHES
+   636→    if (page === 'branches' && hasPermission(role!, 'branches:view')) return (
+   637→      <div className="space-y-5">
+   638→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navBranches')}</h1>
+   639→          {hasPermission(role!, 'branches:create') && <Button onClick={() => openCreate('branch')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newBranch')}</Button>}</div>
+   640→        <div className="grid gap-3">{branches.map(b => (
+   641→          <Card key={b.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+   642→            <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-bold shrink-0">{b.name.charAt(0)}</div>
+   643→              <div><div className="font-semibold">{b.name}</div><div className="text-xs text-muted-foreground">{b.code} · {b.location} · {b.managerName}</div></div></div>
+   644→            <div className="flex gap-2">{hasPermission(role!, 'branches:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('branch', b)}><Pencil className="w-3.5 h-3.5" /></Button>}
+   645→              {hasPermission(role!, 'branches:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/branches/${b.id}`)} disabled={isCrudLoading('remove', `/branches/${b.id}`)} className="text-red-500">{isCrudLoading('remove', `/branches/${b.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}</div>
+   646→          </CardContent></Card>))}</div>
+   647→      </div>
+   648→    )
+   649→
+   650→    // ─── WAREHOUSES
+   651→    if (page === 'warehouses' && hasPermission(role!, 'warehouses:view')) return (
+   652→      <div className="space-y-5">
+   653→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navWarehouses')}</h1>
+   654→          {hasPermission(role!, 'warehouses:create') && <Button onClick={() => openCreate('warehouse')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newWarehouse')}</Button>}</div>
+   655→        <div className="grid gap-3">{warehouses.map(w => (
+   656→          <Card key={w.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+   657→            <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center text-white font-bold shrink-0">{w.name.charAt(0)}</div>
+   658→              <div><div className="font-semibold">{w.name}</div><div className="text-xs text-muted-foreground">{w.code} · {w.location} · Cap: {fmtN(w.capacity)}</div></div></div>
+   659→            <div className="flex gap-2">{hasPermission(role!, 'warehouses:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('warehouse', w)}><Pencil className="w-3.5 h-3.5" /></Button>}
+   660→              {hasPermission(role!, 'warehouses:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/warehouses/${w.id}`)} disabled={isCrudLoading('remove', `/warehouses/${w.id}`)} className="text-red-500">{isCrudLoading('remove', `/warehouses/${w.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}</div>
+   661→          </CardContent></Card>))}</div>
+   662→      </div>
+   663→    )
+   664→
+   665→    // ─── USERS
+   666→    if (page === 'users' && hasPermission(role!, 'users:view')) return (
+   667→      <div className="space-y-5">
+   668→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navUsers')}</h1>
+   669→          {hasPermission(role!, 'users:create') && <Button onClick={() => openCreate('user')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newUser')}</Button>}</div>
+   670→        <div className="space-y-2">{allUsers.map(u => {
+   671→          const colors: Record<string, string> = { super_admin: 'from-purple-500 to-pink-500', enterprise_admin: 'from-blue-500 to-cyan-500', branch_admin: 'from-orange-500 to-amber-500', warehouse_admin: 'from-emerald-500 to-teal-500' }
+   672→          return (<Card key={u.id} className="shadow-sm"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+   673→            <div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${colors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white font-bold shrink-0`}>{u.fullName.charAt(0)}</div>
+   674→              <div><div className="font-semibold">{u.fullName}</div><div className="text-xs text-muted-foreground">{u.username} · {u.email}</div></div></div>
+   675→            <div className="flex items-center gap-2 flex-wrap">
+   676→              <Badge className={`${statusColor(u.role === 'super_admin' ? 'confirmed' : u.role === 'enterprise_admin' ? 'approved' : u.role === 'branch_admin' ? 'shipped' : 'received')} border-0 text-xs`}>{ROLE_LABELS[u.role]}</Badge>
+   677→              {hasPermission(role!, 'users:edit') && (role === 'super_admin' || canManageRole(role!, u.role)) && <Button size="sm" variant="ghost" onClick={() => openEdit('user', u)}><Pencil className="w-3.5 h-3.5" /></Button>}
+   678→            </div></CardContent></Card>)})}</div>
+   679→        <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-xs flex items-center gap-2"><Lock className="w-4 h-4 text-blue-500" /> Role Hierarchy</CardTitle></CardHeader>
+   680→          <CardContent className="text-xs text-muted-foreground"><p>Your role: <span className="text-blue-500 font-medium">{ROLE_LABELS[role!]}</span></p><p>Can create: <span className="text-foreground font-medium">{MANAGEABLE_ROLES[role!].map(r => ROLE_LABELS[r]).join(', ') || 'None'}</span></p></CardContent></Card>
+   681→      </div>
+   682→    )
+   683→
+   684→    // ─── PRODUCTS (two tabs: List + New Products)
+   685→    if (page === 'products' && hasPermission(role!, 'products:view')) return (
+   686→      <div className="space-y-5">
+   687→        <div className="flex items-center justify-between flex-wrap gap-2"><h1 className="text-2xl font-bold">{t(locale, 'navProducts')}</h1>
+   688→          <div className="flex gap-2">
+   689→            {hasPermission(role!, 'products:create') && <Button onClick={() => { setDlgType('registerItem'); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />Register Item</Button>}
+   690→            {hasPermission(role!, 'products:create') && <Button onClick={() => openCreate('product')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newProduct')}</Button>}
+   691→          </div>
+   692→        </div>
+   693→        <Tabs defaultValue="list">
+   694→          <TabsList>
+   695→            <TabsTrigger value="list">List</TabsTrigger>
+   696→            <TabsTrigger value="newProducts">New Products</TabsTrigger>
+   697→          </TabsList>
+   698→          <TabsContent value="list" className="mt-4">
+   699→            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{products.map(p => {
+   700→              const cat = categories.find(c => c.id === p.categoryId)
+   701→              const totalQty = stockData.filter(s => s.productId === p.id).reduce((sum, s) => sum + s.quantity, 0)
+   702→              const isLow = totalQty <= p.reorderLevel
+   703→              return (<Card key={p.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4">
+   704→                <div className="flex items-start justify-between mb-2"><div className="flex items-center gap-2"><div className={`w-9 h-9 rounded-xl ${isLow ? 'bg-gradient-to-br from-red-500 to-orange-500' : 'bg-gradient-to-br from-blue-500 to-indigo-500'} flex items-center justify-center shrink-0`}><Package className="w-4 h-4 text-white" /></div>
+   705→                  <div><div className="font-semibold text-sm">{p.name}</div><div className="text-[11px] text-muted-foreground font-mono">{p.sku}</div></div></div>
+   706→                  <div className="flex gap-1">
+   707→                    {hasPermission(role!, 'products:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('product', p)} className="h-7 w-7 p-0"><Pencil className="w-3 h-3" /></Button>}
+   708→                    {hasPermission(role!, 'products:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/products/${p.id}`)} disabled={isCrudLoading('remove', `/products/${p.id}`)} className="text-red-500 h-7 w-7 p-0">{isCrudLoading('remove', `/products/${p.id}`) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}</Button>}</div></div>
+   709→                <div className="text-xs text-muted-foreground mb-2">{cat?.name || '—'}</div>
+   710→                <div className="flex items-center justify-between"><span className="text-sm font-bold text-emerald-600 dark:text-emerald-400">{fmt(p.price)}</span><span className="text-xs text-muted-foreground">Cost: {fmt(p.cost)}</span></div>
+   711→                <div className="flex items-center justify-between mt-1"><span className={`text-sm font-bold ${isLow ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{totalQty} {p.unit}</span>{isLow && <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[10px]">Low Stock</Badge>}</div>
+   712→                <div className="text-[11px] text-muted-foreground mt-0.5">Reorder: {p.reorderLevel}</div>
+   713→              </CardContent></Card>)})}</div>
+   714→          </TabsContent>
+   715→          <TabsContent value="newProducts" className="mt-4">
+   716→            <Card className="border-emerald-200 dark:border-emerald-500/20 shadow-sm">
+   717→              <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Package className="w-4 h-4 text-emerald-500" /> Multi-Item Product Registration</CardTitle>
+   718→                <CardDescription className="text-xs">Register multiple products at once with initial stock. Each product with quantity &gt; 0 creates a Lot automatically.</CardDescription></CardHeader>
+   719→              <CardContent className="space-y-3">
+   720→                <div className="bg-emerald-50/50 dark:bg-emerald-500/5 rounded-lg p-2.5 space-y-2">
+   721→                  <SectionHeader icon={WHIcon}>Destination Warehouse</SectionHeader>
+   722→                  <Select value={registerWarehouseId ? String(registerWarehouseId) : undefined} onValueChange={v => setRegisterWarehouseId(parseInt(v))}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w => w.isActive).map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select>
+   723→                </div>
+   724→                <div className="rounded-md border overflow-x-auto"><Table>
+   725→                  <TableHeader><TableRow>
+   726→                    <TableHead className="h-7 text-[10px] min-w-[140px]">Name</TableHead>
+   727→                    <TableHead className="h-7 text-[10px] min-w-[110px]">SKU</TableHead>
+   728→                    <TableHead className="h-7 text-[10px] min-w-[120px]">Category</TableHead>
+   729→                    <TableHead className="h-7 text-[10px] min-w-[80px]">Unit</TableHead>
+   730→                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Price</TableHead>
+   731→                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Cost</TableHead>
+   732→                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Reorder</TableHead>
+   733→                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Init Qty</TableHead>
+   734→                    <TableHead className="h-7 w-10"></TableHead>
+   735→                  </TableRow></TableHeader>
+   736→                  <TableBody>
+   737→                    {registerRows.length === 0 && <TableRow><TableCell colSpan={9} className="text-center text-xs text-muted-foreground py-4">No rows. Click "Add Row" to begin.</TableCell></TableRow>}
+   738→                    {registerRows.map((row, idx) => (
+   739→                      <TableRow key={idx}>
+   740→                        <TableCell className="py-1"><Input value={row.name} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], name: e.target.value }; setRegisterRows(n) }} placeholder="Product name" className="h-7 text-[11px] rounded-md" /></TableCell>
+   741→                        <TableCell className="py-1"><Input value={row.sku} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], sku: e.target.value }; setRegisterRows(n) }} placeholder="SKU-001" className="h-7 text-[11px] rounded-md" /></TableCell>
+   742→                        <TableCell className="py-1"><Select value={row.categoryId ? String(row.categoryId) : undefined} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}><SelectTrigger className="h-7 text-[11px] rounded-md"><SelectValue placeholder="—" /></SelectTrigger><SelectContent>{categories.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent></Select></TableCell>
+   743→                        <TableCell className="py-1"><Select value={row.unit} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], unit: v }; setRegisterRows(n) }}><SelectTrigger className="h-7 text-[11px] rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-40">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+   744→                        <TableCell className="py-1"><Input type="number" step="0.01" value={row.price || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], price: parseFloat(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
+   745→                        <TableCell className="py-1"><Input type="number" step="0.01" value={row.cost || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], cost: parseFloat(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
+   746→                        <TableCell className="py-1"><Input type="number" value={row.reorderLevel || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], reorderLevel: parseInt(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
+   747→                        <TableCell className="py-1"><Input type="number" min="0" value={row.quantity || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], quantity: parseInt(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
+   748→                        <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => setRegisterRows(registerRows.filter((_, i) => i !== idx))} className="text-red-500 h-6 w-6 p-0"><Trash2 className="w-3 h-3" /></Button></TableCell>
+   749→                      </TableRow>))}
+   750→                  </TableBody>
+   751→                </Table></div>
+   752→                <div className="flex items-center justify-between gap-2 flex-wrap">
+   753→                  <Button size="sm" variant="outline" onClick={() => setRegisterRows([...registerRows, { name: '', sku: '', categoryId: null, unit: 'piece', price: 0, cost: 0, reorderLevel: 0, quantity: 0, costPerUnit: 0, supplierName: '', notes: '' }])} className="text-emerald-600 border-emerald-200 hover:bg-emerald-50"><Plus className="w-3.5 h-3.5 mr-1.5" />Add Row</Button>
+   754→                  <Button size="sm" disabled={registerSubmitting || !registerWarehouseId || registerRows.filter(r => r.name && r.sku).length === 0} onClick={async () => {
+   755→                    if (!registerWarehouseId) { toast({ title: 'Select a warehouse', variant: 'destructive' }); return }
+   756→                    const valid = registerRows.filter(r => r.name && r.sku)
+   757→                    if (valid.length === 0) { toast({ title: 'Add at least one row with name+SKU', variant: 'destructive' }); return }
+   758→                    setRegisterSubmitting(true)
+   759→                    try {
+   760→                      const res = await apiFetch('/products/register', { method: 'POST', body: JSON.stringify({ warehouseId: registerWarehouseId, items: valid.map(r => ({ name: r.name.trim(), sku: r.sku.trim(), categoryId: r.categoryId || null, price: r.price, cost: r.cost, unit: r.unit, reorderLevel: r.reorderLevel, quantity: r.quantity, costPerUnit: r.cost, supplierName: r.supplierName || null, notes: r.notes || null })) }) })
+   761→                      toast({ title: `Registered ${res.products?.length || valid.length} product(s)${res.lotsCreated ? `, ${res.lotsCreated} lot(s) created` : ''}` })
+   762→                      setRegisterRows([])
+   763→                      await loadData()
+   764→                    } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
+   765→                    setRegisterSubmitting(false)
+   766→                  }} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white">{registerSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}Register All</Button>
+   767→                </div>
+   768→              </CardContent>
+   769→            </Card>
+   770→          </TabsContent>
+   771→        </Tabs>
+   772→      </div>
+   773→    )
+   774→
+   775→    // ─── STOCK (Task 7 cleanup: no page-level action buttons, row-level Stock In + View Lots)
+   776→    if (page === 'stock' && hasPermission(role!, 'stock:view')) return (
+   777→      <div className="space-y-5">
+   778→        <div className="flex items-center justify-between flex-wrap gap-2"><div><h1 className="text-2xl font-bold">{t(locale, 'navStock')}</h1>
+   779→          <p className="text-xs text-muted-foreground mt-1">Use the row-level Stock In button below, or open the Stock In page in the sidebar for multi-item receipts.</p></div>
+   780→          <div className="relative w-full sm:w-64"><Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search stock..." className="pl-8" value={stockSearch} onChange={e => setStockSearch(e.target.value)} /></div></div>
+   781→        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{stockData.filter(s => { const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId); const q = stockSearch.toLowerCase(); return !q || (prod?.name || '').toLowerCase().includes(q) || (wh?.name || '').toLowerCase().includes(q) }).map(s => {
+   782→          const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId); const isLow = prod ? s.quantity <= prod.reorderLevel : false
+   783→          return (<Card key={s.id} className="shadow-sm"><CardContent className="p-4">
+   784→            <div className="flex items-center justify-between mb-2"><div className="font-semibold text-sm">{prod?.name || `Product #${s.productId}`}</div>
+   785→              {isLow ? <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[11px]">Low</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[11px]">OK</Badge>}</div>
+   786→            <div className="text-xs text-muted-foreground mb-2">{wh?.name || `WH #${s.warehouseId}`}</div>
+   787→            <div className="flex items-center justify-between"><span className="text-xl font-bold">{s.quantity}</span><span className="text-xs text-muted-foreground">Value: {prod ? fmt(s.quantity * prod.price) : '—'}</span></div>
+   788→            <div className="flex gap-2 mt-3">
+   789→              {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => { setDlgType('stockIn'); setDlgEdit({productId:s.productId}); setDlgData({productId:s.productId,warehouseId:s.warehouseId,quantity:''}); setDlgOpen(true) }} className="flex-1 text-xs text-emerald-600 border-emerald-200 hover:bg-emerald-50"><ArrowUpFromLine className="w-3 h-3 mr-1" />Stock In</Button>}
+   790→              <Button size="sm" variant="ghost" onClick={() => viewLots(s.productId, s.warehouseId, prod?.name || `Product #${s.productId}`)} className="text-xs text-violet-600 hover:bg-violet-50" title="View Lots"><Layers className="w-3 h-3 mr-1" />Lots</Button>
+   791→              {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => openEdit('stock', s)} className="text-xs">Adjust</Button>}
+   792→            </div>
+   793→          </CardContent></Card>)})}</div>
+   794→      </div>
+   795→    )
+   796→
+   797→    // ─── ORDERS
+   798→    if (page === 'orders' && hasPermission(role!, 'orders:view')) return (
+   799→      <div className="space-y-5">
+   800→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navOrders')}</h1>
+   801→          {hasPermission(role!, 'orders:create') && <Button onClick={() => openCreate('order')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newOrder')}</Button>}</div>
+   802→        <div className="grid gap-3">{orders.map(o => { const wh = warehouses.find(w => w.id === o.warehouseId)
+   803→          return (<Card key={o.id} className="shadow-sm"><CardContent className="p-4">
+   804→            <div className="flex items-center justify-between mb-1"><div className="flex items-center gap-2"><span className="font-mono text-sm bg-muted px-2 py-0.5 rounded">#{o.id}</span>{statusBadge(o.status)}
+   805→              <Badge className={`${o.type === 'purchase' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'} border-0 text-[11px]`}>{o.type}</Badge></div>
+   806→              <span className="text-sm font-bold">{fmt(o.totalAmount)}</span></div>
+   807→            <div className="text-xs text-muted-foreground">{wh?.name || '—'} · {o.notes}</div>
+   808→            {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('order', o)} className="mt-2 text-xs"><Pencil className="w-3 h-3 mr-1" />Edit</Button>}
+   809→          </CardContent></Card>)})}</div>
+   810→      </div>
+   811→    )
+   812→
+   813→    // ─── SUPPLIERS
+   814→    if (page === 'suppliers' && hasPermission(role!, 'suppliers:view')) return (
+   815→      <div className="space-y-5">
+   816→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navSuppliers')}</h1>
+   817→          {hasPermission(role!, 'suppliers:create') && <Button onClick={() => openCreate('supplier')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newSupplier')}</Button>}</div>
+   818→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{suppliers.map(s => (
+   819→          <Card key={s.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4">
+   820→            <div className="flex items-center gap-3 mb-2"><div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shrink-0"><Truck className="w-4 h-4 text-white" /></div>
+   821→              <div className="font-semibold">{s.name}</div></div>
+   822→            <div className="text-xs text-muted-foreground space-y-0.5"><div>{s.contactPerson}</div><div>{s.email} · {s.phone}</div></div>
+   823→            <div className="flex gap-2 mt-3">{hasPermission(role!, 'suppliers:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('supplier', s)}><Pencil className="w-3.5 h-3.5" /></Button>}
+   824→              {hasPermission(role!, 'suppliers:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/suppliers/${s.id}`)} disabled={isCrudLoading('remove', `/suppliers/${s.id}`)} className="text-red-500">{isCrudLoading('remove', `/suppliers/${s.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}</div>
+   825→          </CardContent></Card>))}</div>
+   826→      </div>
+   827→    )
+   828→
+   829→    // ─── CATEGORIES
+   830→    if (page === 'categories' && hasPermission(role!, 'categories:view')) return (
+   831→      <div className="space-y-5">
+   832→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navCategories')}</h1>
+   833→          {hasPermission(role!, 'categories:create') && <Button onClick={() => openCreate('category')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newCategory')}</Button>}</div>
+   834→        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">{categories.map(c => (
+   835→          <Card key={c.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-3">
+   836→            <div className="flex items-center gap-2 mb-1"><Tag className="w-4 h-4 text-blue-500" /><div className="font-semibold text-sm">{c.name}</div></div>
+   837→            <div className="text-xs text-muted-foreground line-clamp-2">{c.description}</div>
+   838→            <div className="flex gap-2 mt-2">{hasPermission(role!, 'categories:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('category', c)} className="h-6 w-6 p-0"><Pencil className="w-3 h-3" /></Button>}
+   839→              {hasPermission(role!, 'categories:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/categories/${c.id}`)} disabled={isCrudLoading('remove', `/categories/${c.id}`)} className="text-red-500 h-6 w-6 p-0">{isCrudLoading('remove', `/categories/${c.id}`) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}</Button>}</div>
+   840→          </CardContent></Card>))}</div>
+   841→      </div>
+   842→    )
+   843→
+   844→    // ─── STOCK OUT RECORDER
+   845→    if (page === 'stockOut') return (
+   846→      <div className="space-y-3">
+   847→        <div className="flex items-center justify-between flex-wrap gap-2">
+   848→          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><ArrowUpFromLine className="w-4 h-4 text-orange-500" />Stock Out</h1></div>
+   849→          <Button size="sm" onClick={() => openCreate('stockOut')} className="bg-gradient-to-r from-orange-500 to-red-500 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Recorder</Button>
+   850→        </div>
+   851→
+   852→        {/* ── Filters ── */}
+   853→        <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
+   854→          <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
+   855→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date From</Label><div className="w-32"><CustomDatePicker compact value={stockOutFilterDateFrom} onChange={v => { setStockOutFilterDateFrom(v); setStockOutRecPage(1) }} /></div></div>
+   856→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date To</Label><div className="w-32"><CustomDatePicker compact value={stockOutFilterDateTo} onChange={v => { setStockOutFilterDateTo(v); setStockOutRecPage(1) }} /></div></div>
+   857→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Status</Label><Select value={stockOutFilterStatus || '_all'} onValueChange={v => { setStockOutFilterStatus(v === '_all' ? '' : v); setStockOutRecPage(1) }}><SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="open">Open</SelectItem><SelectItem value="confirmed">Confirmed</SelectItem><SelectItem value="closed">Closed</SelectItem><SelectItem value="draft">Draft</SelectItem></SelectContent></Select></div>
+   858→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Person</Label><Input value={stockOutFilterPerson} onChange={e => { setStockOutFilterPerson(e.target.value); setStockOutRecPage(1) }} placeholder="Search name..." className="h-7 text-xs w-32" /></div>
+   859→          {(stockOutFilterDateFrom || stockOutFilterDateTo || stockOutFilterStatus || stockOutFilterPerson) && <Button size="sm" variant="ghost" onClick={() => { setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutRecPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
+   860→        </div>
+   861→
+   862→        {(() => {
+   863→          // Filter recorders
+   864→          let filtered = [...stockOutData].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+   865→          if (stockOutFilterDateFrom) filtered = filtered.filter(r => new Date(r.createdAt) >= new Date(stockOutFilterDateFrom + 'T00:00:00'))
+   866→          if (stockOutFilterDateTo) filtered = filtered.filter(r => new Date(r.createdAt) <= new Date(stockOutFilterDateTo + 'T23:59:59'))
+   867→          if (stockOutFilterStatus) filtered = filtered.filter(r => r.status === stockOutFilterStatus)
+   868→          if (stockOutFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockOutFilterPerson.toLowerCase()))
+   869→
+   870→          const recTotalPages = Math.ceil(filtered.length / STOCK_OUT_REC_PER_PAGE)
+   871→          const recPaged = filtered.slice((stockOutRecPage - 1) * STOCK_OUT_REC_PER_PAGE, stockOutRecPage * STOCK_OUT_REC_PER_PAGE)
+   872→
+   873→          return (<>
+   874→            {recPaged.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No recorders found</div>}
+   875→            {recPaged.map(r => { const isExp = expandedOut === r.id; const isExpanding = expandingOutId === r.id; const pendingItems = getPendingItems(r.id); const totalItems = r.items.length + pendingItems.length
+   876→              return (<Card key={r.id} className="shadow-sm"><CardContent className="p-2.5">
+   877→                <div className="flex items-center justify-between cursor-pointer" onClick={() => { if (isExp) { setExpandedOut(null) } else { setExpandingOutId(r.id); setTimeout(() => { setExpandedOut(r.id); setExpandingOutId(null) }, 200) } }}>
+   878→                  <div className="flex items-center gap-1.5">{isExpanding ? <Loader2 className="w-3 h-3 animate-spin text-orange-500" /> : <ChevronRight className={`w-3.5 h-3.5 text-orange-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />}
+   879→                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
+   880→                    {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
+   881→                  <div className="flex items-center gap-1">
+   882→                    <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+   883→                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openEdit('stockOut', r) }} className="h-5 w-5 p-0 text-muted-foreground"><Pencil className="w-2.5 h-2.5" /></Button>}
+   884→                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); crud.remove(`/stock-out/${r.id}`) }} disabled={isCrudLoading('remove', `/stock-out/${r.id}`)} className="h-5 w-5 p-0 text-red-500">{isCrudLoading('remove', `/stock-out/${r.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button>}
+   885→                  </div>
+   886→                </div>
+   887→                {isExp && (<div className="mt-2 space-y-2 border-t pt-2">
+   888→                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+   889→                    {r.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5" />{r.personPhone}</span>}
+   890→                    {r.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5" />{r.personEmail}</span>}
+   891→                    {r.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" />{r.personAddress}</span>}
+   892→                    {r.notes && <span className="flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{r.notes}</span>}
+   893→                  </div>
+   894→
+   895→                  {/* ── Items Table (saved + pending) with pagination ── */}
+   896→                  {(() => { const allItems = [...r.items.map(i => ({ ...i, _pending: false })), ...pendingItems.map(i => ({ ...i, id: i.tempId, _pending: true }))] as any[]
+   897→                    const totalPages = Math.ceil(allItems.length / STOCK_OUT_ITEMS_PER_PAGE); const paged = allItems.slice((stockOutItemPage - 1) * STOCK_OUT_ITEMS_PER_PAGE, stockOutItemPage * STOCK_OUT_ITEMS_PER_PAGE)
+   898→                    const totalQty = allItems.reduce((sum: number, i: any) => sum + i.quantity, 0)
+   899→                    return (<div id={`stockout-print-${r.id}`}>
+   900→                      <div className="flex items-center justify-between mb-1">
+   901→                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Items ({totalItems}) · Total Qty: {totalQty}</span>
+   902→                        <Button size="sm" variant="outline" onClick={() => { const w = window.open('', '_blank', 'width=800,height=600'); if (!w) return; w.document.write('<html><head><title>Stock Out - ' + r.recorderCode + '</title><style>body{font-family:system-ui,sans-serif;padding:24px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}th{background:#f1f5f9;font-weight:600}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.saved{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}h2{font-size:18px;margin:0}p{color:#64748b;font-size:13px;margin:4px 0}.summary{margin-top:8px;font-size:13px;color:#334155;font-weight:600}</style></head><body>'); w.document.write('<h2>' + r.recorderCode + '</h2>'); w.document.write('<p>Date: ' + new Date(r.createdAt).toLocaleString() + '</p>'); w.document.write('<p>Person: ' + r.personName + (r.personPhone ? ' | Phone: ' + r.personPhone : '') + (r.personEmail ? ' | Email: ' + r.personEmail : '') + '</p>'); if (r.personAddress) w.document.write('<p>Address: ' + r.personAddress + '</p>'); if (r.notes) w.document.write('<p>Notes: ' + r.notes + '</p>'); w.document.write('<table><thead><tr><th>Product</th><th style="text-align:right">Qty</th><th>Unit</th><th>Returnable</th><th>Deadline</th><th>Status</th></tr></thead><tbody>'); allItems.forEach((item: any) => { const prod = products.find((p: any) => p.id === item.productId); w.document.write('<tr><td>' + (prod?.name || '#'+item.productId) + '</td><td style="text-align:right">' + item.quantity + '</td><td>' + item.unit + '</td><td>' + (item.isReturnable ? 'Yes' : 'No') + '</td><td>' + (item.returnDeadline || '—') + '</td><td><span class="badge ' + (item._pending ? 'pending' : 'saved') + '">' + (item._pending ? 'Pending' : 'Saved') + '</span></td></tr>') }); w.document.write('</tbody></table>'); w.document.write('<p class="summary">Total Items: ' + totalItems + ' · Total Qty: ' + totalQty + '</p>'); w.document.write('</body></html>'); w.document.close(); w.print() }} className="h-5 text-[10px] gap-0.5"><Printer className="w-2.5 h-2.5" />Print</Button>
+   903→                      </div>
+   904→                      {totalItems > 0 ? (<>
+   905→                        <div className="rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
+   906→                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Ret</TableHead><TableHead className="h-6 text-[10px] w-20">Deadline</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
+   907→                        </TableRow></TableHeader><TableBody>
+   908→                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+   909→                            return (<TableRow key={item.id} className={item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed' : ''}>
+   910→                              <TableCell className="py-1 text-[11px] font-medium">{prod?.name || `#${item.productId}`}</TableCell>
+   911→                              <TableCell className="py-1 text-[11px] text-right font-mono">{item.quantity}</TableCell>
+   912→                              <TableCell className="py-1 text-[11px] text-muted-foreground">{item.unit}</TableCell>
+   913→                              <TableCell className="py-1 text-center">{item.isReturnable ? <RotateCcw className="w-2.5 h-2.5 text-emerald-500 inline" /> : <X className="w-2.5 h-2.5 text-red-400 inline" />}</TableCell>
+   914→                              <TableCell className="py-1 text-[11px] text-muted-foreground">{item.returnDeadline || '—'}</TableCell>
+   915→                              <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
+   916→                              <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingItem(r.id, item.tempId) : crud.remove(`/stock-out/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></TableCell>
+   917→                            </TableRow>)})}
+   918→                        </TableBody></Table></div>
+   919→                        <Pager page={stockOutItemPage} totalPages={totalPages} onPageChange={setStockOutItemPage} />
+   920→                      </>) : <div className="text-[10px] text-muted-foreground text-center py-2">No items yet</div>}
+   921→                    </div>)})()}
+   922→
+   923→                  {/* Submit pending button */}
+   924→                  {pendingItems.length > 0 && (
+   925→                    <div className="flex items-center gap-1.5">
+   926→                      <Button size="sm" disabled={submittingRecorder === r.id} onClick={() => submitPendingItems(r.id, r.enterpriseId || eid)} className="bg-emerald-600 text-white h-6 text-[11px]">{submittingRecorder === r.id ? <Loader2 className="w-2.5 h-2.5 mr-0.5 animate-spin" /> : <Check className="w-2.5 h-2.5 mr-0.5" />}Submit {pendingItems.length}</Button>
+   927→                      <Button size="sm" variant="ghost" onClick={() => clearPendingItems(r.id)} className="h-6 text-[11px] text-muted-foreground" disabled={submittingRecorder === r.id}>Clear</Button>
+   928→                    </div>
+   929→                  )}
+   930→
+   931→                  {/* ── Add Items Section ── */}
+   932→                  <div className="bg-muted/30 rounded-md p-2">
+   933→                    <div className="flex items-center justify-between mb-1.5">
+   934→                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Add Items</span>
+   935→                      <div className="flex items-center bg-muted rounded-md p-0.5">
+   936→                        <button onClick={() => setStockOutMode('pic')} className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${stockOutMode === 'pic' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-muted-foreground'}`}><LayoutGrid className="w-2.5 h-2.5 inline mr-0.5" />Pick</button>
+   937→                        <button onClick={() => setStockOutMode('table')} className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${stockOutMode === 'table' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-muted-foreground'}`}><List className="w-2.5 h-2.5 inline mr-0.5" />Table</button>
+   938→                      </div>
+   939→                    </div>
+   940→
+   941→                    {/* ── Pick Mode: single row with Select dropdown that has paginated content ── */}
+   942→                    {stockOutMode === 'pic' ? (
+   943→                      (() => {
+   944→                        const sel = stockOutPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }
+   945→                        const filteredProds = products.filter(p => !stockOutSearch || p.name.toLowerCase().includes(stockOutSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockOutSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name))
+   946→                        const selTotalPages = Math.ceil(filteredProds.length / STOCK_OUT_PICK_SELECT_PER_PAGE)
+   947→                        const selPaged = filteredProds.slice((stockOutPickSelectPage - 1) * STOCK_OUT_PICK_SELECT_PER_PAGE, stockOutPickSelectPage * STOCK_OUT_PICK_SELECT_PER_PAGE)
+   948→                        return (<div className="space-y-1.5">
+   949→                          <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockOutSearch} onChange={e => { setStockOutSearch(e.target.value); setStockOutPickSelectPage(1) }} className="h-6 text-[11px] pl-7" /></div>
+   950→                          <div className="rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
+   951→                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 w-10"></TableHead>
+   952→                          </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-blue-300 dark:border-b-blue-600">
+   953→                            <TableCell className="py-0.5"><Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}><SelectTrigger className="h-5 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">
+   954→                              {selPaged.map(p => { const stk = getAvailableStock(p.id, r.warehouseId); return <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span> <span className={`ml-1 text-[10px] font-semibold ${stk > 0 ? 'text-emerald-600' : 'text-red-500'}`}>({stk})</span></SelectItem> })}
+   955→                              {selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}
+   956→                            </SelectContent></Select></TableCell>
+   957→                            <TableCell className="py-0.5 text-[11px] text-right font-mono">{sel.productId ? <span className={getAvailableStock(sel.productId, r.warehouseId) > 0 ? 'text-emerald-600' : 'text-red-500'}>{getAvailableStock(sel.productId, r.warehouseId)}</span> : '—'}</TableCell>
+   958→                            <TableCell className="py-0.5"><Input type="number" min={1} max={sel.productId ? getAvailableStock(sel.productId, r.warehouseId) : undefined} value={sel.qty || 1} onChange={e => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+   959→                            <TableCell className="py-0.5"><Select value={sel.unit || 'pcs'} onValueChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } }))}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+   960→                            <TableCell className="py-0.5 text-center"><Switch checked={sel.isReturnable || false} onCheckedChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], isReturnable: v } }))} className="scale-75" /></TableCell>
+   961→                            <TableCell className="py-0.5">{sel.isReturnable ? <CustomDatePicker value={sel.returnDeadline || ''} onChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], returnDeadline: v } }))} /> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
+   962→                            <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-blue-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; const avail = getAvailableStock(sel.productId, r.warehouseId); if (sel.qty > avail) { toast({ title: `Only ${avail} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', isReturnable: sel.isReturnable || false, returnDeadline: sel.returnDeadline || null, notes: '' }); setStockOutPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+   963→                          </TableRow></TableBody></Table></div>
+   964→                          {selTotalPages > 1 && <div className="flex items-center justify-between pt-1"><span className="text-[10px] text-muted-foreground">Products page {stockOutPickSelectPage}/{selTotalPages}</span><div className="flex gap-0.5"><Button size="sm" variant="outline" disabled={stockOutPickSelectPage <= 1} onClick={() => setStockOutPickSelectPage(p => p - 1)} className="h-5 w-5 p-0"><ChevronLeft className="w-2.5 h-2.5" /></Button><Button size="sm" variant="outline" disabled={stockOutPickSelectPage >= selTotalPages} onClick={() => setStockOutPickSelectPage(p => p + 1)} className="h-5 w-5 p-0"><ChevronRight className="w-2.5 h-2.5" /></Button></div></div>}
+   965→                        </div>)
+   966→                      })()
+   967→                    ) : (
+   968→                      // ── Table Mode: each product = its own row (spreadsheet), with pagination ──
+   969→                      (() => { const sortedProds = [...products].sort((a, b) => a.name.localeCompare(b.name)); const totalPages = Math.ceil(sortedProds.length / STOCK_OUT_PRODUCTS_PER_PAGE); const paged = sortedProds.slice((stockOutProductPage - 1) * STOCK_OUT_PRODUCTS_PER_PAGE, stockOutProductPage * STOCK_OUT_PRODUCTS_PER_PAGE)
+   970→                        return (<div>
+   971→                          <div className="rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
+   972→                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 w-10"></TableHead>
+   973→                          </TableRow></TableHeader><TableBody>
+   974→                            {paged.map(prod => { const inp = getRowInput(prod.id); const stk = getAvailableStock(prod.id, r.warehouseId)
+   975→                              return (<TableRow key={prod.id}>
+   976→                                <TableCell className="py-0.5 text-[11px]"><span className="font-medium">{prod.name}</span> <span className="text-muted-foreground font-mono text-[10px]">{prod.sku}</span></TableCell>
+   977→                                <TableCell className="py-0.5 text-[11px] text-right font-mono"><span className={stk > 0 ? 'text-emerald-600' : 'text-red-500'}>{stk}</span></TableCell>
+   978→                                <TableCell className="py-0.5"><Input type="number" min={1} max={stk} value={inp.qty} onChange={e => updateRowInput(prod.id, { qty: parseInt(e.target.value) || 1 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+   979→                                <TableCell className="py-0.5"><Select value={inp.unit} onValueChange={v => updateRowInput(prod.id, { unit: v })}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+   980→                                <TableCell className="py-0.5 text-center"><Switch checked={inp.isReturnable} onCheckedChange={v => updateRowInput(prod.id, { isReturnable: v })} className="scale-75" /></TableCell>
+   981→                                <TableCell className="py-0.5">{inp.isReturnable ? <CustomDatePicker value={inp.returnDeadline} onChange={v => updateRowInput(prod.id, { returnDeadline: v })} /> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
+   982→                                <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || stk <= 0} className="h-5 text-[10px] bg-blue-600 text-white px-1.5" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; if (inp.qty > stk) { toast({ title: `Only ${stk} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, isReturnable: inp.isReturnable, returnDeadline: inp.returnDeadline || null, notes: '' }); updateRowInput(prod.id, { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+   983→                              </TableRow>)})}
+   984→                          </TableBody></Table></div>
+   985→                          <Pager page={stockOutProductPage} totalPages={totalPages} onPageChange={setStockOutProductPage} />
+   986→                        </div>)
+   987→                      })()
+   988→                    )}
+   989→                  </div>
+   990→                </div>)}
+   991→              </CardContent></Card>)})}
+   992→            <Pager page={stockOutRecPage} totalPages={recTotalPages} onPageChange={setStockOutRecPage} />
+   993→          </>)
+   994→        })()}
+   995→      </div>
+   996→    )
+   997→
+   998→    // ─── FEATURES
+   999→    if (page === 'features') return (
+  1000→      <div className="space-y-5">
+  1001→        <h1 className="text-2xl font-bold flex items-center gap-2"><ToggleLeft className="w-6 h-6 text-blue-500" /> Enterprise Features</h1>
+  1002→        {role !== 'super_admin' && <Card className="border-amber-200 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10"><CardContent className="p-3 text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2"><Lock className="w-4 h-4" />Only Super Admin can toggle features</CardContent></Card>}
+  1003→        {enterprises.map(e => { const eFeats = features.filter(f => f.enterpriseId === e.id)
+  1004→          return (<Card key={e.id} className="shadow-sm"><CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Building2 className="w-4 h-4 text-blue-500" />{e.name} <Badge className="bg&text-muted-foreground border-0 text-xs">{e.code}</Badge></CardTitle></CardHeader>
+  1005→            <CardContent><div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{eFeats.map(f => (
+  1006→              <div key={f.id} className="flex items-center justify-between bg-muted/40 rounded-xl p-3">
+  1007→                <span className="text-sm font-medium capitalize">{f.feature.replace(/_/g, ' ')}</span>
+  1008→                {role === 'super_admin' ? <Switch checked={f.enabled} onCheckedChange={async (v) => { try { await apiFetch('/features', { method: 'POST', body: JSON.stringify({ enterpriseId: e.id, feature: f.feature, enabled: v }) }); await loadData() } catch(e: any) { toast({ title: e.message, variant: 'destructive' }) } }} /> : <Badge className={`${f.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'} border-0 text-xs`}>{f.enabled ? 'On' : 'Off'}</Badge>}
+  1009→              </div>))}</div></CardContent></Card>)})}
+  1010→      </div>
+  1011→    )
+  1012→
+  1013→    // ─── AUDIT
+  1014→    if (page === 'audit') return (
+  1015→      <div className="space-y-5">
+  1016→        <h1 className="text-2xl font-bold">Audit Log</h1>
+  1017→        <div className="space-y-1">{auditData.map(a => { const user = allUsers.find(u => u.id === a.userId)
+  1018→          return (<div key={a.id} className="bg-card rounded-xl border p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 shadow-sm">
+  1019→            <span className="text-xs text-muted-foreground whitespace-nowrap font-mono">{new Date(a.createdAt).toLocaleString()}</span>
+  1020→            <span className="text-xs font-medium">{user?.fullName || `User #${a.userId}`}</span>
+  1021→            <span className="font-mono text-xs text-blue-500 bg-blue-50 dark:bg-blue-500/10 px-2 py-0.5 rounded">{a.action}</span>
+  1022→            <span className="text-xs text-muted-foreground">{a.entity}</span>
+  1023→            <span className="text-xs text-muted-foreground/70 truncate">{a.details}</span></div>)})}</div>
+  1024→      </div>
+  1025→    )
+  1026→
+  1027→    return null
+  1028→  }
+  1029→
+  1030→  // ─── MAIN LAYOUT ────────────────────────────────────────
+  1031→  if (!mounted) return <div suppressHydrationWarning className="min-h-screen bg-background" />
+  1032→  return (
+  1033→    <TooltipProvider>
+  1034→      <div dir={dir} suppressHydrationWarning className="min-h-screen bg-background text-foreground flex">
+  1035→        {sidebarOpen && <div className="fixed inset-0 bg-black/40 z-40 lg:hidden backdrop-blur-sm" onClick={() => setSidebarOpen(false)} />}
+  1036→
+  1037→        {/* Sidebar */}
+  1038→        <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-card border-r flex flex-col transition-transform lg:static lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+  1039→          <div className="p-4 border-b flex items-center justify-between">
+  1040→            <div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center shadow-sm"><Box className="w-5 h-5 text-white" /></div>
+  1041→              <div><div className="font-bold text-sm">{t(locale, 'appName')}</div><div className="text-[10px] text-muted-foreground">{t(locale, 'appSubtitle')}</div></div></div>
+  1042→            <button className="lg:hidden text-muted-foreground p-1 hover:bg-muted rounded-lg" onClick={() => setSidebarOpen(false)}><X className="w-5 h-5" /></button></div>
+  1043→
+  1044→          <div className="px-4 py-3 border-b bg-muted/30">
+  1045→            <div className="flex items-center gap-2 mb-1"><Shield className="w-3.5 h-3.5 text-blue-500" /><span className="text-xs font-semibold text-blue-500">{ROLE_LABELS[role!]}</span></div>
+  1046→            <div className="text-xs text-muted-foreground truncate">{auth.fullName}</div>
+  1047→            {eid && <div className="text-[10px] text-muted-foreground/70 mt-0.5">E#{eid}{auth.branchId ? ` B#${auth.branchId}` : ''}{auth.warehouseId ? ` W#${auth.warehouseId}` : ''}</div>}</div>
+  1048→
+  1049→          <nav className="flex-1 overflow-y-auto p-3 space-y-1">
+  1050→            {navItems.map(item => { const Icon = ICONS[item.icon] || Box; const active = page === item.key
+  1051→              return (<button key={item.key} onClick={() => { setPage(item.key); setSidebarOpen(false) }}
+  1052→                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all ${active ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}>
+  1053→                <Icon className="w-4 h-4" /><span>{item.label}</span></button>)})}
+  1054→          </nav>
+  1055→
+  1056→          <div className="p-3 border-t space-y-2">
+  1057→            <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+  1058→              className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground transition">
+  1059→              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+  1060→              {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+  1061→            </button>
+  1062→            <div className="flex gap-1 justify-center">{locales.map(l => (
+  1063→              <button key={l.code} onClick={() => setLocale(l.code)} className={`px-2 py-1 rounded-lg text-[10px] font-medium transition ${locale === l.code ? 'bg-blue-600 text-white' : 'bg-muted/50 text-muted-foreground hover:bg-muted'}`}>{l.code.toUpperCase()}</button>))}</div>
+  1064→            <button onClick={() => { auth.logout(); setPage('dashboard') }} className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 dark:hover:text-red-400 transition"><LogOut className="w-4 h-4" />{t(locale, 'logout')}</button></div>
+  1065→        </aside>
+  1066→
+  1067→        {/* Main */}
+  1068→        <main className="flex-1 min-w-0">
+  1069→          <header className="lg:hidden sticky top-0 z-30 bg-card/90 backdrop-blur-md border-b px-4 py-3 flex items-center gap-3">
+  1070→            <button onClick={() => setSidebarOpen(true)} className="text-muted-foreground p-1 hover:bg-muted rounded-lg"><Menu className="w-5 h-5" /></button>
+  1071→            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center"><Box className="w-3.5 h-3.5 text-white" /></div>
+  1072→            <span className="font-bold text-sm">{t(locale, 'appName')}</span>
+  1073→            <div className="ml-auto flex items-center gap-2">
+  1074→              <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className="text-muted-foreground hover:text-foreground p-1.5 hover:bg-muted rounded-lg">
+  1075→                {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+  1076→              </button>
+  1077→            </div>
+  1078→          </header>
+  1079→          <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">{renderPage()}</div>
+  1080→        </main>
+  1081→
+  1082→        {/* DIALOG */}
+  1083→        <Dialog open={dlgOpen} onOpenChange={setDlgOpen}>
+  1084→          <DialogContent className={dlgType === 'registerItem' ? 'max-w-xl w-[95vw]' : 'max-w-lg w-[95vw]'}>
+  1085→            <DialogHeader><DialogTitle className="text-base font-bold">{dlgType === 'stockIn' ? 'Stock In' : dlgType === 'registerItem' ? 'Register Item to Inventory' : dlgEdit ? `Edit ${dlgType}` : `New ${dlgType}`}</DialogTitle></DialogHeader>
+  1086→            <div className="space-y-2.5 max-h-[60vh] overflow-y-auto pr-1">
+  1087→
+  1088→              {/* ─── Enterprise ─── */}
+  1089→              {dlgType === 'enterprise' && <>
+  1090→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1091→                  <SectionHeader icon={Building2}>Details</SectionHeader>
+  1092→                  <div className="space-y-1"><IconLabel icon={Building2}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1093→                  <div className="space-y-1"><IconLabel icon={Hash}>Code</IconLabel><Input value={dlgData.code||''} onChange={e=>setDlgData({...dlgData,code:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1094→                </div>
+  1095→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1096→                  <SectionHeader icon={Mail}>Contact</SectionHeader>
+  1097→                  <div className="grid grid-cols-2 gap-2">
+  1098→                    <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={dlgData.contactEmail||''} onChange={e=>setDlgData({...dlgData,contactEmail:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1099→                    <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={dlgData.contactPhone||''} onChange={e=>setDlgData({...dlgData,contactPhone:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1100→                  </div>
+  1101→                </div>
+  1102→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1103→                  <SectionHeader icon={MapPin}>Location</SectionHeader>
+  1104→                  <div className="space-y-1"><IconLabel icon={MapPin}>Address</IconLabel><Input value={dlgData.address||''} onChange={e=>setDlgData({...dlgData,address:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1105→                </div>
+  1106→              </>}
+  1107→
+  1108→              {/* ─── Branch ─── */}
+  1109→              {dlgType === 'branch' && <>
+  1110→                {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1111→                  <SectionHeader icon={Building2}>Organization</SectionHeader>
+  1112→                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><Select value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : undefined} onValueChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{enterprises.map(e=><SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>)}</SelectContent></Select></div>
+  1113→                </div>}
+  1114→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1115→                  <SectionHeader icon={Tag}>Details</SectionHeader>
+  1116→                  <div className="space-y-1"><IconLabel icon={Tag}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1117→                  <div className="space-y-1"><IconLabel icon={Hash}>Code</IconLabel><Input value={dlgData.code||''} onChange={e=>setDlgData({...dlgData,code:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1118→                </div>
+  1119→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1120→                  <SectionHeader icon={MapPin}>Location</SectionHeader>
+  1121→                  <div className="space-y-1"><IconLabel icon={MapPin}>Location</IconLabel><Input value={dlgData.location||''} onChange={e=>setDlgData({...dlgData,location:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1122→                </div>
+  1123→              </>}
+  1124→
+  1125→              {/* ─── Warehouse ─── */}
+  1126→              {dlgType === 'warehouse' && <>
+  1127→                {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1128→                  <SectionHeader icon={Building2}>Organization</SectionHeader>
+  1129→                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><Select value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : undefined} onValueChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{enterprises.map(e=><SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>)}</SelectContent></Select></div>
+  1130→                </div>}
+  1131→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1132→                  <SectionHeader icon={GitBranch}>Branch</SectionHeader>
+  1133→                  <div className="space-y-1"><IconLabel icon={GitBranch}>Branch</IconLabel><Select value={dlgData.branchId ? String(dlgData.branchId) : undefined} onValueChange={v=>setDlgData({...dlgData,branchId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{branches.filter(b=>!dlgData.enterpriseId||b.enterpriseId===dlgData.enterpriseId).map(b=><SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent></Select></div>
+  1134→                </div>
+  1135→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1136→                  <SectionHeader icon={Tag}>Details</SectionHeader>
+  1137→                  <div className="grid grid-cols-2 gap-2">
+  1138→                    <div className="space-y-1"><IconLabel icon={Tag}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1139→                    <div className="space-y-1"><IconLabel icon={Hash}>Code</IconLabel><Input value={dlgData.code||''} onChange={e=>setDlgData({...dlgData,code:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1140→                  </div>
+  1141→                </div>
+  1142→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1143→                  <SectionHeader icon={Box}>Capacity</SectionHeader>
+  1144→                  <div className="space-y-1"><IconLabel icon={Box}>Capacity</IconLabel><Input type="number" value={dlgData.capacity||''} onChange={e=>setDlgData({...dlgData,capacity:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1145→                </div>
+  1146→              </>}
+  1147→
+  1148→              {/* ─── User ─── */}
+  1149→              {dlgType === 'user' && <>
+  1150→                {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1151→                  <SectionHeader icon={Building2}>Organization</SectionHeader>
+  1152→                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><Select value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : undefined} onValueChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{enterprises.map(e=><SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>)}</SelectContent></Select></div>
+  1153→                </div>}
+  1154→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1155→                  <SectionHeader icon={GitBranch}>Assignment</SectionHeader>
+  1156→                  <div className="space-y-1"><IconLabel icon={GitBranch}>Branch</IconLabel><Select value={dlgData.branchId ? String(dlgData.branchId) : '0'} onValueChange={v=>setDlgData({...dlgData,branchId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="None" /></SelectTrigger><SelectContent><SelectItem value="0">None</SelectItem>{branches.filter(b=>!dlgData.enterpriseId||b.enterpriseId===dlgData.enterpriseId).map(b=><SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent></Select></div>
+  1157→                </div>
+  1158→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1159→                  <SectionHeader icon={Shield}>Role</SectionHeader>
+  1160→                  <div className="space-y-1"><IconLabel icon={Shield}>Role</IconLabel><Select value={dlgData.role || undefined} onValueChange={v=>setDlgData({...dlgData,role:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{(MANAGEABLE_ROLES[role!]||[]).map(r=><SelectItem key={r} value={r}>{ROLE_LABELS[r]}</SelectItem>)}</SelectContent></Select></div>
+  1161→                </div>
+  1162→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1163→                  <SectionHeader icon={Users}>Identity</SectionHeader>
+  1164→                  <div className="space-y-1"><IconLabel icon={Users}>Full Name</IconLabel><Input value={dlgData.fullName||''} onChange={e=>setDlgData({...dlgData,fullName:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1165→                </div>
+  1166→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1167→                  <SectionHeader icon={Key}>Credentials</SectionHeader>
+  1168→                  <div className="grid grid-cols-2 gap-2">
+  1169→                    <div className="space-y-1"><IconLabel icon={Key}>Username</IconLabel><Input value={dlgData.username||''} onChange={e=>setDlgData({...dlgData,username:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1170→                    <div className="space-y-1"><IconLabel icon={Lock}>Password</IconLabel><Input type="password" value={dlgData.passwordHash||''} onChange={e=>setDlgData({...dlgData,passwordHash:e.target.value})} placeholder="admin123" className="h-8 text-sm rounded-md" /></div>
+  1171→                  </div>
+  1172→                </div>
+  1173→              </>}
+  1174→
+  1175→              {/* ─── Product ─── */}
+  1176→              {dlgType === 'product' && <>
+  1177→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1178→                  <SectionHeader icon={Tag}>Details</SectionHeader>
+  1179→                  <div className="space-y-1"><IconLabel icon={Tag}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1180→                  <div className="space-y-1"><IconLabel icon={Hash}>SKU</IconLabel><Input value={dlgData.sku||''} onChange={e=>setDlgData({...dlgData,sku:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1181→                </div>
+  1182→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1183→                  <SectionHeader icon={Box}>Measurement</SectionHeader>
+  1184→                  <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
+  1185→                </div>
+  1186→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1187→                  <SectionHeader icon={TrendingUp}>Pricing</SectionHeader>
+  1188→                  <div className="grid grid-cols-2 gap-2">
+  1189→                    <div className="space-y-1"><IconLabel icon={TrendingUp}>Price</IconLabel><Input type="number" step="0.01" value={dlgData.price||''} onChange={e=>setDlgData({...dlgData,price:parseFloat(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1190→                    <div className="space-y-1"><IconLabel icon={TrendingUp}>Cost</IconLabel><Input type="number" step="0.01" value={dlgData.cost||''} onChange={e=>setDlgData({...dlgData,cost:parseFloat(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1191→                  </div>
+  1192→                </div>
+  1193→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1194→                  <SectionHeader icon={AlertTriangle}>Inventory</SectionHeader>
+  1195→                  <div className="space-y-1"><IconLabel icon={AlertTriangle}>Reorder Level</IconLabel><Input type="number" value={dlgData.reorderLevel||0} onChange={e=>setDlgData({...dlgData,reorderLevel:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1196→                </div>
+  1197→              </>}
+  1198→
+  1199→              {/* ─── Register Item (Product + Stock In) ─── */}
+  1200→              {dlgType === 'registerItem' && <>
+  1201→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1202→                  <SectionHeader icon={Package}>Product Details</SectionHeader>
+  1203→                  <div className="space-y-1"><IconLabel icon={Tag}>Product Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} placeholder="e.g. Wireless Mouse" className="h-8 text-sm rounded-md" /></div>
+  1204→                  <div className="grid grid-cols-2 gap-2">
+  1205→                    <div className="space-y-1"><IconLabel icon={Hash}>SKU</IconLabel><Input value={dlgData.sku||''} onChange={e=>setDlgData({...dlgData,sku:e.target.value})} placeholder="e.g. ITEM-001" className="h-8 text-sm rounded-md" /></div>
+  1206→                    <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
+  1207→                  </div>
+  1208→                  <div className="space-y-1"><IconLabel icon={Tag}>Category</IconLabel><Select value={dlgData.categoryId ? String(dlgData.categoryId) : undefined} onValueChange={v=>setDlgData({...dlgData,categoryId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select category..." /></SelectTrigger><SelectContent>{categories.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=><SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent></Select></div>
+  1209→                </div>
+  1210→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1211→                  <SectionHeader icon={TrendingUp}>Pricing</SectionHeader>
+  1212→                  <div className="grid grid-cols-2 gap-2">
+  1213→                    <div className="space-y-1"><IconLabel icon={TrendingUp}>Selling Price</IconLabel><Input type="number" step="0.01" value={dlgData.price||''} onChange={e=>setDlgData({...dlgData,price:parseFloat(e.target.value)||0})} placeholder="0.00" className="h-8 text-sm rounded-md" /></div>
+  1214→                    <div className="space-y-1"><IconLabel icon={TrendingUp}>Cost Price</IconLabel><Input type="number" step="0.01" value={dlgData.cost||''} onChange={e=>setDlgData({...dlgData,cost:parseFloat(e.target.value)||0})} placeholder="0.00" className="h-8 text-sm rounded-md" /></div>
+  1215→                  </div>
+  1216→                  <div className="space-y-1"><IconLabel icon={AlertTriangle}>Reorder Level</IconLabel><Input type="number" value={dlgData.reorderLevel||0} onChange={e=>setDlgData({...dlgData,reorderLevel:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1217→                </div>
+  1218→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1219→                  <SectionHeader icon={WHIcon}>Stock Registration</SectionHeader>
+  1220→                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w=>w.isActive).map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+  1221→                  <div className="space-y-1"><IconLabel icon={ArrowUpFromLine}>Initial Quantity</IconLabel><Input type="number" min="0" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} placeholder="Enter quantity..." className="h-8 text-sm rounded-md" /></div>
+  1222→                </div>
+  1223→              </>}
+  1224→
+  1225→              {/* ─── Stock ─── */}
+  1226→              {dlgType === 'stock' && <>
+  1227→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1228→                  <SectionHeader icon={Package}>Product</SectionHeader>
+  1229→                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel><Input value={products.find(p=>p.id===dlgData.productId)?.name||''} disabled className="h-9 rounded-lg bg-muted" /></div>
+  1230→                </div>
+  1231→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1232→                  <SectionHeader icon={Hash}>Quantity</SectionHeader>
+  1233→                  <div className="space-y-1"><IconLabel icon={Hash}>Current Qty</IconLabel><Input value={dlgData.quantity||0} disabled className="h-9 rounded-lg bg-muted" /></div>
+  1234→                </div>
+  1235→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1236→                  <SectionHeader icon={TrendingUp}>Adjustment</SectionHeader>
+  1237→                  <div className="space-y-1"><IconLabel icon={TrendingUp}>Adjustment (+/-)</IconLabel><Input type="number" value={dlgData.delta||0} onChange={e=>setDlgData({...dlgData,delta:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1238→                </div>
+  1239→              </>}
+  1240→
+  1241→              {/* ─── Stock In ─── */}
+  1242→              {dlgType === 'stockIn' && <>
+  1243→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1244→                  <SectionHeader icon={Package}>Product</SectionHeader>
+  1245→                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel>
+  1246→                    {dlgEdit ? <Input value={products.find(p=>p.id===dlgEdit.productId)?.name||products.find(p=>p.id===dlgData.productId)?.name||''} disabled className="h-9 rounded-lg bg-muted" />
+  1247→                    : <Select value={dlgData.productId ? String(dlgData.productId) : undefined} onValueChange={v=>setDlgData({...dlgData,productId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-60">{products.filter(p=>p.isActive).sort((a,b)=>a.name.localeCompare(b.name)).map(p=><SelectItem key={p.id} value={String(p.id)}>{p.name} ({p.sku})</SelectItem>)}</SelectContent></Select>}
+  1248→                  </div>
+  1249→                </div>
+  1250→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1251→                  <SectionHeader icon={WHIcon}>Warehouse</SectionHeader>
+  1252→                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w=>w.isActive).map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+  1253→                </div>
+  1254→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1255→                  <SectionHeader icon={ArrowUpFromLine}>Quantity In</SectionHeader>
+  1256→                  <div className="space-y-1"><IconLabel icon={ArrowUpFromLine}>Quantity</IconLabel><Input type="number" min="1" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} placeholder="Enter quantity..." className="h-8 text-sm rounded-md" /></div>
+  1257→                  {dlgData.productId && <div className="text-[11px] text-muted-foreground mt-1">Current stock: {stockData.filter(s=>s.productId===dlgData.productId).reduce((sum,s)=>sum+s.quantity,0)} {products.find(p=>p.id===dlgData.productId)?.unit || 'pcs'} across all warehouses</div>}
+  1258→                </div>
+  1259→              </>}
+  1260→
+  1261→              {/* ─── Order ─── */}
+  1262→              {dlgType === 'order' && <>
+  1263→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1264→                  <SectionHeader icon={ShoppingCart}>Type</SectionHeader>
+  1265→                  <div className="space-y-1"><IconLabel icon={ShoppingCart}>Type</IconLabel><Select value={dlgData.type||'purchase'} onValueChange={v=>setDlgData({...dlgData,type:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="purchase">Purchase</SelectItem><SelectItem value="sales">Sales</SelectItem></SelectContent></Select></div>
+  1266→                </div>
+  1267→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1268→                  <SectionHeader icon={WHIcon}>Destination</SectionHeader>
+  1269→                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{warehouses.map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+  1270→                </div>
+  1271→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1272→                  <SectionHeader icon={FileText}>Notes</SectionHeader>
+  1273→                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
+  1274→                </div>
+  1275→              </>}
+  1276→
+  1277→              {/* ─── StockOut ─── */}
+  1278→              {dlgType === 'stockOut' && <>
+  1279→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1280→                  <SectionHeader icon={WHIcon}>Warehouse</SectionHeader>
+  1281→                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{warehouses.map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+  1282→                </div>
+  1283→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1284→                  <SectionHeader icon={Users}>Person</SectionHeader>
+  1285→                  <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={dlgData.personName||''} onChange={e=>setDlgData({...dlgData,personName:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1286→                </div>
+  1287→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1288→                  <SectionHeader icon={Phone}>Contact</SectionHeader>
+  1289→                  <div className="grid grid-cols-2 gap-2">
+  1290→                    <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={dlgData.personPhone||''} onChange={e=>setDlgData({...dlgData,personPhone:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1291→                    <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={dlgData.personEmail||''} onChange={e=>setDlgData({...dlgData,personEmail:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1292→                  </div>
+  1293→                </div>
+  1294→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1295→                  <SectionHeader icon={MapPin}>Location</SectionHeader>
+  1296→                  <div className="space-y-1"><IconLabel icon={MapPin}>Address</IconLabel><Input value={dlgData.personAddress||''} onChange={e=>setDlgData({...dlgData,personAddress:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1297→                </div>
+  1298→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1299→                  <SectionHeader icon={FileText}>Notes</SectionHeader>
+  1300→                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
+  1301→                </div>
+  1302→              </>}
+  1303→
+  1304→              {/* ─── StockOutItem ─── */}
+  1305→              {dlgType === 'stockOutItem' && <>
+  1306→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1307→                  <SectionHeader icon={Package}>Product</SectionHeader>
+  1308→                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel><Select value={dlgData.productId ? String(dlgData.productId) : undefined} onValueChange={v=>setDlgData({...dlgData,productId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{products.map(p=><SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+  1309→                </div>
+  1310→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1311→                  <SectionHeader icon={Hash}>Quantity</SectionHeader>
+  1312→                  <div className="grid grid-cols-2 gap-2">
+  1313→                    <div className="space-y-1"><IconLabel icon={Hash}>Quantity</IconLabel><Input type="number" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
+  1314→                    <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
+  1315→                  </div>
+  1316→                </div>
+  1317→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1318→                  <SectionHeader icon={RotateCcw}>Return</SectionHeader>
+  1319→                  <div className="flex items-center gap-3 py-1"><IconLabel icon={RotateCcw}>Returnable?</IconLabel><Switch checked={dlgData.isReturnable||false} onCheckedChange={v=>setDlgData({...dlgData,isReturnable:v})} /></div>
+  1320→                  {dlgData.isReturnable && <div className="space-y-1"><IconLabel icon={Calendar}>Return Deadline</IconLabel><CustomDatePicker value={dlgData.returnDeadline||''} onChange={v=>setDlgData({...dlgData,returnDeadline:v})} /></div>}
+  1321→                </div>
+  1322→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1323→                  <SectionHeader icon={FileText}>Notes</SectionHeader>
+  1324→                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Input value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1325→                </div>
+  1326→              </>}
+  1327→
+  1328→              {/* ─── Supplier ─── */}
+  1329→              {dlgType === 'supplier' && <>
+  1330→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1331→                  <SectionHeader icon={Truck}>Company</SectionHeader>
+  1332→                  <div className="space-y-1"><IconLabel icon={Truck}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1333→                </div>
+  1334→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1335→                  <SectionHeader icon={Users}>Contact</SectionHeader>
+  1336→                  <div className="space-y-1"><IconLabel icon={Users}>Contact Person</IconLabel><Input value={dlgData.contactPerson||''} onChange={e=>setDlgData({...dlgData,contactPerson:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1337→                  <div className="grid grid-cols-2 gap-2">
+  1338→                    <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={dlgData.email||''} onChange={e=>setDlgData({...dlgData,email:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1339→                    <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={dlgData.phone||''} onChange={e=>setDlgData({...dlgData,phone:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1340→                  </div>
+  1341→                </div>
+  1342→              </>}
+  1343→
+  1344→              {/* ─── Category ─── */}
+  1345→              {dlgType === 'category' && <>
+  1346→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1347→                  <SectionHeader icon={Tag}>Details</SectionHeader>
+  1348→                  <div className="space-y-1"><IconLabel icon={Tag}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1349→                </div>
+  1350→                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+  1351→                  <SectionHeader icon={FileText}>Description</SectionHeader>
+  1352→                  <div className="space-y-1"><IconLabel icon={FileText}>Description</IconLabel><Input value={dlgData.description||''} onChange={e=>setDlgData({...dlgData,description:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+  1353→                </div>
+  1354→              </>}
+  1355→
+  1356→            </div>
+  1357→            <DialogFooter><Button variant="ghost" onClick={()=>setDlgOpen(false)} className="text-muted-foreground" disabled={dlgSubmitting}>{t(locale,'cancel')}</Button>
+  1358→              <Button disabled={dlgSubmitting} onClick={async () => {
+  1359→                setDlgSubmitting(true)
+  1360→                try {
+  1361→                const sd = {...dlgData}
+  1362→                if (dlgType==='user') { if(!sd.enterpriseId) sd.enterpriseId=eid; if(!sd.branchId||sd.branchId===0) sd.branchId=auth.branchId; if(!sd.warehouseId||sd.warehouseId===6) sd.warehouseId=null; if(!sd.passwordHash) sd.passwordHash='admin123' }
+  1363→                if (dlgType==='product') { if(!sd.enterpriseId) sd.enterpriseId=eid; if(!sd.categoryId||sd.categoryId===0) sd.categoryId=null }
+  1364→                if (dlgType==='branch'&&!sd.enterpriseId) sd.enterpriseId=eid
+  1365→                if (dlgType==='warehouse'&&!sd.enterpriseId) sd.enterpriseId=eid
+  1366→                if (dlgType==='stockOut'&&!sd.enterpriseId) sd.enterpriseId=eid
+  1367→                if (dlgType==='stock') await crud.create('/stock',{productId:dlgData.productId,warehouseId:dlgData.warehouseId,delta:dlgData.delta})
+  1368→                else if (dlgType==='registerItem') {
+  1369→                  // Register Item: create product + stock-in in one step
+  1370→                  if (!dlgData.name?.trim()) { toast({ title: 'Enter product name', variant: 'destructive' }); return }
+  1371→                  if (!dlgData.sku?.trim()) { toast({ title: 'Enter SKU', variant: 'destructive' }); return }
+  1372→                  if (!dlgData.warehouseId) { toast({ title: 'Select a warehouse', variant: 'destructive' }); return }
+  1373→                  if (!dlgData.quantity || dlgData.quantity <= 0) { toast({ title: 'Enter a positive quantity', variant: 'destructive' }); return }
+  1374→                  if (!eid) { toast({ title: 'No enterprise selected', variant: 'destructive' }); return }
+  1375→                  const productData = { enterpriseId: eid, name: dlgData.name.trim(), sku: dlgData.sku.trim(), description: dlgData.description || '', categoryId: dlgData.categoryId || null, price: dlgData.price || 0, cost: dlgData.cost || 0, unit: dlgData.unit || 'pcs', reorderLevel: dlgData.reorderLevel || 0, isActive: true }
+  1376→                  let prodRes: any = null
+  1377→                  try {
+  1378→                    prodRes = await apiFetch('/products', { method: 'POST', body: JSON.stringify(productData) })
+  1379→                  } catch (e: any) {
+  1380→                    toast({ title: `Failed to create product: ${e.message}`, variant: 'destructive' })
+  1381→                    return
+  1382→                  }
+  1383→                  if (!prodRes || !prodRes.id) { toast({ title: 'Failed to create product - no ID returned', variant: 'destructive' }); return }
+  1384→                  try {
+  1385→                    await apiFetch('/stock', { method: 'POST', body: JSON.stringify({ action: 'stockIn', productId: prodRes.id, warehouseId: dlgData.warehouseId, quantity: dlgData.quantity }) })
+  1386→                    toast({ title: `Registered: ${dlgData.name} with ${dlgData.quantity} ${dlgData.unit || 'pcs'}` })
+  1387→                  } catch (e: any) {
+  1388→                    toast({ title: `Product created but stock-in failed: ${e.message}. Add stock manually.`, variant: 'destructive' })
+  1389→                  }
+  1390→                  await loadData()
+  1391→                }
+  1392→                else if (dlgType==='stockIn') {
+  1393→                  if (!dlgData.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }
+  1394→                  if (!dlgData.warehouseId) { toast({ title: 'Select a warehouse', variant: 'destructive' }); return }
+  1395→                  if (!dlgData.quantity || dlgData.quantity <= 0) { toast({ title: 'Enter a positive quantity', variant: 'destructive' }); return }
+  1396→                  try {
+  1397→                    await apiFetch('/stock', { method: 'POST', body: JSON.stringify({ action: 'stockIn', productId: dlgData.productId, warehouseId: dlgData.warehouseId, quantity: dlgData.quantity }) })
+  1398→                    toast({ title: `Stock in: +${dlgData.quantity} added` })
+  1399→                  } catch (e: any) {
+  1400→                    toast({ title: `Stock in failed: ${e.message}`, variant: 'destructive' })
+  1401→                  }
+  1402→                  await loadData()
+  1403→                }
+  1404→                else if (dlgType==='stockOutItem') {
+  1405→                  const recorderId = sd.recorderId
+  1406→                  if (!recorderId) { toast({ title: 'No recorder selected', variant: 'destructive' }); return }
+  1407→                  if (!sd.enterpriseId) sd.enterpriseId = eid
+  1408→                  await crud.create(`/stock-out/${recorderId}/item`, sd)
+  1409→                }
+  1410→                else if (dlgEdit) await crud.update(dlgType==='stockOut' ? `/stock-out/${dlgEdit.id}` : `/${dlgType}s/${dlgEdit.id}`,sd)
+  1411→                else if (dlgType==='stockOut') await crud.create('/stock-out', sd)
+  1412→                else await crud.create(`/${dlgType}s`, sd)
+  1413→                } catch(e: any) { toast({ title: e.message, variant: 'destructive' }) }
+  1414→                setDlgSubmitting(false)
+  1415→                setDlgOpen(false)
+  1416→              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{dlgSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}{dlgEdit?t(locale,'save'):t(locale,'add')}</Button></DialogFooter>
+  1417→          </DialogContent>
+  1418→        </Dialog>
+  1419→      </div>
+  1420→    </TooltipProvider>
+  1421→  )
+  1422→}
+  1423→
