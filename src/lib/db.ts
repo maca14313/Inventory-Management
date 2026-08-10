@@ -139,6 +139,19 @@ export interface StockOutItem {
   createdAt: string; updatedAt: string
 }
 
+export interface ReturnRecord {
+  id: number; stockOutItemId: number; quantity: number; unit: string; notes: string
+  returnedAt: string; createdAt: string; updatedAt: string
+}
+
+export interface ReturnableItem extends StockOutItem {
+  returnedQty: number
+  remainingQty: number
+  product: Product
+  recorder: StockOutRecorder
+  returns: ReturnRecord[]
+}
+
 export interface AuditLog {
   id: number; userId: number | null; enterpriseId: number | null
   action: string; entity: string; entityId: number | null
@@ -2077,6 +2090,192 @@ export const db = {
       }))
 
       return { stockByWarehouse, stockByCategory, topProducts, recentActivity }
+    },
+  },
+
+  // ── Returns (process returns against StockOutItems) ────
+  returns: {
+    /**
+     * List stock-out items eligible for return, split by tab.
+     *  - tab='flagged'     → isReturnable=true  AND remaining > 0
+     *  - tab='not_flagged' → isReturnable=false AND remaining > 0
+     * Each item carries: product, recorder, returnedQty, remainingQty, returns[].
+     * Items with remaining=0 are excluded (fully returned).
+     */
+    findReturnable: async (
+      ctx: AuthContext,
+      opts: { tab: 'flagged' | 'not_flagged'; warehouseId?: number },
+    ): Promise<ReturnableItem[]> => {
+      const whIds = await getAccessibleWarehouseIds(ctx)
+      if (whIds.length === 0) return []
+      const where: Prisma.StockOutItemWhereInput = {
+        warehouseId: { in: whIds },
+        isReturnable: opts.tab === 'flagged',
+      }
+      if (opts.warehouseId) where.warehouseId = opts.warehouseId
+      const rows = await prisma.stockOutItem.findMany({
+        where,
+        include: {
+          product: true,
+          recorder: true,
+          returns: { orderBy: { id: 'desc' } },
+        },
+        orderBy: { id: 'desc' },
+      })
+      // Compute returnedQty & remainingQty; drop fully-returned items
+      const out: ReturnableItem[] = []
+      for (const it of rows) {
+        const returnedQty = it.returns.reduce((s, r) => s + r.quantity, 0)
+        const remainingQty = it.quantity - returnedQty
+        if (remainingQty <= 0) continue
+        out.push({
+          id: it.id,
+          recorderId: it.recorderId,
+          productId: it.productId,
+          warehouseId: it.warehouseId,
+          quantity: it.quantity,
+          unit: it.unit,
+          isReturnable: it.isReturnable,
+          returnDeadline: it.returnDeadline ? it.returnDeadline.toISOString() : null,
+          notes: it.notes,
+          createdAt: it.createdAt.toISOString(),
+          updatedAt: it.updatedAt.toISOString(),
+          returnedQty,
+          remainingQty,
+          product: ser(it.product) as Product,
+          recorder: ser(it.recorder) as StockOutRecorder,
+          returns: ser(it.returns) as ReturnRecord[],
+        })
+      }
+      return out
+    },
+
+    /** Find one stock-out item by id, with product + recorder + returns[] (for source-record dialog). */
+    findItemById: async (ctx: AuthContext, stockOutItemId: number): Promise<ReturnableItem | null> => {
+      const it = await prisma.stockOutItem.findUnique({
+        where: { id: stockOutItemId },
+        include: { product: true, recorder: { include: { items: { include: { product: true } } } }, returns: { orderBy: { id: 'desc' } } },
+      })
+      if (!it) return null
+      if (ctx.role !== 'super_admin' && it.recorder.enterpriseId !== ctx.enterpriseId) return null
+      const returnedQty = it.returns.reduce((s, r) => s + r.quantity, 0)
+      return {
+        id: it.id, recorderId: it.recorderId, productId: it.productId, warehouseId: it.warehouseId,
+        quantity: it.quantity, unit: it.unit, isReturnable: it.isReturnable,
+        returnDeadline: it.returnDeadline ? it.returnDeadline.toISOString() : null,
+        notes: it.notes, createdAt: it.createdAt.toISOString(), updatedAt: it.updatedAt.toISOString(),
+        returnedQty, remainingQty: it.quantity - returnedQty,
+        product: ser(it.product) as Product,
+        recorder: ser(it.recorder) as StockOutRecorder,
+        returns: ser(it.returns) as ReturnRecord[],
+      }
+    },
+
+    /**
+     * Process a single return: create a Return record, increment stock (via Lot source='adjustment'),
+     * and update the StockOutRecorder status ('partial_return' if any item still has remaining > 0,
+     * 'returned' if ALL items are now fully returned).
+     */
+    processReturn: async (
+      ctx: AuthContext,
+      d: { stockOutItemId: number; quantity: number; notes?: string },
+    ): Promise<ReturnRecord> => {
+      if (!d.stockOutItemId) throw new Error('Validation: stockOutItemId is required')
+      if (!d.quantity || d.quantity <= 0) throw new Error('Validation: quantity must be positive')
+      const it = await prisma.stockOutItem.findUnique({
+        where: { id: d.stockOutItemId },
+        include: { recorder: true, product: true, returns: true },
+      })
+      if (!it) throw new Error('StockOutItem not found')
+      if (ctx.role !== 'super_admin' && it.recorder.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+      const returnedQty = it.returns.reduce((s, r) => s + r.quantity, 0)
+      const remaining = it.quantity - returnedQty
+      if (d.quantity > remaining) throw new Error(`Validation: only ${remaining} remaining to return`)
+
+      const result = await prisma.$transaction(async (tx) => {
+        // Create the Return record
+        const ret = await tx.return.create({
+          data: {
+            stockOutItemId: d.stockOutItemId,
+            quantity: d.quantity,
+            unit: it.unit,
+            notes: d.notes || '',
+          },
+        })
+        // Increment stock (this is a stock-in via return path)
+        const existing = await tx.stock.findUnique({
+          where: { productId_warehouseId: { productId: it.productId, warehouseId: it.warehouseId } },
+        })
+        if (existing) {
+          await tx.stock.update({ where: { id: existing.id }, data: { quantity: { increment: d.quantity } } })
+        } else {
+          await tx.stock.create({ data: { productId: it.productId, warehouseId: it.warehouseId, quantity: d.quantity } })
+        }
+        // Create a Lot with source='adjustment' to record the return as a stock-in batch
+        await createLot(tx, ctx, {
+          productId: it.productId,
+          warehouseId: it.warehouseId,
+          enterpriseId: it.recorder.enterpriseId,
+          quantity: d.quantity,
+          unit: it.unit,
+          costPerUnit: it.product.cost,
+          supplierName: it.recorder.personName || null,
+          source: 'adjustment',
+          sourceRef: `RETURN-${it.recorder.recorderCode}-${it.id}-${ret.id}`,
+          notes: `Return of stock-out item #${it.id} from recorder ${it.recorder.recorderCode}${d.notes ? ` — ${d.notes}` : ''}`,
+        })
+        // Update StockOutRecorder status: 'returned' if all items fully returned, else 'partial_return'
+        const allItems = await tx.stockOutItem.findMany({
+          where: { recorderId: it.recorderId },
+          include: { returns: true },
+        })
+        const allReturned = allItems.every(i => {
+          const rq = i.returns.reduce((s, r) => s + r.quantity, 0)
+          return rq >= i.quantity
+        })
+        const anyReturned = allItems.some(i => {
+          const rq = i.returns.reduce((s, r) => s + r.quantity, 0)
+          return rq > 0
+        })
+        const newStatus = allReturned ? 'returned' : (anyReturned ? 'partial_return' : 'pending')
+        await tx.stockOutRecorder.update({
+          where: { id: it.recorderId },
+          data: { status: newStatus },
+        })
+        await tx.auditLog.create({
+          data: {
+            userId: ctx.userId, enterpriseId: it.recorder.enterpriseId,
+            action: 'return.process', entity: 'Return', entityId: ret.id,
+            details: `Returned ${d.quantity} ${it.unit} of ${it.product.name} (stock-out item #${it.id}, recorder ${it.recorder.recorderCode}). Stock increased, lot created. Recorder status: ${newStatus}.`,
+          },
+        })
+        return ret
+      })
+      return ser(result) as ReturnRecord
+    },
+
+    /**
+     * Process a group return: multiple stock-out items in one call (e.g. all items from one supplier/person).
+     * Each entry: { stockOutItemId, quantity, notes? }.
+     * Stops on first error (e.g. insufficient remaining).
+     */
+    processGroupReturn: async (
+      ctx: AuthContext,
+      items: { stockOutItemId: number; quantity: number; notes?: string }[],
+    ): Promise<{ processed: number; returns: ReturnRecord[]; lastError: string | null }> => {
+      if (!Array.isArray(items) || items.length === 0) throw new Error('Validation: no items to return')
+      const processed: ReturnRecord[] = []
+      let lastError: string | null = null
+      for (const it of items) {
+        try {
+          const r = await db.returns.processReturn(ctx, it)
+          processed.push(r)
+        } catch (e: any) {
+          lastError = e.message || String(e)
+          break
+        }
+      }
+      return { processed: processed.length, returns: processed, lastError }
     },
   },
 }

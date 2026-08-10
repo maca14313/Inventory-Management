@@ -309,3 +309,81 @@ Stage Summary:
 - db.ts: registerItems accepts supplierInfo param, applies personName to every Lot.
 - /api/products/register: accepts + forwards supplierInfo.
 - All 4 user requirements implemented and browser-verified.
+
+---
+Task ID: 6
+Agent: main (Returns feature — backend + frontend)
+Task: Add a "Returns" page with two tabs (flagged should-be-returned / not-flagged), pagination, click-to-return (full or partial), group return by supplier/person, source-record icon showing the originating StockOutRecorder + return history.
+
+Work Log:
+- Read prior worklog (Tasks 0-5) to understand the IMS state: backend fully built (schema, db.ts, seed, 34 routes); frontend page.tsx ~1895 lines with all Tasks 1-8 + 3 changes applied.
+- Inspected current schema.prisma — confirmed StockOutItem already has `isReturnable Boolean` (used as the "flagged should-be-returned" flag) and `returnDeadline DateTime?`. No Return model existed.
+- Inspected db.ts — confirmed `db.stockOut.addItem` already writes `isReturnable` + `returnDeadline`; no returns tracking existed.
+- Inspected page.tsx — confirmed RotateCcw icon was already imported (used for the returnable badge in stock-out items table), but no Returns page or sidebar entry existed.
+
+Backend:
+- prisma/schema.prisma: added `returns Return[]` relation on StockOutItem + new `Return` model (id, stockOutItemId FK, quantity, unit, notes, returnedAt, createdAt, updatedAt) + @@index([isReturnable]) on StockOutItem for faster tab queries.
+- src/lib/db.ts: added `ReturnRecord` and `ReturnableItem` interfaces near the other interfaces; added `db.returns` domain with 4 methods:
+  - `findReturnable(ctx, { tab, warehouseId? })` — lists StockOutItems with computed returnedQty/remainingQty, joined product+recorder+returns[]. Filters by tab ('flagged' = isReturnable=true, 'not_flagged' = isReturnable=false). Drops items where remaining=0 (fully returned).
+  - `findItemById(ctx, stockOutItemId)` — returns one StockOutItem with product + recorder (with all its items+products) + returns[] for the source-record dialog.
+  - `processReturn(ctx, { stockOutItemId, quantity, notes? })` — creates a Return record, increments stock via upsert, creates a Lot with source='adjustment' + sourceRef=`RETURN-{recorderCode}-{itemId}-{returnId}`, updates StockOutRecorder status ('returned' if all items fully returned, 'partial_return' if any returned, 'pending' otherwise), writes audit log.
+  - `processGroupReturn(ctx, items[])` — loops processReturn for each item; stops on first error; returns {processed, returns[], lastError}.
+- Created 3 API route files:
+  - src/app/api/returns/route.ts — GET ?tab=flagged|not_flagged&wid=N + POST {stockOutItemId, quantity, notes?}
+  - src/app/api/returns/group/route.ts — POST {items:[{stockOutItemId, quantity, notes?}]}
+  - src/app/api/returns/[id]/route.ts — GET (id = stockOutItemId) for source-record dialog
+  All routes use Next.js 16 async params, getAuthContextFromHeaders, handleError.
+- Ran `bun run db:push` to apply schema (added Return table + index). Re-seeded to restore demo data.
+
+Frontend (src/app/page.tsx):
+- Added `RotateCcw` to ICONS map (was already imported but not in ICONS).
+- Added `ReturnRecord` and `ReturnableItem` interfaces (mirrors db.ts types).
+- Added Returns state block: returnsTab, returnsData, returnsLoading, returnsPage, RETURNS_PER_PAGE=8, returnsSearch, returnsWarehouseFilter, returnDlg (single-item), returnSourceDlg (source-record), groupReturnDlg (group return).
+- Added Returns to navItems: `{ key: 'returns', label: 'Returns', icon: 'RotateCcw', href: '/returns', permission: 'stock:view' }`.
+- Added `loadReturns(tab)` callback + useEffect that re-fetches when page === 'returns' or returnsTab changes.
+- Added 5 return handler functions: openReturnDlg, submitReturn, openReturnSourceDlg, openGroupReturnDlg, submitGroupReturn.
+- Added Returns page render block (~150 lines) with:
+  - Two-tab Tabs component (Should Be Returned / Not Flagged) — both paginated.
+  - Filters: search box (product/SKU/person/code) + warehouse dropdown + clear button + count.
+  - Group-return bar: lists unique personNames from filtered items as clickable buttons (each opens group-return dialog).
+  - Mobile: stacked cards (sm:hidden) — product name+SKU, View source + Return buttons, 2-col grid (Out/Returned/Remaining/Warehouse), full-width Person/Recorder/Deadline, gradient progress bar.
+  - Desktop: 9-column table (Product/Person/Recorder/Out/Returned/Remaining/Deadline/Progress/Actions) with gradient progress bar + percentage.
+  - Pager component at bottom.
+- Added 3 Returns dialogs (before the AI ASSISTANT WIDGET block):
+  1. Single-item return dialog (max-w-md): item summary (product/SKU/warehouse/Out/Returned/Remaining/recorder/person), quantity input (default = full remaining), Full/Half quick buttons, notes textarea, info banner explaining the restock + Lot creation, Process Return button.
+  2. Source-record dialog (max-w-2xl): item summary with Flagged/Not-flagged badge, "FROM STOCK-OUT RECORDER" section (recorder code, status badge, date, person contact info, notes, all-items-in-recorder list highlighting the current item), "RETURN HISTORY" section (list of returns with qty/notes/date or "No returns processed yet"), Close + Return This Item buttons.
+  3. Group-return dialog (max-w-2xl): title shows person name, list of items with switch + qty input + Full button, summary footer (N items selected · Total qty), Cancel + Process Group Return buttons.
+
+Verification:
+- bun run lint → exit 0 ✓
+- npx tsc --noEmit → 0 errors in src/ (only pre-existing skill-folder error) ✓
+- Smoke-tested all 3 API endpoints via curl with super_admin headers:
+  - GET /api/returns?tab=flagged → 1 item (Laptop Pro 15", 5/5 remaining, isReturnable=true)
+  - GET /api/returns?tab=not_flagged → 2 items (Network Switch 2/2, Wireless Keyboard 20/20)
+  - POST /api/returns {stockOutItemId:7, quantity:2} → Return #1 created; flagged tab now shows returnedQty=2, remainingQty=3
+  - POST /api/returns/group {items:[{7,3},{8,5}]} → processed:2; item #7 fully returned (5/5) → removed from flagged tab; item #8 partial (5/20)
+  - GET /api/returns/7 → full source-record data with recorder+items+returns[]
+- Agent Browser end-to-end verification:
+  - Login as superadmin → sidebar shows "Returns" entry (between Stock Out and Features) ✓
+  - Click Returns → page renders with heading, two tabs, filters, group-return bar, table ✓
+  - "Should Be Returned" tab: 1 row (Laptop Pro 15", Out=5, Returned=0, Remaining=5, Deadline=2026-03-01, 0% progress) ✓
+  - "Not Flagged" tab: 2 rows (Network Switch + Wireless Keyboard) + 2 group buttons (Client Corp Ltd + StartupXYZ) ✓
+  - Click "View source record" icon → dialog opens with item summary + recorder details + all items in recorder + return history (0) ✓
+  - Click "Return" → dialog opens, qty pre-filled to 5 (full remaining), Full/Half buttons ✓
+  - Submit partial return of 2 → table updates to Returned=2, Remaining=3, Progress=40% ✓
+  - Submit group return for Client Corp Ltd (3 units) → toast "Returned 1 item(s)", flagged tab now empty (5/5 fully returned) ✓
+  - Open source-record dialog after return → shows RETURN HISTORY (1) with "+2 piece" entry ✓
+  - Stock page: Laptop stock increased from 30 → 32 (after returning 2) ✓
+  - Lots dialog for Laptop: new LOT-2026-0012 (qty=2, source=adjustment, supplier=Client Corp Ltd) created ✓
+  - Mobile (390px): stacked cards render correctly, scrollWidth==innerWidth (no horizontal scroll) ✓
+  - Console: no runtime errors (only pre-existing DialogContent Description warnings) ✓
+
+Stage Summary:
+- prisma/schema.prisma: +Return model (7 fields + FK), +returns relation on StockOutItem, +@@index([isReturnable]).
+- src/lib/db.ts: +ReturnRecord interface, +ReturnableItem interface, +db.returns domain (findReturnable, findItemById, processReturn, processGroupReturn). ~190 lines added.
+- src/app/api/returns/route.ts: GET (tab+wid filters) + POST (single return).
+- src/app/api/returns/group/route.ts: POST (group return).
+- src/app/api/returns/[id]/route.ts: GET (source-record by stockOutItemId).
+- src/app/page.tsx: +Returns types, +Returns state block, +Returns navItem, +loadReturns/submitReturn/openReturnDlg/openReturnSourceDlg/openGroupReturnDlg/submitGroupReturn handlers, +Returns page render block (~150 lines, mobile cards + desktop table + group bar), +3 Returns dialogs (single return, source-record, group return). ~370 lines added (page.tsx now ~2265 lines).
+- Total Returns feature: 3 new API files + ~560 lines of code across db.ts + page.tsx.
+- Browser-verified: Returns sidebar entry visible, both tabs paginated, single return (full/partial) works, source-record dialog shows recorder + return history, group return by person works, stock + lots updated correctly, mobile-responsive with no horizontal scroll.

@@ -46,7 +46,7 @@ const SORTED_MEASUREMENTS = [...MEASUREMENTS].sort((a, b) => a.localeCompare(b))
 
 const ICONS: Record<string, React.ComponentType<any>> = {
   LayoutDashboard, Package, Warehouse: WHIcon, Users, ShoppingCart, Tag,
-  Box, Truck, Building2, GitBranch, Shield, Globe, ArrowUpFromLine, ArrowDownToLine, Layers,
+  Box, Truck, Building2, GitBranch, Shield, Globe, ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw,
 }
 
 const PIE_COLORS = ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316']
@@ -65,8 +65,10 @@ interface Feature { id: number; enterpriseId: number; feature: string; enabled: 
 interface Lot { id: number; lotNumber: string; productId: number; warehouseId: number; quantity: number; remainingQty: number; unit: string; costPerUnit: number; supplierName: string | null; source: string; sourceRef: string | null; notes: string | null; receivedDate: string; closedAt: string | null; status: string; createdAt: string }
 interface StockInItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; createdAt: string }
 interface StockInRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockInItem[]; createdAt: string }
-interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string }
+interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string; createdAt?: string; updatedAt?: string }
 interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[]; createdAt: string }
+interface ReturnRecord { id: number; stockOutItemId: number; quantity: number; unit: string; notes: string; returnedAt: string; createdAt: string }
+interface ReturnableItem extends StockOutItem { returnedQty: number; remainingQty: number; product: Product; recorder: StockOutRecorder; returns: ReturnRecord[]; createdAt: string }
 interface DashboardStats { enterpriseCount: number; branchCount: number; warehouseCount: number; userCount: number; productCount: number; orderCount: number; pendingOrderCount: number; totalStockValue: number; lowStockProducts: { id: number; name: string; sku: string; reorderLevel: number; totalQty: number }[]; totalLots: number; openLots: number; stockInCount: number; stockOutCount: number }
 interface AnalyticsData { stockByWarehouse: { name: string; value: number }[]; stockByCategory: { name: string; value: number }[]; topProducts: { name: string; quantity: number; value: number }[]; recentActivity: { id: number; action: string; entity: string; entityId: number | null; details: string; createdAt: string; userName: string | null }[] }
 
@@ -208,6 +210,21 @@ export default function IMSApp() {
     input: '',
     loading: false,
   })
+
+  // ─── Returns page state ─────────────────────────────────────────
+  const [returnsTab, setReturnsTab] = useState<'flagged' | 'not_flagged'>('flagged')
+  const [returnsData, setReturnsData] = useState<ReturnableItem[]>([])
+  const [returnsLoading, setReturnsLoading] = useState(false)
+  const [returnsPage, setReturnsPage] = useState(1)
+  const RETURNS_PER_PAGE = 8
+  const [returnsSearch, setReturnsSearch] = useState('')
+  const [returnsWarehouseFilter, setReturnsWarehouseFilter] = useState<number | ''>('')
+  // Single-item return dialog
+  const [returnDlg, setReturnDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; notes: string; submitting: boolean }>({ open: false, item: null, qty: 0, notes: '', submitting: false })
+  // Source-record dialog (shows the StockOutRecorder that this item belongs to + return history)
+  const [returnSourceDlg, setReturnSourceDlg] = useState<{ open: boolean; loading: boolean; item: ReturnableItem | null }>({ open: false, loading: false, item: null })
+  // Group return dialog (process multiple items at once, grouped by supplier/person)
+  const [groupReturnDlg, setGroupReturnDlg] = useState<{ open: boolean; submitting: boolean; personKey: string; items: { item: ReturnableItem; qty: number; selected: boolean }[] }>({ open: false, submitting: false, personKey: '', items: [] })
 
   const [dlgOpen, setDlgOpen] = useState(false)
   const [dlgType, setDlgType] = useState('')
@@ -421,6 +438,89 @@ export default function IMSApp() {
     }
   }
 
+  // ─── Returns: fetch list of returnable items for active tab ────────
+  const loadReturns = useCallback(async (tab: 'flagged' | 'not_flagged') => {
+    setReturnsLoading(true)
+    try {
+      const params = new URLSearchParams({ tab })
+      const res = await fetch(`${BASE}/api/returns?${params.toString()}`, { headers: { ...auth.getAuthHeaders() } })
+      const data = await res.json()
+      setReturnsData(Array.isArray(data) ? data : [])
+    } catch (e: any) {
+      console.error('loadReturns error:', e)
+      setReturnsData([])
+    }
+    setReturnsLoading(false)
+  }, [auth])
+
+  // Fetch returns whenever the Returns page is opened or the tab changes
+  useEffect(() => { if (auth.isLoggedIn && page === 'returns') { setReturnsPage(1); loadReturns(returnsTab) } }, [auth.isLoggedIn, page, returnsTab, loadReturns])
+
+  // ─── Returns: open single-item return dialog (qty defaults to full remaining) ────
+  const openReturnDlg = (item: ReturnableItem) => {
+    setReturnDlg({ open: true, item, qty: item.remainingQty, notes: '', submitting: false })
+  }
+  // ─── Returns: submit single-item return ────
+  const submitReturn = async () => {
+    const it = returnDlg.item
+    if (!it) return
+    if (!returnDlg.qty || returnDlg.qty <= 0) { toast({ title: 'Quantity must be positive', variant: 'destructive' }); return }
+    if (returnDlg.qty > it.remainingQty) { toast({ title: `Only ${it.remainingQty} remaining to return`, variant: 'destructive' }); return }
+    setReturnDlg(s => ({ ...s, submitting: true }))
+    try {
+      await apiFetch(`/returns`, { method: 'POST', body: JSON.stringify({ stockOutItemId: it.id, quantity: returnDlg.qty, notes: returnDlg.notes || undefined }) })
+      toast({ title: `Returned ${returnDlg.qty} ${it.unit} of ${it.product.name}` })
+      setReturnDlg({ open: false, item: null, qty: 0, notes: '', submitting: false })
+      await loadReturns(returnsTab)
+      await loadData(false) // refresh dashboard + stock to reflect the stock-in
+    } catch (e: any) {
+      toast({ title: e.message, variant: 'destructive' })
+      setReturnDlg(s => ({ ...s, submitting: false }))
+    }
+  }
+  // ─── Returns: open source-record dialog (fetch fresh data for the item) ────
+  const openReturnSourceDlg = async (item: ReturnableItem) => {
+    setReturnSourceDlg({ open: true, loading: true, item })
+    try {
+      const res = await fetch(`${BASE}/api/returns/${item.id}`, { headers: { ...auth.getAuthHeaders() } })
+      const data = await res.json()
+      if (data && data.id) setReturnSourceDlg({ open: true, loading: false, item: data as ReturnableItem })
+      else setReturnSourceDlg({ open: true, loading: false, item })
+    } catch (e: any) {
+      console.error('openReturnSourceDlg error:', e)
+      setReturnSourceDlg({ open: true, loading: false, item })
+    }
+  }
+  // ─── Returns: open group-return dialog for a given person key ────
+  const openGroupReturnDlg = (personKey: string, items: ReturnableItem[]) => {
+    setGroupReturnDlg({
+      open: true, submitting: false, personKey,
+      items: items.map(it => ({ item: it, qty: it.remainingQty, selected: true })),
+    })
+  }
+  // ─── Returns: submit group return ────
+  const submitGroupReturn = async () => {
+    const selected = groupReturnDlg.items.filter(i => i.selected && i.qty > 0)
+    if (selected.length === 0) { toast({ title: 'Select at least one item with qty > 0', variant: 'destructive' }); return }
+    setGroupReturnDlg(s => ({ ...s, submitting: true }))
+    try {
+      const res = await fetch(`${BASE}/api/returns/group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() },
+        body: JSON.stringify({ items: selected.map(i => ({ stockOutItemId: i.item.id, quantity: i.qty })) })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Group return failed')
+      toast({ title: `Returned ${data.processed || 0} item(s)${data.lastError ? `. Stopped: ${data.lastError}` : ''}` })
+      setGroupReturnDlg(s => ({ ...s, open: false, submitting: false }))
+      await loadReturns(returnsTab)
+      await loadData(false)
+    } catch (e: any) {
+      toast({ title: e.message, variant: 'destructive' })
+      setGroupReturnDlg(s => ({ ...s, submitting: false }))
+    }
+  }
+
   const role = auth.role
   const eid = auth.enterpriseId
 
@@ -499,6 +599,7 @@ export default function IMSApp() {
   const navItems = getNavItemsForRole(role!).concat([
     { key: 'stockIn', label: 'Stock In', icon: 'ArrowDownToLine', href: '/stock-in', permission: 'stock:view' as Permission },
     { key: 'stockOut', label: 'Stock Out', icon: 'ArrowUpFromLine', href: '/stock-out', permission: 'orders:view' as Permission },
+    { key: 'returns', label: 'Returns', icon: 'RotateCcw', href: '/returns', permission: 'stock:view' as Permission },
     { key: 'features', label: 'Features', icon: 'ToggleLeft', href: '/features', permission: 'enterprises:set_features' as Permission },
   ]).filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)
 
@@ -1359,6 +1460,156 @@ export default function IMSApp() {
       </div>
     )
 
+    // ─── RETURNS
+    if (page === 'returns') return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><RotateCcw className="w-4 h-4 text-violet-500" />Returns</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">Process returns for stock-outed items. Each return restocks inventory and is tracked against the original stock-out record.</p>
+          </div>
+        </div>
+
+        <Tabs value={returnsTab} onValueChange={v => setReturnsTab(v as 'flagged' | 'not_flagged')}>
+          <TabsList className="grid grid-cols-2 w-full max-w-md h-9">
+            <TabsTrigger value="flagged" className="text-xs gap-1"><RotateCcw className="w-3 h-3" />Should Be Returned</TabsTrigger>
+            <TabsTrigger value="not_flagged" className="text-xs gap-1"><X className="w-3 h-3" />Not Flagged</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value={returnsTab} className="mt-3 space-y-3">
+            {/* Filters */}
+            <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
+              <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
+              <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Search</Label>
+                <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Product, SKU, person, code..." value={returnsSearch} onChange={e => { setReturnsSearch(e.target.value); setReturnsPage(1) }} className="h-7 text-xs pl-7 w-56" /></div>
+              </div>
+              <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Warehouse</Label>
+                <Select value={returnsWarehouseFilter === '' ? '_all' : String(returnsWarehouseFilter)} onValueChange={v => { setReturnsWarehouseFilter(v === '_all' ? '' : parseInt(v)); setReturnsPage(1) }}>
+                  <SelectTrigger className="h-7 text-xs w-40"><SelectValue placeholder="All" /></SelectTrigger>
+                  <SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              {(returnsSearch || returnsWarehouseFilter !== '') && <Button size="sm" variant="ghost" onClick={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
+              <div className="ml-auto text-[10px] text-muted-foreground">{returnsData.length} item(s)</div>
+            </div>
+
+            {returnsLoading ? (
+              <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-violet-500" /><span className="ml-2 text-sm text-muted-foreground">Loading returns...</span></div>
+            ) : (() => {
+              // Apply search + warehouse filter
+              const q = returnsSearch.toLowerCase()
+              const filtered = returnsData.filter(it => {
+                if (returnsWarehouseFilter !== '' && it.warehouseId !== returnsWarehouseFilter) return false
+                if (!q) return true
+                return (it.product?.name || '').toLowerCase().includes(q)
+                  || (it.product?.sku || '').toLowerCase().includes(q)
+                  || (it.recorder?.personName || '').toLowerCase().includes(q)
+                  || (it.recorder?.recorderCode || '').toLowerCase().includes(q)
+              })
+              const totalPages = Math.ceil(filtered.length / RETURNS_PER_PAGE) || 1
+              const safePage = Math.min(returnsPage, totalPages)
+              const paged = filtered.slice((safePage - 1) * RETURNS_PER_PAGE, safePage * RETURNS_PER_PAGE)
+
+              // Group by personName for the "Group Return" feature
+              const groups: Record<string, ReturnableItem[]> = {}
+              for (const it of filtered) {
+                const key = it.recorder?.personName?.trim() || '(no person)'
+                if (!groups[key]) groups[key] = []
+                groups[key].push(it)
+              }
+              const groupEntries = Object.entries(groups).filter(([, items]) => items.length > 0).sort((a, b) => a[0].localeCompare(b[0]))
+
+              if (filtered.length === 0) return <div className="text-center text-sm text-muted-foreground py-10">No items to return in this tab.</div>
+
+              return (<>
+                {/* Group return bar */}
+                {groupEntries.length > 0 && (
+                  <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2">
+                    <div className="flex items-center gap-1.5 mb-1.5"><Users className="w-3 h-3 text-violet-600" /><span className="text-[10px] font-semibold text-violet-700 dark:text-violet-400 uppercase tracking-wider">Group Return by Person</span></div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {groupEntries.map(([person, items]) => (
+                        <button key={person} onClick={() => openGroupReturnDlg(person, items)} className="text-[11px] px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-500/30 hover:bg-violet-100 dark:hover:bg-violet-500/20 transition flex items-center gap-1">
+                          <Users className="w-3 h-3 text-violet-500" />
+                          <span className="font-medium">{person}</span>
+                          <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px] h-4">{items.length}</Badge>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Mobile: stacked cards */}
+                <div className="sm:hidden space-y-2">
+                  {paged.map(it => {
+                    const wh = warehouses.find(w => w.id === it.warehouseId)
+                    return (<Card key={it.id} className="shadow-sm"><CardContent className="p-2.5 space-y-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div>
+                          <div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</div></div>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <Button size="sm" variant="ghost" onClick={() => openReturnSourceDlg(it)} className="h-5 w-5 p-0 text-muted-foreground" title="View source record"><Eye className="w-3 h-3" /></Button>
+                          <Button size="sm" onClick={() => openReturnDlg(it)} className="h-5 text-[10px] bg-violet-600 text-white px-1.5" title="Return this item"><RotateCcw className="w-2.5 h-2.5 mr-0.5" />Return</Button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+                        <div><span className="text-muted-foreground">Out: </span><span className="font-mono font-medium">{it.quantity}</span> <span className="text-muted-foreground">{it.unit}</span></div>
+                        <div><span className="text-muted-foreground">Returned: </span><span className="font-mono font-medium text-emerald-600">{it.returnedQty}</span></div>
+                        <div><span className="text-muted-foreground">Remaining: </span><span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div>
+                        <div><span className="text-muted-foreground">Warehouse: </span><span className="font-medium truncate">{wh?.name || `#${it.warehouseId}`}</span></div>
+                        <div className="col-span-2"><span className="text-muted-foreground">Person: </span><span className="font-medium">{it.recorder?.personName || '—'}</span></div>
+                        <div className="col-span-2"><span className="text-muted-foreground">Recorder: </span><span className="font-mono text-[10px]">{it.recorder?.recorderCode}</span> <span className="text-muted-foreground">· {new Date(it.createdAt).toLocaleDateString()}</span></div>
+                        {it.returnDeadline && <div className="col-span-2"><span className="text-muted-foreground">Deadline: </span><span className="font-medium text-amber-600">{it.returnDeadline}</span></div>}
+                      </div>
+                      {/* Progress bar */}
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-500 to-violet-500" style={{ width: `${Math.min(100, (it.returnedQty / it.quantity) * 100)}%` }} /></div>
+                    </CardContent></Card>
+                  )
+                  })}
+                </div>
+
+                {/* Desktop: table */}
+                <div className="hidden sm:block rounded-md border overflow-hidden"><Table>
+                  <TableHeader><TableRow>
+                    <TableHead className="h-7 text-[10px]">Product</TableHead>
+                    <TableHead className="h-7 text-[10px]">Person</TableHead>
+                    <TableHead className="h-7 text-[10px]">Recorder</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right w-14">Out</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right w-16">Returned</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right w-16">Remaining</TableHead>
+                    <TableHead className="h-7 text-[10px] w-24">Deadline</TableHead>
+                    <TableHead className="h-7 text-[10px] w-28">Progress</TableHead>
+                    <TableHead className="h-7 w-20 text-right">Actions</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {paged.map(it => {
+                      const wh = warehouses.find(w => w.id === it.warehouseId)
+                      const pct = Math.min(100, (it.returnedQty / it.quantity) * 100)
+                      return (<TableRow key={it.id}>
+                        <TableCell className="py-1 text-[11px]"><div className="font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`}</div></TableCell>
+                        <TableCell className="py-1 text-[11px]">{it.recorder?.personName || '—'}</TableCell>
+                        <TableCell className="py-1 text-[11px]"><span className="font-mono">{it.recorder?.recorderCode}</span><div className="text-[9px] text-muted-foreground">{new Date(it.createdAt).toLocaleDateString()}</div></TableCell>
+                        <TableCell className="py-1 text-[11px] text-right font-mono">{it.quantity} <span className="text-muted-foreground">{it.unit}</span></TableCell>
+                        <TableCell className="py-1 text-[11px] text-right font-mono text-emerald-600">{it.returnedQty}</TableCell>
+                        <TableCell className="py-1 text-[11px] text-right font-mono text-violet-600 font-semibold">{it.remainingQty}</TableCell>
+                        <TableCell className="py-1 text-[11px]">{it.returnDeadline ? <span className="text-amber-600">{it.returnDeadline}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell className="py-1"><div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-500 to-violet-500" style={{ width: `${pct}%` }} /></div><div className="text-[9px] text-muted-foreground mt-0.5 text-center">{pct.toFixed(0)}%</div></TableCell>
+                        <TableCell className="py-1 text-right">
+                          <div className="flex items-center justify-end gap-0.5">
+                            <Button size="sm" variant="ghost" onClick={() => openReturnSourceDlg(it)} className="h-5 w-5 p-0 text-muted-foreground" title="View source record"><Eye className="w-3 h-3" /></Button>
+                            <Button size="sm" onClick={() => openReturnDlg(it)} className="h-5 text-[10px] bg-violet-600 text-white px-1.5" title="Return this item"><RotateCcw className="w-2.5 h-2.5 mr-0.5" />Return</Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>)
+                    })}
+                  </TableBody>
+                </Table></div>
+                <Pager page={safePage} totalPages={totalPages} onPageChange={setReturnsPage} />
+              </>)
+            })()}
+          </TabsContent>
+        </Tabs>
+      </div>
+    )
+
     // ─── FEATURES
     if (page === 'features') return (
       <div className="space-y-5">
@@ -1860,6 +2111,159 @@ export default function IMSApp() {
             </div>
             {lotsData.length > LOTS_PER_PAGE && <Pager page={lotsPage} totalPages={Math.ceil(lotsData.length / LOTS_PER_PAGE)} onPageChange={setLotsPage} />}
             <DialogFooter><Button variant="ghost" onClick={() => setLotsDialog(s => ({ ...s, open: false }))} className="text-muted-foreground">{t(locale, 'cancel')}</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── RETURNS: single-item return dialog ─── */}
+        <Dialog open={returnDlg.open} onOpenChange={o => setReturnDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><RotateCcw className="w-4 h-4 text-violet-500" />Process Return</DialogTitle></DialogHeader>
+            {returnDlg.item && (() => { const it = returnDlg.item; const wh = warehouses.find(w => w.id === it.warehouseId)
+              return (<div className="space-y-2.5">
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-1">
+                  <div className="text-sm font-semibold">{it.product?.name}</div>
+                  <div className="text-[11px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `WH #${it.warehouseId}`}</div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] mt-1">
+                    <span className="text-muted-foreground">Out: <span className="font-mono font-medium text-foreground">{it.quantity} {it.unit}</span></span>
+                    <span className="text-muted-foreground">Returned: <span className="font-mono font-medium text-emerald-600">{it.returnedQty}</span></span>
+                    <span className="text-muted-foreground">Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></span>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">Recorder: <span className="font-mono">{it.recorder?.recorderCode}</span> · Person: <span className="font-medium text-foreground">{it.recorder?.personName || '—'}</span></div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={RotateCcw}>Return Quantity</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={Hash}>Quantity to return (max {it.remainingQty})</IconLabel>
+                    <Input type="number" min={1} max={it.remainingQty} value={returnDlg.qty} onChange={e => setReturnDlg(s => ({ ...s, qty: parseInt(e.target.value) || 0 }))} className="h-9 text-sm rounded-md" />
+                    <div className="flex gap-1.5 mt-1">
+                      <Button size="sm" variant="outline" onClick={() => setReturnDlg(s => ({ ...s, qty: it.remainingQty }))} className="h-6 text-[10px]">Full ({it.remainingQty})</Button>
+                      <Button size="sm" variant="outline" onClick={() => setReturnDlg(s => ({ ...s, qty: Math.max(1, Math.floor(it.remainingQty / 2)) }))} className="h-6 text-[10px]">Half</Button>
+                    </div>
+                  </div>
+                  <div className="space-y-1"><IconLabel icon={FileText}>Notes (optional)</IconLabel>
+                    <Textarea value={returnDlg.notes} onChange={e => setReturnDlg(s => ({ ...s, notes: e.target.value }))} placeholder="Reason for return, condition, etc." className="rounded-md min-h-[60px]" />
+                  </div>
+                </div>
+                <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2 text-[11px] text-violet-700 dark:text-violet-400 flex items-start gap-1.5">
+                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                  <span>This will restock <span className="font-mono font-semibold">{returnDlg.qty || 0} {it.unit}</span> of <span className="font-semibold">{it.product?.name}</span> into <span className="font-semibold">{wh?.name || `WH #${it.warehouseId}`}</span> and create a Lot with source=<span className="font-mono">adjustment</span>.</span>
+                </div>
+              </div>)
+            })()}
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setReturnDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={returnDlg.submitting}>{t(locale, 'cancel')}</Button>
+              <Button onClick={submitReturn} disabled={returnDlg.submitting || !returnDlg.qty || (returnDlg.item ? returnDlg.qty > returnDlg.item.remainingQty : true)} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">
+                {returnDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Process Return
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── RETURNS: source-record dialog (shows the StockOutRecorder + return history) ─── */}
+        <Dialog open={returnSourceDlg.open} onOpenChange={o => setReturnSourceDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-2xl w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Eye className="w-4 h-4 text-violet-500" />Source Record</DialogTitle></DialogHeader>
+            {returnSourceDlg.loading ? (
+              <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-violet-500" /><span className="ml-2 text-sm text-muted-foreground">Loading source record...</span></div>
+            ) : returnSourceDlg.item && (() => { const it = returnSourceDlg.item; const wh = warehouses.find(w => w.id === it.warehouseId); const rec = it.recorder
+              return (<div className="space-y-2.5 max-h-[65vh] overflow-y-auto pr-1">
+                {/* Item summary */}
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-1">
+                  <div className="text-sm font-semibold">{it.product?.name}</div>
+                  <div className="text-[11px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `WH #${it.warehouseId}`}</div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] mt-1">
+                    <span className="text-muted-foreground">Out: <span className="font-mono font-medium text-foreground">{it.quantity} {it.unit}</span></span>
+                    <span className="text-muted-foreground">Returned: <span className="font-mono font-medium text-emerald-600">{it.returnedQty}</span></span>
+                    <span className="text-muted-foreground">Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></span>
+                    {it.isReturnable ? <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[9px] h-4">Flagged</Badge> : <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-0 text-[9px] h-4">Not flagged</Badge>}
+                  </div>
+                </div>
+                {/* Recorder (source record) details */}
+                {rec && (<div className="bg-muted/30 rounded-lg p-2.5 space-y-1.5">
+                  <SectionHeader icon={ArrowUpFromLine}>From Stock-Out Recorder</SectionHeader>
+                  <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-semibold">{rec.recorderCode}</span>{statusBadge(rec.status)}<span className="text-[11px] text-muted-foreground">{new Date(rec.createdAt).toLocaleString()}</span></div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+                    {rec.personName && <span className="flex items-center gap-0.5"><Users className="w-2.5 h-2.5 text-muted-foreground" />{rec.personName}</span>}
+                    {rec.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5 text-muted-foreground" />{rec.personPhone}</span>}
+                    {rec.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5 text-muted-foreground" />{rec.personEmail}</span>}
+                    {rec.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5 text-muted-foreground" />{rec.personAddress}</span>}
+                  </div>
+                  {rec.notes && <div className="text-[11px] text-muted-foreground italic flex items-start gap-1"><FileText className="w-2.5 h-2.5 mt-0.5 shrink-0" />{rec.notes}</div>}
+                  {/* All items in this recorder */}
+                  {(rec as any).items && (rec as any).items.length > 0 && (<div className="pt-1.5 border-t mt-1.5">
+                    <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">All Items in this Recorder ({(rec as any).items.length})</div>
+                    <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                      {(rec as any).items.map((ri: any) => (
+                        <div key={ri.id} className={`text-[11px] flex items-center justify-between gap-2 px-1.5 py-0.5 rounded ${ri.id === it.id ? 'bg-violet-100 dark:bg-violet-500/20 font-semibold' : ''}`}>
+                          <span className="truncate">{ri.product?.name || `#${ri.productId}`}</span>
+                          <span className="font-mono shrink-0">{ri.quantity} {ri.unit}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>)}
+                </div>)}
+                {/* Return history */}
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-1.5">
+                  <SectionHeader icon={RotateCcw}>Return History ({it.returns?.length || 0})</SectionHeader>
+                  {(!it.returns || it.returns.length === 0) ? (
+                    <div className="text-[11px] text-muted-foreground text-center py-2">No returns processed yet.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {it.returns.map(r => (
+                        <div key={r.id} className="bg-background border rounded-md p-1.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0"><div className="text-[11px] font-mono"><span className="text-violet-600 font-semibold">+{r.quantity}</span> <span className="text-muted-foreground">{r.unit}</span></div>
+                            {r.notes && <div className="text-[10px] text-muted-foreground italic truncate">{r.notes}</div>}</div>
+                          <div className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">{new Date(r.returnedAt).toLocaleString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>)
+            })()}
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setReturnSourceDlg(s => ({ ...s, open: false }))} className="text-muted-foreground">Close</Button>
+              {returnSourceDlg.item && <Button onClick={() => { const it: ReturnableItem | null = returnSourceDlg.item; if (!it) return; setReturnSourceDlg(s => ({ ...s, open: false })); openReturnDlg(it); }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white"><RotateCcw className="w-4 h-4 mr-1.5" />Return This Item</Button>}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── RETURNS: group-return dialog (process multiple items by person) ─── */}
+        <Dialog open={groupReturnDlg.open} onOpenChange={o => setGroupReturnDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-2xl w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Users className="w-4 h-4 text-violet-500" />Group Return — {groupReturnDlg.personKey}</DialogTitle></DialogHeader>
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+              {groupReturnDlg.items.length === 0 ? <div className="text-center text-sm text-muted-foreground py-4">No items in this group.</div> : groupReturnDlg.items.map((entry, idx) => {
+                const it = entry.item; const wh = warehouses.find(w => w.id === it.warehouseId)
+                return (<div key={it.id} className={`rounded-md border p-2 ${entry.selected ? 'bg-violet-50/40 dark:bg-violet-500/5 border-violet-200 dark:border-violet-500/30' : 'bg-muted/20'}`}>
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <Switch checked={entry.selected} onCheckedChange={v => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, selected: v } : x) }))} className="scale-75" />
+                      <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `#${it.warehouseId}`}</div></div>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground shrink-0 text-right">
+                      <div>Out: <span className="font-mono font-medium text-foreground">{it.quantity}</span></div>
+                      <div>Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div>
+                    </div>
+                  </div>
+                  {entry.selected && (
+                    <div className="flex items-center gap-1.5 pl-6">
+                      <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Qty to return:</Label>
+                      <Input type="number" min={1} max={it.remainingQty} value={entry.qty} onChange={e => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: parseInt(e.target.value) || 0 } : x) }))} className="h-6 text-[11px] w-20" />
+                      <Button size="sm" variant="outline" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: it.remainingQty } : x) }))} className="h-6 text-[10px] px-1.5">Full</Button>
+                    </div>
+                  )}
+                </div>)
+              })}
+            </div>
+            <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2 text-[11px] text-violet-700 dark:text-violet-400">
+              {groupReturnDlg.items.filter(i => i.selected && i.qty > 0).length} item(s) selected · Total qty: {groupReturnDlg.items.filter(i => i.selected && i.qty > 0).reduce((s, i) => s + i.qty, 0)}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setGroupReturnDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={groupReturnDlg.submitting}>{t(locale, 'cancel')}</Button>
+              <Button onClick={submitGroupReturn} disabled={groupReturnDlg.submitting || groupReturnDlg.items.filter(i => i.selected && i.qty > 0).length === 0} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">
+                {groupReturnDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Process Group Return
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
