@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -155,6 +156,58 @@ function Pager({ page, totalPages, onPageChange }: { page: number; totalPages: n
   )
 }
 
+// ─── Advanced Collapsible Filter Panel (reusable across all list pages)
+// Wraps a set of filter fields in a collapsible container with a header that shows
+// the number of active filters and a Clear button. Children are the filter fields.
+function FilterPanel({
+  activeCount,
+  onClear,
+  children,
+  title = 'Advanced Filters',
+  defaultOpen = false,
+  resultLabel,
+}: {
+  activeCount: number
+  onClear: () => void
+  children: React.ReactNode
+  title?: string
+  defaultOpen?: boolean
+  resultLabel?: string
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} className="bg-muted/30 rounded-md border">
+      <div className="flex items-center justify-between gap-2 p-2">
+        <CollapsibleTrigger asChild>
+          <button type="button" className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition">
+            <Filter className="w-3.5 h-3.5" />
+            <span>{title}</span>
+            {activeCount > 0 && <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400 border-0 text-[9px] h-4 px-1.5">{activeCount}</Badge>}
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+          </button>
+        </CollapsibleTrigger>
+        <div className="flex items-center gap-2">
+          {resultLabel && <span className="text-[10px] text-muted-foreground">{resultLabel}</span>}
+          {activeCount > 0 && <Button size="sm" variant="ghost" onClick={onClear} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
+        </div>
+      </div>
+      <CollapsibleContent>
+        <div className="px-2 pb-2 pt-1 flex flex-wrap items-end gap-2 border-t">{children}</div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+// ─── Filter field wrapper: label + child
+function FilterField({ label, children, width }: { label: string; children: React.ReactNode; width?: string }) {
+  return (
+    <div className="space-y-0.5">
+      <Label className="text-[10px] text-muted-foreground">{label}</Label>
+      <div className={width}>{children}</div>
+    </div>
+  )
+}
+
 export default function IMSApp() {
   const auth = useAuthStore()
   const { theme, setTheme } = useTheme()
@@ -175,11 +228,21 @@ export default function IMSApp() {
   const [products, setProducts] = useState<Product[]>([])
   // Task 5: Products + Stock table pagination & search state
   const [productSearch, setProductSearch] = useState('')
+  const [productCategoryFilter, setProductCategoryFilter] = useState<number | ''>('')
+  const [productStatusFilter, setProductStatusFilter] = useState<'' | 'active' | 'inactive'>('')
+  const [productLowOnly, setProductLowOnly] = useState(false)
   const [productPage, setProductPage] = useState(1)
   const PRODUCTS_PER_PAGE = 10
   const [stockPage, setStockPage] = useState(1)
   const STOCK_PER_PAGE = 10
   const [stockData, setStockData] = useState<StockItem[]>([])
+  // Stock advanced filters
+  const [stockWarehouseFilter, setStockWarehouseFilter] = useState<number | ''>('')
+  const [stockLowOnly, setStockLowOnly] = useState(false)
+  // Orders advanced filters
+  const [orderSearch, setOrderSearch] = useState('')
+  const [orderStatusFilter, setOrderStatusFilter] = useState('')
+  const [orderTypeFilter, setOrderTypeFilter] = useState<'' | 'purchase' | 'sales'>('')
   const [orders, setOrders] = useState<Order[]>([])
   const [auditData, setAuditData] = useState<AuditEntry[]>([])
   const [features, setFeatures] = useState<Feature[]>([])
@@ -219,12 +282,21 @@ export default function IMSApp() {
   const RETURNS_PER_PAGE = 8
   const [returnsSearch, setReturnsSearch] = useState('')
   const [returnsWarehouseFilter, setReturnsWarehouseFilter] = useState<number | ''>('')
+  const [returnsFilterDateFrom, setReturnsFilterDateFrom] = useState('')
+  const [returnsFilterDateTo, setReturnsFilterDateTo] = useState('')
+  const [returnsFilterRecorder, setReturnsFilterRecorder] = useState('')
+  const [returnsFilterProgress, setReturnsFilterProgress] = useState<'' | 'none' | 'partial' | 'full'>('')
   // Single-item return dialog
   const [returnDlg, setReturnDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; notes: string; submitting: boolean }>({ open: false, item: null, qty: 0, notes: '', submitting: false })
   // Source-record dialog (shows the StockOutRecorder that this item belongs to + return history)
   const [returnSourceDlg, setReturnSourceDlg] = useState<{ open: boolean; loading: boolean; item: ReturnableItem | null }>({ open: false, loading: false, item: null })
-  // Group return dialog (process multiple items at once, grouped by supplier/person)
-  const [groupReturnDlg, setGroupReturnDlg] = useState<{ open: boolean; submitting: boolean; personKey: string; items: { item: ReturnableItem; qty: number; selected: boolean }[] }>({ open: false, submitting: false, personKey: '', items: [] })
+  // Group return dialog (mirrors Stock-In recorder creation: person header + warehouse + items)
+  const [groupReturnDlg, setGroupReturnDlg] = useState<{
+    open: boolean; submitting: boolean; personKey: string;
+    personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string;
+    warehouseId: number | null;
+    items: { item: ReturnableItem; qty: number; selected: boolean }[]
+  }>({ open: false, submitting: false, personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [] })
 
   const [dlgOpen, setDlgOpen] = useState(false)
   const [dlgType, setDlgType] = useState('')
@@ -261,6 +333,7 @@ export default function IMSApp() {
   const [stockOutFilterDateTo, setStockOutFilterDateTo] = useState('')
   const [stockOutFilterStatus, setStockOutFilterStatus] = useState('')
   const [stockOutFilterPerson, setStockOutFilterPerson] = useState('')
+  const [stockOutFilterWarehouse, setStockOutFilterWarehouse] = useState<number | ''>('')
   // Pending items per recorder (local array before API submission)
   const [pendingStockOutItems, setPendingStockOutItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string }[]>>({})
   let _pendingTempId = 0
@@ -346,6 +419,7 @@ export default function IMSApp() {
   const [stockInFilterDateTo, setStockInFilterDateTo] = useState('')
   const [stockInFilterStatus, setStockInFilterStatus] = useState('')
   const [stockInFilterPerson, setStockInFilterPerson] = useState('')
+  const [stockInFilterWarehouse, setStockInFilterWarehouse] = useState<number | ''>('')
   const [pendingStockInItems, setPendingStockInItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }[]>>({})
   const getPendingInItems = (recorderId: number) => pendingStockInItems[recorderId] || []
   const addPendingInItem = (recorderId: number, item: { productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }) => {
@@ -492,22 +566,35 @@ export default function IMSApp() {
     }
   }
   // ─── Returns: open group-return dialog for a given person key ────
+  // Mirrors Stock-In recorder creation: pre-fills the person header + warehouse from the
+  // first item's existing recorder so the user can review/edit before submitting the group return.
   const openGroupReturnDlg = (personKey: string, items: ReturnableItem[]) => {
+    const first = items[0]
+    const rec = first?.recorder
     setGroupReturnDlg({
       open: true, submitting: false, personKey,
+      personName: rec?.personName || personKey,
+      personPhone: rec?.personPhone || '',
+      personEmail: rec?.personEmail || '',
+      personAddress: rec?.personAddress || '',
+      notes: '',
+      warehouseId: first?.warehouseId ?? null,
       items: items.map(it => ({ item: it, qty: it.remainingQty, selected: true })),
     })
   }
   // ─── Returns: submit group return ────
+  // Sends the group notes (from the recorder-style header) as the per-item notes so each
+  // Return record in this group carries the same context.
   const submitGroupReturn = async () => {
     const selected = groupReturnDlg.items.filter(i => i.selected && i.qty > 0)
     if (selected.length === 0) { toast({ title: 'Select at least one item with qty > 0', variant: 'destructive' }); return }
     setGroupReturnDlg(s => ({ ...s, submitting: true }))
     try {
+      const groupNotes = groupReturnDlg.notes.trim()
       const res = await fetch(`${BASE}/api/returns/group`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() },
-        body: JSON.stringify({ items: selected.map(i => ({ stockOutItemId: i.item.id, quantity: i.qty })) })
+        body: JSON.stringify({ items: selected.map(i => ({ stockOutItemId: i.item.id, quantity: i.qty, notes: groupNotes || undefined })) })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'Group return failed')
@@ -648,14 +735,40 @@ export default function IMSApp() {
   // ─── PAGE RENDERER ──────────────────────────────────────
   const renderPage = () => {
     // Task 5: derived pagination values for Products + Stock tables
-    const filteredProducts = products.filter(p => !productSearch || p.name.toLowerCase().includes(productSearch.toLowerCase()) || p.sku.toLowerCase().includes(productSearch.toLowerCase()))
+    const filteredProducts = products.filter(p => {
+      if (productSearch) {
+        const q = productSearch.toLowerCase()
+        if (!p.name.toLowerCase().includes(q) && !p.sku.toLowerCase().includes(q)) return false
+      }
+      if (productCategoryFilter !== '' && p.categoryId !== productCategoryFilter) return false
+      if (productStatusFilter === 'active' && !p.isActive) return false
+      if (productStatusFilter === 'inactive' && p.isActive) return false
+      if (productLowOnly) {
+        const totalQty = stockData.filter(s => s.productId === p.id).reduce((sum, s) => sum + s.quantity, 0)
+        if (totalQty > p.reorderLevel) return false
+      }
+      return true
+    })
     const productTotalPages = Math.ceil(filteredProducts.length / PRODUCTS_PER_PAGE) || 1
     const safeProductPage = Math.min(productPage, productTotalPages)
     const pagedProducts = filteredProducts.slice((safeProductPage - 1) * PRODUCTS_PER_PAGE, safeProductPage * PRODUCTS_PER_PAGE)
-    const filteredStock = stockData.filter(s => { const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId); const q = stockSearch.toLowerCase(); return !q || (prod?.name || '').toLowerCase().includes(q) || (wh?.name || '').toLowerCase().includes(q) })
+    const filteredStock = stockData.filter(s => {
+      const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId)
+      if (stockSearch) { const q = stockSearch.toLowerCase(); if (!(prod?.name || '').toLowerCase().includes(q) && !(wh?.name || '').toLowerCase().includes(q) && !(prod?.sku || '').toLowerCase().includes(q)) return false }
+      if (stockWarehouseFilter !== '' && s.warehouseId !== stockWarehouseFilter) return false
+      if (stockLowOnly) { const isLow = prod ? s.quantity <= prod.reorderLevel : false; if (!isLow) return false }
+      return true
+    })
     const stockTotalPages = Math.ceil(filteredStock.length / STOCK_PER_PAGE) || 1
     const safeStockPage = Math.min(stockPage, stockTotalPages)
     const pagedStock = filteredStock.slice((safeStockPage - 1) * STOCK_PER_PAGE, safeStockPage * STOCK_PER_PAGE)
+    // Orders derived filters
+    const filteredOrders = orders.filter(o => {
+      if (orderSearch) { const q = orderSearch.toLowerCase(); if (!String(o.id).includes(q) && !(o.notes || '').toLowerCase().includes(q)) return false }
+      if (orderStatusFilter && o.status !== orderStatusFilter) return false
+      if (orderTypeFilter && o.type !== orderTypeFilter) return false
+      return true
+    })
 
     if (loading) return <div className="space-y-4 py-8"><div className="flex items-center justify-center gap-3"><Loader2 className="w-6 h-6 animate-spin text-blue-500" /><span className="text-muted-foreground text-sm">Loading data...</span></div><div className="grid grid-cols-2 sm:grid-cols-4 gap-3">{Array.from({length:4}).map((_,i)=><div key={i} className="h-20 rounded-xl bg-muted/40 animate-pulse" />)}</div><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{Array.from({length:3}).map((_,i)=><div key={i} className="h-16 rounded-xl bg-muted/30 animate-pulse" />)}</div></div>
 
@@ -811,9 +924,31 @@ export default function IMSApp() {
             <TabsTrigger value="newProducts">New Products</TabsTrigger>
           </TabsList>
           <TabsContent value="list" className="mt-4">
-            <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-              <div className="relative w-full sm:w-64"><Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search products..." className="pl-8" value={productSearch} onChange={e => { setProductSearch(e.target.value); setProductPage(1) }} /></div>
-              <Badge variant="outline" className="text-[11px] font-medium">{filteredProducts.length} records</Badge>
+            <div className="mb-3">
+              <FilterPanel
+                activeCount={(productSearch ? 1 : 0) + (productCategoryFilter !== '' ? 1 : 0) + (productStatusFilter !== '' ? 1 : 0) + (productLowOnly ? 1 : 0)}
+                onClear={() => { setProductSearch(''); setProductCategoryFilter(''); setProductStatusFilter(''); setProductLowOnly(false); setProductPage(1) }}
+                resultLabel={`${filteredProducts.length} records`}
+              >
+                <FilterField label="Search" width="w-56">
+                  <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Name or SKU..." value={productSearch} onChange={e => { setProductSearch(e.target.value); setProductPage(1) }} className="h-8 text-xs pl-7" /></div>
+                </FilterField>
+                <FilterField label="Category" width="w-44">
+                  <Select value={productCategoryFilter === '' ? '_all' : String(productCategoryFilter)} onValueChange={v => { setProductCategoryFilter(v === '_all' ? '' : parseInt(v)); setProductPage(1) }}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                    <SelectContent><SelectItem value="_all">All Categories</SelectItem>{categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Status" width="w-36">
+                  <Select value={productStatusFilter || '_all'} onValueChange={v => { setProductStatusFilter(v === '_all' ? '' : v as 'active' | 'inactive'); setProductPage(1) }}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                    <SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="inactive">Inactive</SelectItem></SelectContent>
+                  </Select>
+                </FilterField>
+                <FilterField label="Stock Level" width="w-auto">
+                  <div className="flex items-center gap-1.5 h-8"><Switch checked={productLowOnly} onCheckedChange={v => { setProductLowOnly(v); setProductPage(1) }} className="scale-90" /><span className="text-[11px] text-muted-foreground">Low stock only</span></div>
+                </FilterField>
+              </FilterPanel>
             </div>
             {/* Mobile: stacked cards (no horizontal scroll) */}
             <div className="sm:hidden space-y-2">
@@ -970,10 +1105,25 @@ export default function IMSApp() {
       <div className="space-y-5">
         <div className="flex items-center justify-between flex-wrap gap-2"><div><h1 className="text-2xl font-bold">{t(locale, 'navStock')}</h1>
           <p className="text-xs text-muted-foreground mt-1">View current stock levels and lots per product. To receive new inventory, open the <span className="font-semibold text-emerald-600 dark:text-emerald-400">Stock In</span> page in the sidebar.</p></div>
-          <div className="flex items-center gap-2">
-            <div className="relative w-full sm:w-64"><Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search stock..." className="pl-8" value={stockSearch} onChange={e => { setStockSearch(e.target.value); setStockPage(1) }} /></div>
-            <Badge variant="outline" className="text-[11px] font-medium">{filteredStock.length} records</Badge>
-          </div></div>
+        </div>
+        <FilterPanel
+          activeCount={(stockSearch ? 1 : 0) + (stockWarehouseFilter !== '' ? 1 : 0) + (stockLowOnly ? 1 : 0)}
+          onClear={() => { setStockSearch(''); setStockWarehouseFilter(''); setStockLowOnly(false); setStockPage(1) }}
+          resultLabel={`${filteredStock.length} records`}
+        >
+          <FilterField label="Search" width="w-56">
+            <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Product, SKU, warehouse..." value={stockSearch} onChange={e => { setStockSearch(e.target.value); setStockPage(1) }} className="h-8 text-xs pl-7" /></div>
+          </FilterField>
+          <FilterField label="Warehouse" width="w-44">
+            <Select value={stockWarehouseFilter === '' ? '_all' : String(stockWarehouseFilter)} onValueChange={v => { setStockWarehouseFilter(v === '_all' ? '' : parseInt(v)); setStockPage(1) }}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+              <SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Stock Level" width="w-auto">
+            <div className="flex items-center gap-1.5 h-8"><Switch checked={stockLowOnly} onCheckedChange={v => { setStockLowOnly(v); setStockPage(1) }} className="scale-90" /><span className="text-[11px] text-muted-foreground">Low stock only</span></div>
+          </FilterField>
+        </FilterPanel>
         {/* Mobile: stacked cards (no horizontal scroll) */}
         <div className="sm:hidden space-y-2">
           {pagedStock.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No stock found</div>}
@@ -1031,14 +1181,37 @@ export default function IMSApp() {
       <div className="space-y-5">
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navOrders')}</h1>
           {hasPermission(role!, 'orders:create') && <Button onClick={() => openCreate('order')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newOrder')}</Button>}</div>
-        <div className="grid gap-3">{orders.map(o => { const wh = warehouses.find(w => w.id === o.warehouseId)
+        <FilterPanel
+          activeCount={(orderSearch ? 1 : 0) + (orderStatusFilter ? 1 : 0) + (orderTypeFilter ? 1 : 0)}
+          onClear={() => { setOrderSearch(''); setOrderStatusFilter(''); setOrderTypeFilter('') }}
+          resultLabel={`${filteredOrders.length} orders`}
+        >
+          <FilterField label="Search" width="w-48">
+            <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="ID or notes..." value={orderSearch} onChange={e => setOrderSearch(e.target.value)} className="h-8 text-xs pl-7" /></div>
+          </FilterField>
+          <FilterField label="Status" width="w-36">
+            <Select value={orderStatusFilter || '_all'} onValueChange={v => setOrderStatusFilter(v === '_all' ? '' : v)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+              <SelectContent><SelectItem value="_all">All Statuses</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="approved">Approved</SelectItem><SelectItem value="shipped">Shipped</SelectItem><SelectItem value="received">Received</SelectItem><SelectItem value="cancelled">Cancelled</SelectItem></SelectContent>
+            </Select>
+          </FilterField>
+          <FilterField label="Type" width="w-36">
+            <Select value={orderTypeFilter || '_all'} onValueChange={v => setOrderTypeFilter(v === '_all' ? '' : v as 'purchase' | 'sales')}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+              <SelectContent><SelectItem value="_all">All Types</SelectItem><SelectItem value="purchase">Purchase</SelectItem><SelectItem value="sales">Sales</SelectItem></SelectContent>
+            </Select>
+          </FilterField>
+        </FilterPanel>
+        <div className="grid gap-3">{filteredOrders.map(o => { const wh = warehouses.find(w => w.id === o.warehouseId)
           return (<Card key={o.id} className="shadow-sm"><CardContent className="p-4">
             <div className="flex items-center justify-between mb-1"><div className="flex items-center gap-2"><span className="font-mono text-sm bg-muted px-2 py-0.5 rounded">#{o.id}</span>{statusBadge(o.status)}
               <Badge className={`${o.type === 'purchase' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'} border-0 text-[11px]`}>{o.type}</Badge></div>
               <span className="text-sm font-bold">{fmt(o.totalAmount)}</span></div>
             <div className="text-xs text-muted-foreground">{wh?.name || '—'} · {o.notes}</div>
             {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('order', o)} className="mt-2 text-xs"><Pencil className="w-3 h-3 mr-1" />Edit</Button>}
-          </CardContent></Card>)})}</div>
+          </CardContent></Card>)})}
+          {filteredOrders.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No orders match the current filters</div>}
+        </div>
       </div>
     )
 
@@ -1083,14 +1256,17 @@ export default function IMSApp() {
         </div>
 
         {/* ── Filters ── */}
-        <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
-          <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
-          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date From</Label><div className="w-32"><CustomDatePicker compact value={stockInFilterDateFrom} onChange={v => { setStockInFilterDateFrom(v); setStockInRecPage(1) }} /></div></div>
-          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date To</Label><div className="w-32"><CustomDatePicker compact value={stockInFilterDateTo} onChange={v => { setStockInFilterDateTo(v); setStockInRecPage(1) }} /></div></div>
-          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Status</Label><Select value={stockInFilterStatus || '_all'} onValueChange={v => { setStockInFilterStatus(v === '_all' ? '' : v); setStockInRecPage(1) }}><SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="submitted">Submitted</SelectItem></SelectContent></Select></div>
-          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Supplier</Label><Input value={stockInFilterPerson} onChange={e => { setStockInFilterPerson(e.target.value); setStockInRecPage(1) }} placeholder="Search name..." className="h-7 text-xs w-32" /></div>
-          {(stockInFilterDateFrom || stockInFilterDateTo || stockInFilterStatus || stockInFilterPerson) && <Button size="sm" variant="ghost" onClick={() => { setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInRecPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
-        </div>
+        <FilterPanel
+          activeCount={(stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0)}
+          onClear={() => { setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInRecPage(1) }}
+          resultLabel={`${stockInData.length} recorders`}
+        >
+          <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={stockInFilterDateFrom} onChange={v => { setStockInFilterDateFrom(v); setStockInRecPage(1) }} /></FilterField>
+          <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={stockInFilterDateTo} onChange={v => { setStockInFilterDateTo(v); setStockInRecPage(1) }} /></FilterField>
+          <FilterField label="Warehouse" width="w-44"><Select value={stockInFilterWarehouse === '' ? '_all' : String(stockInFilterWarehouse)} onValueChange={v => { setStockInFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockInRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></FilterField>
+          <FilterField label="Status" width="w-32"><Select value={stockInFilterStatus || '_all'} onValueChange={v => { setStockInFilterStatus(v === '_all' ? '' : v); setStockInRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="submitted">Submitted</SelectItem></SelectContent></Select></FilterField>
+          <FilterField label="Supplier" width="w-40"><Input value={stockInFilterPerson} onChange={e => { setStockInFilterPerson(e.target.value); setStockInRecPage(1) }} placeholder="Search name..." className="h-8 text-xs" /></FilterField>
+        </FilterPanel>
 
         {(() => {
           let filtered = [...stockInData].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
@@ -1098,6 +1274,7 @@ export default function IMSApp() {
           if (stockInFilterDateTo) filtered = filtered.filter(r => new Date(r.createdAt) <= new Date(stockInFilterDateTo + 'T23:59:59'))
           if (stockInFilterStatus) filtered = filtered.filter(r => r.status === stockInFilterStatus)
           if (stockInFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockInFilterPerson.toLowerCase()))
+          if (stockInFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockInFilterWarehouse)
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
           const recPaged = filtered.slice((stockInRecPage - 1) * STOCK_IN_REC_PER_PAGE, stockInRecPage * STOCK_IN_REC_PER_PAGE)
@@ -1273,14 +1450,17 @@ export default function IMSApp() {
         </div>
 
         {/* ── Filters ── */}
-        <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
-          <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
-          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date From</Label><div className="w-32"><CustomDatePicker compact value={stockOutFilterDateFrom} onChange={v => { setStockOutFilterDateFrom(v); setStockOutRecPage(1) }} /></div></div>
-          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date To</Label><div className="w-32"><CustomDatePicker compact value={stockOutFilterDateTo} onChange={v => { setStockOutFilterDateTo(v); setStockOutRecPage(1) }} /></div></div>
-          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Status</Label><Select value={stockOutFilterStatus || '_all'} onValueChange={v => { setStockOutFilterStatus(v === '_all' ? '' : v); setStockOutRecPage(1) }}><SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="open">Open</SelectItem><SelectItem value="confirmed">Confirmed</SelectItem><SelectItem value="closed">Closed</SelectItem><SelectItem value="draft">Draft</SelectItem></SelectContent></Select></div>
-          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Person</Label><Input value={stockOutFilterPerson} onChange={e => { setStockOutFilterPerson(e.target.value); setStockOutRecPage(1) }} placeholder="Search name..." className="h-7 text-xs w-32" /></div>
-          {(stockOutFilterDateFrom || stockOutFilterDateTo || stockOutFilterStatus || stockOutFilterPerson) && <Button size="sm" variant="ghost" onClick={() => { setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutRecPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
-        </div>
+        <FilterPanel
+          activeCount={(stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0)}
+          onClear={() => { setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutRecPage(1) }}
+          resultLabel={`${stockOutData.length} recorders`}
+        >
+          <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={stockOutFilterDateFrom} onChange={v => { setStockOutFilterDateFrom(v); setStockOutRecPage(1) }} /></FilterField>
+          <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={stockOutFilterDateTo} onChange={v => { setStockOutFilterDateTo(v); setStockOutRecPage(1) }} /></FilterField>
+          <FilterField label="Warehouse" width="w-44"><Select value={stockOutFilterWarehouse === '' ? '_all' : String(stockOutFilterWarehouse)} onValueChange={v => { setStockOutFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockOutRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></FilterField>
+          <FilterField label="Status" width="w-32"><Select value={stockOutFilterStatus || '_all'} onValueChange={v => { setStockOutFilterStatus(v === '_all' ? '' : v); setStockOutRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="partial_return">Partial Return</SelectItem><SelectItem value="returned">Returned</SelectItem></SelectContent></Select></FilterField>
+          <FilterField label="Person" width="w-40"><Input value={stockOutFilterPerson} onChange={e => { setStockOutFilterPerson(e.target.value); setStockOutRecPage(1) }} placeholder="Search name..." className="h-8 text-xs" /></FilterField>
+        </FilterPanel>
 
         {(() => {
           // Filter recorders
@@ -1289,6 +1469,7 @@ export default function IMSApp() {
           if (stockOutFilterDateTo) filtered = filtered.filter(r => new Date(r.createdAt) <= new Date(stockOutFilterDateTo + 'T23:59:59'))
           if (stockOutFilterStatus) filtered = filtered.filter(r => r.status === stockOutFilterStatus)
           if (stockOutFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockOutFilterPerson.toLowerCase()))
+          if (stockOutFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockOutFilterWarehouse)
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_OUT_REC_PER_PAGE)
           const recPaged = filtered.slice((stockOutRecPage - 1) * STOCK_OUT_REC_PER_PAGE, stockOutRecPage * STOCK_OUT_REC_PER_PAGE)
@@ -1471,34 +1652,53 @@ export default function IMSApp() {
 
         <Tabs value={returnsTab} onValueChange={v => setReturnsTab(v as 'flagged' | 'not_flagged')}>
           <TabsList className="grid grid-cols-2 w-full max-w-md h-9">
-            <TabsTrigger value="flagged" className="text-xs gap-1"><RotateCcw className="w-3 h-3" />Should Be Returned</TabsTrigger>
-            <TabsTrigger value="not_flagged" className="text-xs gap-1"><X className="w-3 h-3" />Not Flagged</TabsTrigger>
+            <TabsTrigger value="flagged" className="text-xs gap-1"><RotateCcw className="w-3 h-3" />Flagged for Return</TabsTrigger>
+            <TabsTrigger value="not_flagged" className="text-xs gap-1"><Package className="w-3 h-3" />Other Stock-Outs</TabsTrigger>
           </TabsList>
 
           <TabsContent value={returnsTab} className="mt-3 space-y-3">
-            {/* Filters */}
-            <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
-              <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
-              <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Search</Label>
-                <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Product, SKU, person, code..." value={returnsSearch} onChange={e => { setReturnsSearch(e.target.value); setReturnsPage(1) }} className="h-7 text-xs pl-7 w-56" /></div>
-              </div>
-              <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Warehouse</Label>
+            {/* Advanced Filters */}
+            <FilterPanel
+              activeCount={(returnsSearch ? 1 : 0) + (returnsWarehouseFilter !== '' ? 1 : 0) + (returnsFilterDateFrom ? 1 : 0) + (returnsFilterDateTo ? 1 : 0) + (returnsFilterRecorder ? 1 : 0) + (returnsFilterProgress ? 1 : 0)}
+              onClear={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsFilterDateFrom(''); setReturnsFilterDateTo(''); setReturnsFilterRecorder(''); setReturnsFilterProgress(''); setReturnsPage(1) }}
+              resultLabel={`${returnsData.length} item(s)`}
+            >
+              <FilterField label="Search" width="w-56">
+                <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Product, SKU, person, code..." value={returnsSearch} onChange={e => { setReturnsSearch(e.target.value); setReturnsPage(1) }} className="h-8 text-xs pl-7" /></div>
+              </FilterField>
+              <FilterField label="Warehouse" width="w-44">
                 <Select value={returnsWarehouseFilter === '' ? '_all' : String(returnsWarehouseFilter)} onValueChange={v => { setReturnsWarehouseFilter(v === '_all' ? '' : parseInt(v)); setReturnsPage(1) }}>
-                  <SelectTrigger className="h-7 text-xs w-40"><SelectValue placeholder="All" /></SelectTrigger>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
                   <SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent>
                 </Select>
-              </div>
-              {(returnsSearch || returnsWarehouseFilter !== '') && <Button size="sm" variant="ghost" onClick={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
-              <div className="ml-auto text-[10px] text-muted-foreground">{returnsData.length} item(s)</div>
-            </div>
+              </FilterField>
+              <FilterField label="Out Date From" width="w-32"><CustomDatePicker compact value={returnsFilterDateFrom} onChange={v => { setReturnsFilterDateFrom(v); setReturnsPage(1) }} /></FilterField>
+              <FilterField label="Out Date To" width="w-32"><CustomDatePicker compact value={returnsFilterDateTo} onChange={v => { setReturnsFilterDateTo(v); setReturnsPage(1) }} /></FilterField>
+              <FilterField label="Recorder Code" width="w-40"><Input value={returnsFilterRecorder} onChange={e => { setReturnsFilterRecorder(e.target.value); setReturnsPage(1) }} placeholder="SOUT-..." className="h-8 text-xs" /></FilterField>
+              <FilterField label="Return Progress" width="w-40">
+                <Select value={returnsFilterProgress || '_all'} onValueChange={v => { setReturnsFilterProgress(v === '_all' ? '' : v as 'none' | 'partial' | 'full'); setReturnsPage(1) }}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                  <SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="none">Not started</SelectItem><SelectItem value="partial">Partial</SelectItem><SelectItem value="full">Fully returned</SelectItem></SelectContent>
+                </Select>
+              </FilterField>
+            </FilterPanel>
 
             {returnsLoading ? (
               <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-violet-500" /><span className="ml-2 text-sm text-muted-foreground">Loading returns...</span></div>
             ) : (() => {
-              // Apply search + warehouse filter
+              // Apply search + advanced filters
               const q = returnsSearch.toLowerCase()
+              const recQ = returnsFilterRecorder.toLowerCase()
               const filtered = returnsData.filter(it => {
                 if (returnsWarehouseFilter !== '' && it.warehouseId !== returnsWarehouseFilter) return false
+                if (returnsFilterDateFrom && new Date(it.createdAt) < new Date(returnsFilterDateFrom + 'T00:00:00')) return false
+                if (returnsFilterDateTo && new Date(it.createdAt) > new Date(returnsFilterDateTo + 'T23:59:59')) return false
+                if (recQ && !(it.recorder?.recorderCode || '').toLowerCase().includes(recQ)) return false
+                if (returnsFilterProgress) {
+                  if (returnsFilterProgress === 'none' && it.returnedQty > 0) return false
+                  if (returnsFilterProgress === 'partial' && !(it.returnedQty > 0 && it.remainingQty > 0)) return false
+                  if (returnsFilterProgress === 'full' && it.remainingQty > 0) return false
+                }
                 if (!q) return true
                 return (it.product?.name || '').toLowerCase().includes(q)
                   || (it.product?.sku || '').toLowerCase().includes(q)
@@ -2227,41 +2427,86 @@ export default function IMSApp() {
           </DialogContent>
         </Dialog>
 
-        {/* ─── RETURNS: group-return dialog (process multiple items by person) ─── */}
+        {/* ─── RETURNS: group-return dialog (mirrors Stock-In recorder creation) ─── */}
         <Dialog open={groupReturnDlg.open} onOpenChange={o => setGroupReturnDlg(s => ({ ...s, open: o }))}>
           <DialogContent className="max-w-2xl w-[95vw]">
-            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Users className="w-4 h-4 text-violet-500" />Group Return — {groupReturnDlg.personKey}</DialogTitle></DialogHeader>
-            <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
-              {groupReturnDlg.items.length === 0 ? <div className="text-center text-sm text-muted-foreground py-4">No items in this group.</div> : groupReturnDlg.items.map((entry, idx) => {
-                const it = entry.item; const wh = warehouses.find(w => w.id === it.warehouseId)
-                return (<div key={it.id} className={`rounded-md border p-2 ${entry.selected ? 'bg-violet-50/40 dark:bg-violet-500/5 border-violet-200 dark:border-violet-500/30' : 'bg-muted/20'}`}>
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <Switch checked={entry.selected} onCheckedChange={v => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, selected: v } : x) }))} className="scale-75" />
-                      <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `#${it.warehouseId}`}</div></div>
-                    </div>
-                    <div className="text-[10px] text-muted-foreground shrink-0 text-right">
-                      <div>Out: <span className="font-mono font-medium text-foreground">{it.quantity}</span></div>
-                      <div>Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div>
-                    </div>
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Users className="w-4 h-4 text-violet-500" />New Group Return Record</DialogTitle>
+              <p className="text-[11px] text-muted-foreground font-normal">Mirrors the Stock-In recorder flow: review the supplier/person, confirm the restock warehouse, then set the return quantity per item.</p>
+            </DialogHeader>
+            <div className="space-y-2.5 max-h-[62vh] overflow-y-auto pr-1">
+              {/* ── Supplier / Person header (editable, mirrors Stock-In recorder) ── */}
+              <div className="bg-violet-50/60 dark:bg-violet-500/5 rounded-lg p-2.5 space-y-2 border border-violet-100 dark:border-violet-500/20">
+                <SectionHeader icon={Truck}>Supplier / Person (returning party)</SectionHeader>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={groupReturnDlg.personName} onChange={e => setGroupReturnDlg(s => ({ ...s, personName: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
+                  <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={groupReturnDlg.personPhone} onChange={e => setGroupReturnDlg(s => ({ ...s, personPhone: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
+                  <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={groupReturnDlg.personEmail} onChange={e => setGroupReturnDlg(s => ({ ...s, personEmail: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
+                  <div className="space-y-1"><IconLabel icon={MapPin}>Address</IconLabel><Input value={groupReturnDlg.personAddress} onChange={e => setGroupReturnDlg(s => ({ ...s, personAddress: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
+                </div>
+              </div>
+
+              {/* ── Restock warehouse (read-only display — items return to their original warehouse) ── */}
+              <div className="bg-violet-50/60 dark:bg-violet-500/5 rounded-lg p-2.5 space-y-1.5 border border-violet-100 dark:border-violet-500/20">
+                <SectionHeader icon={WHIcon}>Restock Warehouse</SectionHeader>
+                <div className="flex items-center gap-2 text-xs">
+                  <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0">{warehouses.find(w => w.id === groupReturnDlg.warehouseId)?.code || '—'}</Badge>
+                  <span className="font-medium">{warehouses.find(w => w.id === groupReturnDlg.warehouseId)?.name || 'No warehouse'}</span>
+                  <span className="text-muted-foreground">· items return to their original warehouse</span>
+                </div>
+              </div>
+
+              {/* ── Items table (mirrors Stock-In add-items: per-row qty input + Full button) ── */}
+              <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Items to Return ({groupReturnDlg.items.length})</span>
+                  <div className="flex items-center gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map(x => ({ ...x, selected: true })) }))} className="h-5 text-[10px] text-muted-foreground px-1.5">Select all</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map(x => ({ ...x, selected: false })) }))} className="h-5 text-[10px] text-muted-foreground px-1.5">None</Button>
                   </div>
-                  {entry.selected && (
-                    <div className="flex items-center gap-1.5 pl-6">
-                      <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Qty to return:</Label>
-                      <Input type="number" min={1} max={it.remainingQty} value={entry.qty} onChange={e => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: parseInt(e.target.value) || 0 } : x) }))} className="h-6 text-[11px] w-20" />
-                      <Button size="sm" variant="outline" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: it.remainingQty } : x) }))} className="h-6 text-[10px] px-1.5">Full</Button>
-                    </div>
-                  )}
-                </div>)
-              })}
-            </div>
-            <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2 text-[11px] text-violet-700 dark:text-violet-400">
-              {groupReturnDlg.items.filter(i => i.selected && i.qty > 0).length} item(s) selected · Total qty: {groupReturnDlg.items.filter(i => i.selected && i.qty > 0).reduce((s, i) => s + i.qty, 0)}
+                </div>
+                {groupReturnDlg.items.length === 0 ? <div className="text-center text-sm text-muted-foreground py-4">No items in this group.</div> : (
+                  <div className="space-y-1.5">
+                    {groupReturnDlg.items.map((entry, idx) => {
+                      const it = entry.item; const wh = warehouses.find(w => w.id === it.warehouseId)
+                      return (<div key={it.id} className={`rounded-md border p-2 ${entry.selected ? 'bg-violet-50/40 dark:bg-violet-500/5 border-violet-200 dark:border-violet-500/30' : 'bg-muted/20'}`}>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Switch checked={entry.selected} onCheckedChange={v => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, selected: v } : x) }))} className="scale-75" />
+                            <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `#${it.warehouseId}`}</div></div>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground shrink-0 text-right">
+                            <div>Out: <span className="font-mono font-medium text-foreground">{it.quantity}</span></div>
+                            <div>Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div>
+                          </div>
+                        </div>
+                        {entry.selected && (
+                          <div className="flex items-center gap-1.5 pl-6">
+                            <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Qty to return:</Label>
+                            <Input type="number" min={1} max={it.remainingQty} value={entry.qty} onChange={e => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: parseInt(e.target.value) || 0 } : x) }))} className="h-6 text-[11px] w-20" />
+                            <Button size="sm" variant="outline" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: it.remainingQty } : x) }))} className="h-6 text-[10px] px-1.5">Full</Button>
+                          </div>
+                        )}
+                      </div>)
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Notes (mirrors Stock-In recorder notes) ── */}
+              <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
+                <SectionHeader icon={FileText}>Return Notes (applies to all items in this group)</SectionHeader>
+                <Textarea value={groupReturnDlg.notes} onChange={e => setGroupReturnDlg(s => ({ ...s, notes: e.target.value }))} placeholder="Optional notes for this group return..." className="text-sm rounded-md min-h-[50px]" />
+              </div>
+
+              {/* ── Summary bar ── */}
+              <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2 text-[11px] text-violet-700 dark:text-violet-400">
+                {groupReturnDlg.items.filter(i => i.selected && i.qty > 0).length} item(s) selected · Total qty to return: {groupReturnDlg.items.filter(i => i.selected && i.qty > 0).reduce((s, i) => s + i.qty, 0)}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setGroupReturnDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={groupReturnDlg.submitting}>{t(locale, 'cancel')}</Button>
               <Button onClick={submitGroupReturn} disabled={groupReturnDlg.submitting || groupReturnDlg.items.filter(i => i.selected && i.qty > 0).length === 0} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">
-                {groupReturnDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Process Group Return
+                {groupReturnDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Create Group Return
               </Button>
             </DialogFooter>
           </DialogContent>

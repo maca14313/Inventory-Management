@@ -387,3 +387,38 @@ Stage Summary:
 - src/app/page.tsx: +Returns types, +Returns state block, +Returns navItem, +loadReturns/submitReturn/openReturnDlg/openReturnSourceDlg/openGroupReturnDlg/submitGroupReturn handlers, +Returns page render block (~150 lines, mobile cards + desktop table + group bar), +3 Returns dialogs (single return, source-record, group return). ~370 lines added (page.tsx now ~2265 lines).
 - Total Returns feature: 3 new API files + ~560 lines of code across db.ts + page.tsx.
 - Browser-verified: Returns sidebar entry visible, both tabs paginated, single return (full/partial) works, source-record dialog shows recorder + return history, group return by person works, stock + lots updated correctly, mobile-responsive with no horizontal scroll.
+
+---
+Task ID: returns-filters-groupreturn
+Agent: main
+Task: Returns feature refinements + collapsible advanced filters app-wide
+
+Work Log:
+- Read current state: verified Returns is in sidebar (line 602), backend returns API + db.ts returns functions already complete (schema has Return model + isReturnable field on StockOutItem)
+- Added reusable `FilterPanel` (collapsible) + `FilterField` helper components to page.tsx using shadcn Collapsible primitive
+- Added new filter state: productCategoryFilter/productStatusFilter/productLowOnly, stockWarehouseFilter/stockLowOnly, orderSearch/orderStatusFilter/orderTypeFilter, stockInFilterWarehouse, stockOutFilterWarehouse, returnsFilterDateFrom/returnsFilterDateTo/returnsFilterRecorder/returnsFilterProgress
+- Updated filteredProducts/filteredStock derived values to apply new filters; added filteredOrders
+- Replaced inline filter sections on ALL list pages with FilterPanel:
+  - Products: Search + Category + Status + Low-stock-only switch
+  - Stock: Search + Warehouse + Low-stock-only switch
+  - Stock In: Date From/To + Warehouse + Status + Supplier
+  - Stock Out: Date From/To + Warehouse + Status + Person
+  - Orders: Search + Status + Type
+  - Returns: Search + Warehouse + Out Date From/To + Recorder Code + Return Progress
+- Improved Returns tab labels: "Should Be Returned"/"Not Flagged" → "Flagged for Return"/"Other Stock-Outs"
+- Refactored Group Return dialog to mirror Stock-In recorder creation flow:
+  - Extended groupReturnDlg state with personName/personPhone/personEmail/personAddress/notes/warehouseId
+  - openGroupReturnDlg now pre-fills person + warehouse from the first item's recorder
+  - Dialog UI: supplier/person header (editable) + restock warehouse display + items table (Select all/None, per-item qty + Full) + notes textarea + summary bar + "Create Group Return" button
+  - submitGroupReturn now passes group notes as per-item notes
+- Lint: clean (no errors)
+- Browser verification (agent-browser):
+  - Returns page: tabs show "Flagged for Return"/"Other Stock-Outs"; Advanced Filters expands to 6 fields; group return dialog shows person header + warehouse + items + notes
+  - Products page: Advanced Filters expands to Search + Category + Status + Low-stock switch
+  - Stock Out page: Advanced Filters expands to Date From/To + Warehouse + Status + Person
+  - Mobile (iPhone 14): Returns page has 0 horizontal scroll; tabs + filter render correctly
+
+Stage Summary:
+- All 4 user requests fulfilled: (1) Group Return mirrors Stock-In recorder creation; (2) better tab labels; (3) collapsible advanced filter on Returns; (4) all filters in the app are now collapsible and advanced
+- Reusable FilterPanel component keeps filter UX consistent across Products/Stock/Stock In/Stock Out/Orders/Returns
+- No backend changes needed (returns group API already accepts items[] with notes; all filtering is client-side on already-loaded data)
