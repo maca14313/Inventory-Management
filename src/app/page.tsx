@@ -198,6 +198,8 @@ export default function IMSApp() {
   const [registerRows, setRegisterRows] = useState<{ name: string; sku: string; categoryId: number | null; unit: string; price: number; cost: number; reorderLevel: number; quantity: number; costPerUnit: number; supplierName: string; notes: string }[]>([])
   const [registerWarehouseId, setRegisterWarehouseId] = useState<number | null>(null)
   const [registerSubmitting, setRegisterSubmitting] = useState(false)
+  // Top-level supplier/person info for the whole registration batch (mirrors Stock In/Out recorder header)
+  const [registerSupplier, setRegisterSupplier] = useState<{ personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string }>({ personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '' })
 
   // AI Assistant widget
   const [aiChat, setAiChat] = useState<{ open: boolean; messages: { role: 'user' | 'assistant'; content: string }[]; input: string; loading: boolean }>({
@@ -697,34 +699,54 @@ export default function IMSApp() {
       </div>
     )
 
-    // ─── PRODUCTS (two tabs: List + New Products)
+    // ─── PRODUCTS (two tabs: List + New Products). New products are ONLY created via the New Products tab (multi-item recorder under one supplier).
     if (page === 'products' && hasPermission(role!, 'products:view')) return (
       <div className="space-y-5">
-        <div className="flex items-center justify-between flex-wrap gap-2"><h1 className="text-2xl font-bold">{t(locale, 'navProducts')}</h1>
-          <div className="flex gap-2">
-            {hasPermission(role!, 'products:create') && <Button onClick={() => { setDlgType('registerItem'); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />Register Item</Button>}
-            {hasPermission(role!, 'products:create') && <Button onClick={() => openCreate('product')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newProduct')}</Button>}
-          </div>
-        </div>
+        <div className="flex items-center justify-between flex-wrap gap-2"><div><h1 className="text-2xl font-bold">{t(locale, 'navProducts')}</h1>
+          <p className="text-xs text-muted-foreground mt-1">New products are registered via the <span className="font-semibold text-emerald-600 dark:text-emerald-400">New Products</span> tab below — a multi-item recorder under one supplier/person name.</p></div></div>
         <Tabs defaultValue="list">
           <TabsList>
             <TabsTrigger value="list">List</TabsTrigger>
             <TabsTrigger value="newProducts">New Products</TabsTrigger>
           </TabsList>
           <TabsContent value="list" className="mt-4">
-            {/* Task 5: responsive table with search + pagination + N records + safePage + mobile column hiding */}
             <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
               <div className="relative w-full sm:w-64"><Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search products..." className="pl-8" value={productSearch} onChange={e => { setProductSearch(e.target.value); setProductPage(1) }} /></div>
               <Badge variant="outline" className="text-[11px] font-medium">{filteredProducts.length} records</Badge>
             </div>
-            <div className="rounded-md border overflow-x-auto"><Table>
+            {/* Mobile: stacked cards (no horizontal scroll) */}
+            <div className="sm:hidden space-y-2">
+              {pagedProducts.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No products found</div>}
+              {pagedProducts.map(p => {
+                const cat = categories.find(c => c.id === p.categoryId)
+                const totalQty = stockData.filter(s => s.productId === p.id).reduce((sum, s) => sum + s.quantity, 0)
+                const isLow = totalQty <= p.reorderLevel
+                return (<Card key={p.id} className="shadow-sm"><CardContent className="p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0"><div className="font-semibold text-sm truncate">{p.name}</div><div className="text-[10px] text-muted-foreground font-mono truncate">{p.sku}</div></div>
+                    {p.isActive ? <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[10px] shrink-0">Active</Badge> : <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-0 text-[10px] shrink-0">Inactive</Badge>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs">
+                    <div><span className="text-muted-foreground">Category: </span><span className="font-medium">{cat?.name || '—'}</span></div>
+                    <div><span className="text-muted-foreground">Price: </span><span className="font-semibold text-emerald-600 dark:text-emerald-400">{fmt(p.price)}</span></div>
+                    <div><span className="text-muted-foreground">In Stock: </span><span className={`font-bold ${isLow ? 'text-red-600 dark:text-red-400' : ''}`}>{totalQty}</span> <span className="text-muted-foreground text-[10px]">{p.unit}</span></div>
+                    <div><span className="text-muted-foreground">Reorder: </span><span className="font-medium">{p.reorderLevel}</span></div>
+                  </div>
+                  <div className="flex gap-1 pt-1 border-t">
+                    {hasPermission(role!, 'products:edit') && <Button size="sm" variant="outline" onClick={() => openEdit('product', p)} className="h-7 text-xs flex-1"><Pencil className="w-3 h-3 mr-1" />Edit</Button>}
+                    {hasPermission(role!, 'products:delete') && <Button size="sm" variant="outline" onClick={() => crud.remove(`/products/${p.id}`)} disabled={isCrudLoading('remove', `/products/${p.id}`)} className="text-red-500 h-7 text-xs flex-1">{isCrudLoading('remove', `/products/${p.id}`) ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Trash2 className="w-3 h-3 mr-1" />}Delete</Button>}
+                  </div>
+                </CardContent></Card>)})}
+            </div>
+            {/* Desktop: table */}
+            <div className="hidden sm:block rounded-md border"><Table>
               <TableHeader><TableRow>
                 <TableHead className="h-8 text-xs">Product</TableHead>
                 <TableHead className="h-8 text-xs">Category</TableHead>
                 <TableHead className="h-8 text-xs text-right">Price</TableHead>
-                <TableHead className="h-8 text-xs text-right hidden sm:table-cell">Cost</TableHead>
+                <TableHead className="h-8 text-xs text-right hidden md:table-cell">Cost</TableHead>
                 <TableHead className="h-8 text-xs text-right">In Stock</TableHead>
-                <TableHead className="h-8 text-xs text-right hidden sm:table-cell">Reorder</TableHead>
+                <TableHead className="h-8 text-xs text-right hidden md:table-cell">Reorder</TableHead>
                 <TableHead className="h-8 text-xs text-center">Status</TableHead>
                 <TableHead className="h-8 text-xs text-right">Actions</TableHead>
               </TableRow></TableHeader>
@@ -738,9 +760,9 @@ export default function IMSApp() {
                     <TableCell className="py-2"><div className="font-medium text-sm">{p.name}</div><div className="text-[10px] text-muted-foreground font-mono">{p.sku}</div></TableCell>
                     <TableCell className="py-2 text-xs text-muted-foreground">{cat?.name || '—'}</TableCell>
                     <TableCell className="py-2 text-xs text-right font-semibold text-emerald-600 dark:text-emerald-400">{fmt(p.price)}</TableCell>
-                    <TableCell className="py-2 text-xs text-right text-muted-foreground hidden sm:table-cell">{fmt(p.cost)}</TableCell>
+                    <TableCell className="py-2 text-xs text-right text-muted-foreground hidden md:table-cell">{fmt(p.cost)}</TableCell>
                     <TableCell className="py-2 text-xs text-right"><span className={`font-bold ${isLow ? 'text-red-600 dark:text-red-400' : ''}`}>{totalQty}</span> <span className="text-muted-foreground text-[10px]">{p.unit}</span></TableCell>
-                    <TableCell className="py-2 text-xs text-right text-muted-foreground hidden sm:table-cell">{p.reorderLevel}</TableCell>
+                    <TableCell className="py-2 text-xs text-right text-muted-foreground hidden md:table-cell">{p.reorderLevel}</TableCell>
                     <TableCell className="py-2 text-center">{p.isActive ? <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[10px]">Active</Badge> : <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-0 text-[10px]">Inactive</Badge>}</TableCell>
                     <TableCell className="py-2 text-right"><div className="flex gap-0.5 justify-end">
                       {hasPermission(role!, 'products:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('product', p)} className="h-7 w-7 p-0"><Pencil className="w-3 h-3" /></Button>}
@@ -754,22 +776,53 @@ export default function IMSApp() {
           <TabsContent value="newProducts" className="mt-4">
             <Card className="border-emerald-200 dark:border-emerald-500/20 shadow-sm">
               <CardHeader className="pb-3"><CardTitle className="text-sm flex items-center gap-2"><Package className="w-4 h-4 text-emerald-500" /> Multi-Item Product Registration</CardTitle>
-                <CardDescription className="text-xs">Register multiple products at once with initial stock. Each product with quantity &gt; 0 creates a Lot automatically.</CardDescription></CardHeader>
+                <CardDescription className="text-xs">Register multiple products under one supplier/person. Each product with quantity &gt; 0 creates a Lot (source = register_item) automatically — visible via the Lots icon on the Stock page.</CardDescription></CardHeader>
               <CardContent className="space-y-3">
+                {/* Supplier / person header — mirrors Stock In/Out recorder */}
+                <div className="bg-emerald-50/50 dark:bg-emerald-500/5 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Truck}>Supplier / Person (applies to all items)</SectionHeader>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="space-y-1"><IconLabel icon={Users}>Supplier / Person Name</IconLabel><Input value={registerSupplier.personName} onChange={e => setRegisterSupplier(s => ({ ...s, personName: e.target.value }))} placeholder="e.g. Acme Supplies Ltd." className="h-8 text-sm rounded-md" /></div>
+                    <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={registerSupplier.personPhone} onChange={e => setRegisterSupplier(s => ({ ...s, personPhone: e.target.value }))} placeholder="Phone..." className="h-8 text-sm rounded-md" /></div>
+                    <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={registerSupplier.personEmail} onChange={e => setRegisterSupplier(s => ({ ...s, personEmail: e.target.value }))} placeholder="Email..." className="h-8 text-sm rounded-md" /></div>
+                    <div className="space-y-1"><IconLabel icon={MapPin}>Address</IconLabel><Input value={registerSupplier.personAddress} onChange={e => setRegisterSupplier(s => ({ ...s, personAddress: e.target.value }))} placeholder="Address..." className="h-8 text-sm rounded-md" /></div>
+                  </div>
+                  <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Input value={registerSupplier.notes} onChange={e => setRegisterSupplier(s => ({ ...s, notes: e.target.value }))} placeholder="Optional batch notes..." className="h-8 text-sm rounded-md" /></div>
+                </div>
                 <div className="bg-emerald-50/50 dark:bg-emerald-500/5 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={WHIcon}>Destination Warehouse</SectionHeader>
                   <Select value={registerWarehouseId ? String(registerWarehouseId) : undefined} onValueChange={v => setRegisterWarehouseId(parseInt(v))}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w => w.isActive).map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select>
                 </div>
-                <div className="rounded-md border overflow-x-auto"><Table>
+                {/* Items: mobile stacked cards, desktop table */}
+                <div className="sm:hidden space-y-2">
+                  {registerRows.length === 0 && <div className="text-center text-xs text-muted-foreground py-4 border rounded-md border-dashed">No rows. Click "Add Row" to begin.</div>}
+                  {registerRows.map((row, idx) => (
+                    <Card key={idx} className="border-emerald-100 dark:border-emerald-500/20"><CardContent className="p-2.5 space-y-2">
+                      <div className="flex items-center justify-between"><span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Item {idx + 1}</span><Button size="sm" variant="ghost" onClick={() => setRegisterRows(registerRows.filter((_, i) => i !== idx))} className="text-red-500 h-6 w-6 p-0"><Trash2 className="w-3 h-3" /></Button></div>
+                      <Input value={row.name} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], name: e.target.value }; setRegisterRows(n) }} placeholder="Product name" className="h-8 text-xs rounded-md" />
+                      <Input value={row.sku} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], sku: e.target.value }; setRegisterRows(n) }} placeholder="SKU-001" className="h-8 text-xs rounded-md" />
+                      <Select value={row.categoryId ? String(row.categoryId) : undefined} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}><SelectTrigger className="h-8 text-xs rounded-md"><SelectValue placeholder="Category —" /></SelectTrigger><SelectContent>{categories.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent></Select>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Select value={row.unit} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], unit: v }; setRegisterRows(n) }}><SelectTrigger className="h-8 text-xs rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-40">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+                        <Input type="number" min="0" value={row.quantity || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], quantity: parseInt(e.target.value) || 0 }; setRegisterRows(n) }} placeholder="Init Qty" className="h-8 text-xs rounded-md text-right" />
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Input type="number" step="0.01" value={row.price || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], price: parseFloat(e.target.value) || 0 }; setRegisterRows(n) }} placeholder="Price" className="h-8 text-xs rounded-md text-right" />
+                        <Input type="number" step="0.01" value={row.cost || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], cost: parseFloat(e.target.value) || 0 }; setRegisterRows(n) }} placeholder="Cost" className="h-8 text-xs rounded-md text-right" />
+                        <Input type="number" value={row.reorderLevel || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], reorderLevel: parseInt(e.target.value) || 0 }; setRegisterRows(n) }} placeholder="Reorder" className="h-8 text-xs rounded-md text-right" />
+                      </div>
+                    </CardContent></Card>))}
+                </div>
+                <div className="hidden sm:block rounded-md border"><Table>
                   <TableHeader><TableRow>
-                    <TableHead className="h-7 text-[10px] min-w-[140px]">Name</TableHead>
-                    <TableHead className="h-7 text-[10px] min-w-[110px]">SKU</TableHead>
-                    <TableHead className="h-7 text-[10px] min-w-[120px]">Category</TableHead>
-                    <TableHead className="h-7 text-[10px] min-w-[80px]">Unit</TableHead>
-                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Price</TableHead>
-                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Cost</TableHead>
-                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Reorder</TableHead>
-                    <TableHead className="h-7 text-[10px] min-w-[80px] text-right">Init Qty</TableHead>
+                    <TableHead className="h-7 text-[10px]">Name</TableHead>
+                    <TableHead className="h-7 text-[10px]">SKU</TableHead>
+                    <TableHead className="h-7 text-[10px]">Category</TableHead>
+                    <TableHead className="h-7 text-[10px]">Unit</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right">Price</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right">Cost</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right">Reorder</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right">Init Qty</TableHead>
                     <TableHead className="h-7 w-10"></TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
@@ -796,9 +849,9 @@ export default function IMSApp() {
                     if (valid.length === 0) { toast({ title: 'Add at least one row with name+SKU', variant: 'destructive' }); return }
                     setRegisterSubmitting(true)
                     try {
-                      const res = await apiFetch<{ products: any[]; lotsCreated: number }>('/products/register', { method: 'POST', body: JSON.stringify({ warehouseId: registerWarehouseId, items: valid.map(r => ({ name: r.name.trim(), sku: r.sku.trim(), categoryId: r.categoryId || null, price: r.price, cost: r.cost, unit: r.unit, reorderLevel: r.reorderLevel, quantity: r.quantity, costPerUnit: r.cost, supplierName: r.supplierName || null, notes: r.notes || null })) }) })
+                      const res = await apiFetch<{ products: any[]; lotsCreated: number }>('/products/register', { method: 'POST', body: JSON.stringify({ warehouseId: registerWarehouseId, items: valid.map(r => ({ name: r.name.trim(), sku: r.sku.trim(), categoryId: r.categoryId || null, price: r.price, cost: r.cost, unit: r.unit, reorderLevel: r.reorderLevel, quantity: r.quantity, costPerUnit: r.cost, notes: r.notes || null })), supplierInfo: { personName: registerSupplier.personName.trim() || null, personPhone: registerSupplier.personPhone.trim() || null, personEmail: registerSupplier.personEmail.trim() || null, personAddress: registerSupplier.personAddress.trim() || null, notes: registerSupplier.notes.trim() || null } }) })
                       toast({ title: `Registered ${res.products?.length || valid.length} product(s)${res.lotsCreated ? `, ${res.lotsCreated} lot(s) created` : ''}` })
-                      setRegisterRows([])
+                      setRegisterRows([]); setRegisterSupplier({ personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '' })
                       await loadData()
                     } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
                     setRegisterSubmitting(false)
@@ -811,16 +864,38 @@ export default function IMSApp() {
       </div>
     )
 
-    // ─── STOCK (Task 5: responsive table; Task 7: no page-level action buttons, row-level Stock In + View Lots)
+    // ─── STOCK (responsive table; row actions = View Lots + Adjust only; receiving inventory is done via the Stock In page)
     if (page === 'stock' && hasPermission(role!, 'stock:view')) return (
       <div className="space-y-5">
         <div className="flex items-center justify-between flex-wrap gap-2"><div><h1 className="text-2xl font-bold">{t(locale, 'navStock')}</h1>
-          <p className="text-xs text-muted-foreground mt-1">Use the row-level Stock In button below, or open the Stock In page in the sidebar for multi-item receipts.</p></div>
+          <p className="text-xs text-muted-foreground mt-1">View current stock levels and lots per product. To receive new inventory, open the <span className="font-semibold text-emerald-600 dark:text-emerald-400">Stock In</span> page in the sidebar.</p></div>
           <div className="flex items-center gap-2">
             <div className="relative w-full sm:w-64"><Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search stock..." className="pl-8" value={stockSearch} onChange={e => { setStockSearch(e.target.value); setStockPage(1) }} /></div>
             <Badge variant="outline" className="text-[11px] font-medium">{filteredStock.length} records</Badge>
           </div></div>
-        <div className="rounded-md border overflow-x-auto"><Table>
+        {/* Mobile: stacked cards (no horizontal scroll) */}
+        <div className="sm:hidden space-y-2">
+          {pagedStock.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No stock found</div>}
+          {pagedStock.map(s => {
+            const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId); const isLow = prod ? s.quantity <= prod.reorderLevel : false
+            return (<Card key={s.id} className="shadow-sm"><CardContent className="p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0"><div className="font-semibold text-sm truncate">{prod?.name || `Product #${s.productId}`}</div>{prod && <div className="text-[10px] text-muted-foreground font-mono truncate">{prod.sku}</div>}</div>
+                {isLow ? <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[10px] shrink-0">Low</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[10px] shrink-0">OK</Badge>}
+              </div>
+              <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs">
+                <div><span className="text-muted-foreground">Warehouse: </span><span className="font-medium">{wh?.name || `WH #${s.warehouseId}`}</span></div>
+                <div><span className="text-muted-foreground">Quantity: </span><span className={`font-bold ${isLow ? 'text-red-600 dark:text-red-400' : ''}`}>{s.quantity}</span></div>
+                <div className="col-span-2"><span className="text-muted-foreground">Value: </span><span className="font-medium">{prod ? fmt(s.quantity * prod.price) : '—'}</span></div>
+              </div>
+              <div className="flex gap-1 pt-1 border-t">
+                <Button size="sm" variant="outline" onClick={() => viewLots(s.productId, s.warehouseId, prod?.name || `Product #${s.productId}`)} className="text-violet-600 hover:bg-violet-50 h-7 text-xs flex-1"><Layers className="w-3 h-3 mr-1" />Lots</Button>
+                {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => openEdit('stock', s)} className="h-7 text-xs flex-1">Adjust</Button>}
+              </div>
+            </CardContent></Card>)})}
+        </div>
+        {/* Desktop: table */}
+        <div className="hidden sm:block rounded-md border"><Table>
           <TableHeader><TableRow>
             <TableHead className="h-8 text-xs">Product</TableHead>
             <TableHead className="h-8 text-xs">Warehouse</TableHead>
@@ -840,7 +915,6 @@ export default function IMSApp() {
                 <TableCell className="py-2 text-right text-xs text-muted-foreground">{prod ? fmt(s.quantity * prod.price) : '—'}</TableCell>
                 <TableCell className="py-2 text-center">{isLow ? <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[10px]">Low</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[10px]">OK</Badge>}</TableCell>
                 <TableCell className="py-2 text-right"><div className="flex gap-1 justify-end">
-                  {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => { setDlgType('stockIn'); setDlgEdit({productId:s.productId}); setDlgData({productId:s.productId,warehouseId:s.warehouseId,quantity:''}); setDlgOpen(true) }} className="text-xs text-emerald-600 border-emerald-200 hover:bg-emerald-50 h-7"><ArrowUpFromLine className="w-3 h-3 mr-1" />Stock In</Button>}
                   <Button size="sm" variant="ghost" onClick={() => viewLots(s.productId, s.warehouseId, prod?.name || `Product #${s.productId}`)} className="text-xs text-violet-600 hover:bg-violet-50 h-7" title="View Lots"><Layers className="w-3 h-3 mr-1" />Lots</Button>
                   {hasPermission(role!, 'stock:adjust') && <Button size="sm" variant="outline" onClick={() => openEdit('stock', s)} className="text-xs h-7">Adjust</Button>}
                 </div></TableCell>
@@ -960,7 +1034,22 @@ export default function IMSApp() {
                         <Button size="sm" variant="outline" onClick={() => { const w = window.open('', '_blank', 'width=800,height=600'); if (!w) return; w.document.write('<html><head><title>Stock In - ' + r.recorderCode + '</title><style>body{font-family:system-ui,sans-serif;padding:24px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}th{background:#f1f5f9;font-weight:600}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.saved{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}h2{font-size:18px;margin:0}p{color:#64748b;font-size:13px;margin:4px 0}.summary{margin-top:8px;font-size:13px;color:#334155;font-weight:600}</style></head><body>'); w.document.write('<h2>' + r.recorderCode + '</h2>'); w.document.write('<p>Date: ' + new Date(r.createdAt).toLocaleString() + '</p>'); w.document.write('<p>Supplier: ' + r.personName + (r.personPhone ? ' | Phone: ' + r.personPhone : '') + (r.personEmail ? ' | Email: ' + r.personEmail : '') + '</p>'); if (r.personAddress) w.document.write('<p>Address: ' + r.personAddress + '</p>'); if (r.notes) w.document.write('<p>Notes: ' + r.notes + '</p>'); w.document.write('<table><thead><tr><th>Product</th><th style="text-align:right">Qty</th><th>Unit</th><th style="text-align:right">Cost/Unit</th><th style="text-align:right">Total</th><th>Status</th></tr></thead><tbody>'); allItems.forEach((item: any) => { const prod = products.find((p: any) => p.id === item.productId); w.document.write('<tr><td>' + (prod?.name || '#'+item.productId) + '</td><td style="text-align:right">' + item.quantity + '</td><td>' + item.unit + '</td><td style="text-align:right">' + (item.costPerUnit || 0).toFixed(2) + '</td><td style="text-align:right">' + ((item.costPerUnit || 0) * item.quantity).toFixed(2) + '</td><td><span class="badge ' + (item._pending ? 'pending' : 'saved') + '">' + (item._pending ? 'Pending' : 'Saved') + '</span></td></tr>') }); w.document.write('</tbody></table>'); w.document.write('<p class="summary">Total Items: ' + totalItems + ' · Total Qty: ' + totalQty + ' · Total Value: $' + totalValue.toFixed(2) + '</p>'); w.document.write('</body></html>'); w.document.close(); w.print() }} className="h-5 text-[10px] gap-0.5"><Printer className="w-2.5 h-2.5" />Print</Button>
                       </div>
                       {totalItems > 0 ? (<>
-                        <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+                        {/* Mobile: stacked cards */}
+                        <div className="sm:hidden space-y-1.5">
+                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+                            return (<div key={item.id} className={`rounded-md border p-2 space-y-1 ${item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed border-amber-300 dark:border-amber-600' : ''}`}>
+                              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium truncate">{prod?.name || `#${item.productId}`}</span>{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400 shrink-0">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400 shrink-0">Saved</Badge>}</div>
+                              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+                                <div><span className="text-muted-foreground">Qty: </span><span className="font-mono">{item.quantity}</span></div>
+                                <div><span className="text-muted-foreground">Unit: </span>{item.unit}</div>
+                                <div><span className="text-muted-foreground">Cost/U: </span><span className="font-mono">{fmt(item.costPerUnit || 0)}</span></div>
+                                <div><span className="text-muted-foreground">Total: </span><span className="font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</span></div>
+                              </div>
+                              <div className="flex justify-end pt-0.5 border-t"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-5 w-5 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div>
+                            </div>)})}
+                        </div>
+                        {/* Desktop: table */}
+                        <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
                           <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-6 text-[10px] text-right w-24">Total</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
                         </TableRow></TableHeader><TableBody>
                           {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
@@ -1005,7 +1094,18 @@ export default function IMSApp() {
                         const selPaged = filteredProds.slice((stockInPickSelectPage - 1) * STOCK_IN_PICK_SELECT_PER_PAGE, stockInPickSelectPage * STOCK_IN_PICK_SELECT_PER_PAGE)
                         return (<div className="space-y-1.5">
                           <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockInSearch} onChange={e => { setStockInSearch(e.target.value); setStockInPickSelectPage(1) }} className="h-6 text-[11px] pl-7" /></div>
-                          <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+                          {/* Mobile: stacked form */}
+                          <div className="sm:hidden rounded-md border border-dashed border-emerald-300 dark:border-emerald-600 p-2 space-y-1.5">
+                            <Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}><SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">{selPaged.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span></SelectItem>)}{selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}</SelectContent></Select>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <Input type="number" min={1} value={sel.qty || 1} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } as any }))} placeholder="Qty" className="h-7 text-[11px] text-right" />
+                              <Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+                              <Input type="number" step="0.01" min={0} value={sel.costPerUnit || ''} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], costPerUnit: parseFloat(e.target.value) || 0 } as any }))} placeholder="Cost/U" className="h-7 text-[11px] text-right" />
+                            </div>
+                            <Button size="sm" disabled={addingItem || !sel.productId} className="h-7 text-[11px] bg-emerald-600 text-white w-full" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '' }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add to receipt</Button>
+                          </div>
+                          {/* Desktop: table */}
+                          <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
                             <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-emerald-300 dark:border-b-emerald-600">
                             <TableCell className="py-0.5"><Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}><SelectTrigger className="h-5 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">
@@ -1024,7 +1124,21 @@ export default function IMSApp() {
                       // ── Table Mode ──
                       (() => { const sortedProds = [...products].sort((a, b) => a.name.localeCompare(b.name)); const totalPages = Math.ceil(sortedProds.length / STOCK_IN_PRODUCTS_PER_PAGE); const paged = sortedProds.slice((stockInProductPage - 1) * STOCK_IN_PRODUCTS_PER_PAGE, stockInProductPage * STOCK_IN_PRODUCTS_PER_PAGE)
                         return (<div>
-                          <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+                          {/* Mobile: stacked cards */}
+                          <div className="sm:hidden space-y-1.5">
+                            {paged.map(prod => { const inp = getInRowInput(prod.id)
+                              return (<div key={prod.id} className="rounded-md border p-2 space-y-1.5">
+                                <div className="text-[11px]"><span className="font-medium">{prod.name}</span> <span className="text-muted-foreground font-mono text-[10px]">{prod.sku}</span></div>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                  <Input type="number" min={1} value={inp.qty} onChange={e => updateInRowInput(prod.id, { qty: parseInt(e.target.value) || 1 })} placeholder="Qty" className="h-6 text-[11px] text-right" />
+                                  <Select value={inp.unit} onValueChange={v => updateInRowInput(prod.id, { unit: v })}><SelectTrigger className="h-6 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+                                  <Input type="number" step="0.01" min={0} value={inp.costPerUnit || ''} onChange={e => updateInRowInput(prod.id, { costPerUnit: parseFloat(e.target.value) || 0 })} placeholder="Cost/U" className="h-6 text-[11px] text-right" />
+                                </div>
+                                <Button size="sm" disabled={addingItem} className="h-6 text-[10px] bg-emerald-600 text-white w-full" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '' }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add</Button>
+                              </div>)})}
+                          </div>
+                          {/* Desktop: table */}
+                          <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
                             <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody>
                             {paged.map(prod => { const inp = getInRowInput(prod.id)
@@ -1110,7 +1224,22 @@ export default function IMSApp() {
                         <Button size="sm" variant="outline" onClick={() => { const w = window.open('', '_blank', 'width=800,height=600'); if (!w) return; w.document.write('<html><head><title>Stock Out - ' + r.recorderCode + '</title><style>body{font-family:system-ui,sans-serif;padding:24px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}th{background:#f1f5f9;font-weight:600}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.saved{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}h2{font-size:18px;margin:0}p{color:#64748b;font-size:13px;margin:4px 0}.summary{margin-top:8px;font-size:13px;color:#334155;font-weight:600}</style></head><body>'); w.document.write('<h2>' + r.recorderCode + '</h2>'); w.document.write('<p>Date: ' + new Date(r.createdAt).toLocaleString() + '</p>'); w.document.write('<p>Person: ' + r.personName + (r.personPhone ? ' | Phone: ' + r.personPhone : '') + (r.personEmail ? ' | Email: ' + r.personEmail : '') + '</p>'); if (r.personAddress) w.document.write('<p>Address: ' + r.personAddress + '</p>'); if (r.notes) w.document.write('<p>Notes: ' + r.notes + '</p>'); w.document.write('<table><thead><tr><th>Product</th><th style="text-align:right">Qty</th><th>Unit</th><th>Returnable</th><th>Deadline</th><th>Status</th></tr></thead><tbody>'); allItems.forEach((item: any) => { const prod = products.find((p: any) => p.id === item.productId); w.document.write('<tr><td>' + (prod?.name || '#'+item.productId) + '</td><td style="text-align:right">' + item.quantity + '</td><td>' + item.unit + '</td><td>' + (item.isReturnable ? 'Yes' : 'No') + '</td><td>' + (item.returnDeadline || '—') + '</td><td><span class="badge ' + (item._pending ? 'pending' : 'saved') + '">' + (item._pending ? 'Pending' : 'Saved') + '</span></td></tr>') }); w.document.write('</tbody></table>'); w.document.write('<p class="summary">Total Items: ' + totalItems + ' · Total Qty: ' + totalQty + '</p>'); w.document.write('</body></html>'); w.document.close(); w.print() }} className="h-5 text-[10px] gap-0.5"><Printer className="w-2.5 h-2.5" />Print</Button>
                       </div>
                       {totalItems > 0 ? (<>
-                        <div className="rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
+                        {/* Mobile: stacked cards */}
+                        <div className="sm:hidden space-y-1.5">
+                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+                            return (<div key={item.id} className={`rounded-md border p-2 space-y-1 ${item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed border-amber-300 dark:border-amber-600' : ''}`}>
+                              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium truncate">{prod?.name || `#${item.productId}`}</span>{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400 shrink-0">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400 shrink-0">Saved</Badge>}</div>
+                              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+                                <div><span className="text-muted-foreground">Qty: </span><span className="font-mono">{item.quantity}</span></div>
+                                <div><span className="text-muted-foreground">Unit: </span>{item.unit}</div>
+                                <div><span className="text-muted-foreground">Returnable: </span>{item.isReturnable ? <span className="text-emerald-600">Yes</span> : <span className="text-red-400">No</span>}</div>
+                                <div><span className="text-muted-foreground">Deadline: </span>{item.returnDeadline || '—'}</div>
+                              </div>
+                              <div className="flex justify-end pt-0.5 border-t"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingItem(r.id, item.tempId) : crud.remove(`/stock-out/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`)} className="text-red-500 h-5 w-5 p-0">{!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div>
+                            </div>)})}
+                        </div>
+                        {/* Desktop: table */}
+                        <div className="hidden sm:block rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
                           <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Ret</TableHead><TableHead className="h-6 text-[10px] w-20">Deadline</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
                         </TableRow></TableHeader><TableBody>
                           {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
@@ -1155,7 +1284,19 @@ export default function IMSApp() {
                         const selPaged = filteredProds.slice((stockOutPickSelectPage - 1) * STOCK_OUT_PICK_SELECT_PER_PAGE, stockOutPickSelectPage * STOCK_OUT_PICK_SELECT_PER_PAGE)
                         return (<div className="space-y-1.5">
                           <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockOutSearch} onChange={e => { setStockOutSearch(e.target.value); setStockOutPickSelectPage(1) }} className="h-6 text-[11px] pl-7" /></div>
-                          <div className="rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
+                          {/* Mobile: stacked form */}
+                          <div className="sm:hidden rounded-md border border-dashed border-blue-300 dark:border-blue-600 p-2 space-y-1.5">
+                            <Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}><SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">{selPaged.map(p => { const stk = getAvailableStock(p.id, r.warehouseId); return <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span> <span className={`ml-1 text-[10px] font-semibold ${stk > 0 ? 'text-emerald-600' : 'text-red-500'}`}>({stk})</span></SelectItem> })}{selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}</SelectContent></Select>
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <Input type="number" min={1} max={sel.productId ? getAvailableStock(sel.productId, r.warehouseId) : undefined} value={sel.qty || 1} onChange={e => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } }))} placeholder="Qty" className="h-7 text-[11px] text-right" />
+                              <Select value={sel.unit || 'pcs'} onValueChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } }))}><SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+                              <div className="flex items-center justify-center gap-1"><Switch checked={sel.isReturnable || false} onCheckedChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], isReturnable: v } }))} className="scale-75" /><span className="text-[9px] text-muted-foreground">Ret</span></div>
+                            </div>
+                            {sel.isReturnable && <CustomDatePicker value={sel.returnDeadline || ''} onChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], returnDeadline: v } }))} />}
+                            <Button size="sm" disabled={addingItem || !sel.productId} className="h-7 text-[11px] bg-blue-600 text-white w-full" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; const avail = getAvailableStock(sel.productId, r.warehouseId); if (sel.qty > avail) { toast({ title: `Only ${avail} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', isReturnable: sel.isReturnable || false, returnDeadline: sel.returnDeadline || null, notes: '' }); setStockOutPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add to recorder</Button>
+                          </div>
+                          {/* Desktop: table */}
+                          <div className="hidden sm:block rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
                             <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-blue-300 dark:border-b-blue-600">
                             <TableCell className="py-0.5"><Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}><SelectTrigger className="h-5 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">
@@ -1176,7 +1317,22 @@ export default function IMSApp() {
                       // ── Table Mode: each product = its own row (spreadsheet), with pagination ──
                       (() => { const sortedProds = [...products].sort((a, b) => a.name.localeCompare(b.name)); const totalPages = Math.ceil(sortedProds.length / STOCK_OUT_PRODUCTS_PER_PAGE); const paged = sortedProds.slice((stockOutProductPage - 1) * STOCK_OUT_PRODUCTS_PER_PAGE, stockOutProductPage * STOCK_OUT_PRODUCTS_PER_PAGE)
                         return (<div>
-                          <div className="rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
+                          {/* Mobile: stacked cards */}
+                          <div className="sm:hidden space-y-1.5">
+                            {paged.map(prod => { const inp = getRowInput(prod.id); const stk = getAvailableStock(prod.id, r.warehouseId)
+                              return (<div key={prod.id} className="rounded-md border p-2 space-y-1.5">
+                                <div className="flex items-center justify-between gap-2"><div className="text-[11px] min-w-0"><span className="font-medium">{prod.name}</span> <span className="text-muted-foreground font-mono text-[10px]">{prod.sku}</span></div><span className={`text-[11px] font-mono font-semibold shrink-0 ${stk > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{stk}</span></div>
+                                <div className="grid grid-cols-3 gap-1.5">
+                                  <Input type="number" min={1} max={stk} value={inp.qty} onChange={e => updateRowInput(prod.id, { qty: parseInt(e.target.value) || 1 })} placeholder="Qty" className="h-6 text-[11px] text-right" />
+                                  <Select value={inp.unit} onValueChange={v => updateRowInput(prod.id, { unit: v })}><SelectTrigger className="h-6 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+                                  <div className="flex items-center justify-center gap-1"><Switch checked={inp.isReturnable} onCheckedChange={v => updateRowInput(prod.id, { isReturnable: v })} className="scale-75" /><span className="text-[9px] text-muted-foreground">Ret</span></div>
+                                </div>
+                                {inp.isReturnable && <CustomDatePicker value={inp.returnDeadline} onChange={v => updateRowInput(prod.id, { returnDeadline: v })} />}
+                                <Button size="sm" disabled={addingItem || stk <= 0} className="h-6 text-[10px] bg-blue-600 text-white w-full" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; if (inp.qty > stk) { toast({ title: `Only ${stk} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, isReturnable: inp.isReturnable, returnDeadline: inp.returnDeadline || null, notes: '' }); updateRowInput(prod.id, { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add</Button>
+                              </div>)})}
+                          </div>
+                          {/* Desktop: table */}
+                          <div className="hidden sm:block rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
                             <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody>
                             {paged.map(prod => { const inp = getRowInput(prod.id); const stk = getAvailableStock(prod.id, r.warehouseId)
@@ -1656,7 +1812,25 @@ export default function IMSApp() {
             <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Layers className="w-4 h-4 text-violet-500" />Lots for {lotsDialog.productName}</DialogTitle></DialogHeader>
             <div className="max-h-[60vh] overflow-y-auto pr-1">
               {lotsLoading ? <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-violet-500" /></div> : lotsData.length === 0 ? <div className="text-center text-sm text-muted-foreground py-8">No lots found for this product in this warehouse.</div> : (
-                <div className="rounded-md border overflow-x-auto"><Table>
+                <>
+                {/* Mobile: stacked cards */}
+                <div className="sm:hidden space-y-2">
+                  {lotsData.slice((lotsPage - 1) * LOTS_PER_PAGE, lotsPage * LOTS_PER_PAGE).map(l => (
+                    <Card key={l.id} className="border-violet-100 dark:border-violet-500/20"><CardContent className="p-2.5 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-mono font-semibold truncate">{l.lotNumber}</span>{l.status === 'open' ? <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[9px] shrink-0">Open</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[9px] shrink-0">Closed</Badge>}</div>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+                        <div><span className="text-muted-foreground">Qty: </span><span className="font-mono font-medium">{l.quantity}</span></div>
+                        <div><span className="text-muted-foreground">Remaining: </span><span className="font-mono font-medium">{l.remainingQty}</span></div>
+                        <div><span className="text-muted-foreground">Cost/U: </span><span className="font-medium">{fmt(l.costPerUnit)}</span></div>
+                        <div><span className="text-muted-foreground">Source: </span><Badge className={`${l.source === 'stock_in' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : l.source === 'register_item' ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'} border-0 text-[9px]`}>{l.source.replace('_', ' ')}</Badge></div>
+                        <div className="col-span-2"><span className="text-muted-foreground">Supplier: </span><span className="font-medium">{l.supplierName || '—'}</span></div>
+                        <div className="col-span-2"><span className="text-muted-foreground">Received: </span><span className="font-medium">{new Date(l.receivedDate).toLocaleDateString()}</span></div>
+                        {l.notes && <div className="col-span-2 text-muted-foreground italic truncate">{l.notes}</div>}
+                      </div>
+                    </CardContent></Card>))}
+                </div>
+                {/* Desktop: table */}
+                <div className="hidden sm:block rounded-md border"><Table>
                   <TableHeader><TableRow>
                     <TableHead className="h-7 text-[10px]">Lot Number</TableHead>
                     <TableHead className="h-7 text-[10px] text-right">Quantity</TableHead>
@@ -1681,6 +1855,7 @@ export default function IMSApp() {
                       </TableRow>))}
                   </TableBody>
                 </Table></div>
+                </>
               )}
             </div>
             {lotsData.length > LOTS_PER_PAGE && <Pager page={lotsPage} totalPages={Math.ceil(lotsData.length / LOTS_PER_PAGE)} onPageChange={setLotsPage} />}

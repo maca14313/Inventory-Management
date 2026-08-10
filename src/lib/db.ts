@@ -2174,11 +2174,27 @@ interface RegisterItemInput {
   notes?: string | null
 }
 
+/**
+ * Optional top-level supplier/person info for a bulk registration batch.
+ * Mirrors the StockInRecorder / StockOutRecorder "person" header — the whole
+ * batch is attributed to ONE supplier/person name. `personName` is applied to
+ * every Lot's `supplierName` (overriding per-item supplierName when the item
+ * does not specify its own). Contact details are folded into the Lot notes.
+ */
+interface RegisterSupplierInfo {
+  personName?: string | null
+  personPhone?: string | null
+  personEmail?: string | null
+  personAddress?: string | null
+  notes?: string | null
+}
+
 /** Bulk-register products + initial stock + Lots in ONE transaction (Change 3) */
 export async function registerItems(
   ctx: AuthContext,
   warehouseId: number,
   items: RegisterItemInput[],
+  supplierInfo?: RegisterSupplierInfo,
 ): Promise<{ products: Product[]; lotsCreated: number }> {
   if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
   if (items.length === 0) throw new Error('Validation: no items to register')
@@ -2186,6 +2202,14 @@ export async function registerItems(
   if (!wh) throw new Error(`Warehouse #${warehouseId} not found`)
   if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN')
   const enterpriseId = wh.enterpriseId
+
+  // Build a single contact-notes string from the top-level supplier info so
+  // every Lot in this batch carries the supplier's contact details.
+  const contactBits: string[] = []
+  if (supplierInfo?.personPhone) contactBits.push(`Phone: ${supplierInfo.personPhone}`)
+  if (supplierInfo?.personEmail) contactBits.push(`Email: ${supplierInfo.personEmail}`)
+  if (supplierInfo?.personAddress) contactBits.push(`Address: ${supplierInfo.personAddress}`)
+  const contactNotes = contactBits.join(' · ')
 
   const result = await prisma.$transaction(async (tx) => {
     const created: Product[] = []
@@ -2206,6 +2230,12 @@ export async function registerItems(
         },
       })
       if (item.quantity > 0) {
+        // Top-level supplier name wins unless the item specifies its own.
+        const lotSupplierName = item.supplierName || supplierInfo?.personName || null
+        const lotNotesParts: string[] = []
+        if (item.notes) lotNotesParts.push(item.notes)
+        if (contactNotes) lotNotesParts.push(contactNotes)
+        if (supplierInfo?.notes) lotNotesParts.push(supplierInfo.notes)
         await tx.stock.create({
           data: { productId: p.id, warehouseId, quantity: item.quantity },
         })
@@ -2216,10 +2246,10 @@ export async function registerItems(
           quantity: item.quantity,
           unit: item.unit || p.unit,
           costPerUnit: item.costPerUnit ?? p.cost,
-          supplierName: item.supplierName ?? null,
+          supplierName: lotSupplierName,
           source: 'register_item',
           sourceRef: `REGISTER-${p.id}`,
-          notes: item.notes ?? null,
+          notes: lotNotesParts.length ? lotNotesParts.join(' | ') : null,
         })
         lotsCreated++
       }
@@ -2229,7 +2259,7 @@ export async function registerItems(
       data: {
         userId: ctx.userId, enterpriseId,
         action: 'register_items', entity: 'Product', entityId: null,
-        details: `Bulk-registered ${items.length} product(s) in warehouse #${warehouseId}; ${lotsCreated} lot(s) created`,
+        details: `Bulk-registered ${items.length} product(s) in warehouse #${warehouseId}${supplierInfo?.personName ? ` from ${supplierInfo.personName}` : ''}; ${lotsCreated} lot(s) created`,
       },
     })
     return { products: created, lotsCreated }

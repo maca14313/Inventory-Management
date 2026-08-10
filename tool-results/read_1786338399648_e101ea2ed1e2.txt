@@ -1,0 +1,222 @@
+   860→          return (<Card key={o.id} className="shadow-sm"><CardContent className="p-4">
+   861→            <div className="flex items-center justify-between mb-1"><div className="flex items-center gap-2"><span className="font-mono text-sm bg-muted px-2 py-0.5 rounded">#{o.id}</span>{statusBadge(o.status)}
+   862→              <Badge className={`${o.type === 'purchase' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'} border-0 text-[11px]`}>{o.type}</Badge></div>
+   863→              <span className="text-sm font-bold">{fmt(o.totalAmount)}</span></div>
+   864→            <div className="text-xs text-muted-foreground">{wh?.name || '—'} · {o.notes}</div>
+   865→            {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('order', o)} className="mt-2 text-xs"><Pencil className="w-3 h-3 mr-1" />Edit</Button>}
+   866→          </CardContent></Card>)})}</div>
+   867→      </div>
+   868→    )
+   869→
+   870→    // ─── SUPPLIERS
+   871→    if (page === 'suppliers' && hasPermission(role!, 'suppliers:view')) return (
+   872→      <div className="space-y-5">
+   873→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navSuppliers')}</h1>
+   874→          {hasPermission(role!, 'suppliers:create') && <Button onClick={() => openCreate('supplier')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newSupplier')}</Button>}</div>
+   875→        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{suppliers.map(s => (
+   876→          <Card key={s.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4">
+   877→            <div className="flex items-center gap-3 mb-2"><div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center shrink-0"><Truck className="w-4 h-4 text-white" /></div>
+   878→              <div className="font-semibold">{s.name}</div></div>
+   879→            <div className="text-xs text-muted-foreground space-y-0.5"><div>{s.contactPerson}</div><div>{s.email} · {s.phone}</div></div>
+   880→            <div className="flex gap-2 mt-3">{hasPermission(role!, 'suppliers:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('supplier', s)}><Pencil className="w-3.5 h-3.5" /></Button>}
+   881→              {hasPermission(role!, 'suppliers:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/suppliers/${s.id}`)} disabled={isCrudLoading('remove', `/suppliers/${s.id}`)} className="text-red-500">{isCrudLoading('remove', `/suppliers/${s.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}</div>
+   882→          </CardContent></Card>))}</div>
+   883→      </div>
+   884→    )
+   885→
+   886→    // ─── CATEGORIES
+   887→    if (page === 'categories' && hasPermission(role!, 'categories:view')) return (
+   888→      <div className="space-y-5">
+   889→        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navCategories')}</h1>
+   890→          {hasPermission(role!, 'categories:create') && <Button onClick={() => openCreate('category')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newCategory')}</Button>}</div>
+   891→        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">{categories.map(c => (
+   892→          <Card key={c.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-3">
+   893→            <div className="flex items-center gap-2 mb-1"><Tag className="w-4 h-4 text-blue-500" /><div className="font-semibold text-sm">{c.name}</div></div>
+   894→            <div className="text-xs text-muted-foreground line-clamp-2">{c.description}</div>
+   895→            <div className="flex gap-2 mt-2">{hasPermission(role!, 'categories:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('category', c)} className="h-6 w-6 p-0"><Pencil className="w-3 h-3" /></Button>}
+   896→              {hasPermission(role!, 'categories:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/categories/${c.id}`)} disabled={isCrudLoading('remove', `/categories/${c.id}`)} className="text-red-500 h-6 w-6 p-0">{isCrudLoading('remove', `/categories/${c.id}`) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}</Button>}</div>
+   897→          </CardContent></Card>))}</div>
+   898→      </div>
+   899→    )
+   900→
+   901→    // ─── STOCK OUT RECORDER
+   902→    // ─── STOCK IN (Task 1-b + Task 6: mirrors Stock Out, emerald theme)
+   903→    if (page === 'stockIn') return (
+   904→      <div className="space-y-3">
+   905→        <div className="flex items-center justify-between flex-wrap gap-2">
+   906→          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><ArrowDownToLine className="w-4 h-4 text-emerald-500" />Stock In</h1></div>
+   907→          <Button size="sm" onClick={() => openCreate('stockInRecorder')} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Receipt</Button>
+   908→        </div>
+   909→
+   910→        {/* ── Filters ── */}
+   911→        <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
+   912→          <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
+   913→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date From</Label><div className="w-32"><CustomDatePicker compact value={stockInFilterDateFrom} onChange={v => { setStockInFilterDateFrom(v); setStockInRecPage(1) }} /></div></div>
+   914→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date To</Label><div className="w-32"><CustomDatePicker compact value={stockInFilterDateTo} onChange={v => { setStockInFilterDateTo(v); setStockInRecPage(1) }} /></div></div>
+   915→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Status</Label><Select value={stockInFilterStatus || '_all'} onValueChange={v => { setStockInFilterStatus(v === '_all' ? '' : v); setStockInRecPage(1) }}><SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="submitted">Submitted</SelectItem></SelectContent></Select></div>
+   916→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Supplier</Label><Input value={stockInFilterPerson} onChange={e => { setStockInFilterPerson(e.target.value); setStockInRecPage(1) }} placeholder="Search name..." className="h-7 text-xs w-32" /></div>
+   917→          {(stockInFilterDateFrom || stockInFilterDateTo || stockInFilterStatus || stockInFilterPerson) && <Button size="sm" variant="ghost" onClick={() => { setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInRecPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
+   918→        </div>
+   919→
+   920→        {(() => {
+   921→          let filtered = [...stockInData].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+   922→          if (stockInFilterDateFrom) filtered = filtered.filter(r => new Date(r.createdAt) >= new Date(stockInFilterDateFrom + 'T00:00:00'))
+   923→          if (stockInFilterDateTo) filtered = filtered.filter(r => new Date(r.createdAt) <= new Date(stockInFilterDateTo + 'T23:59:59'))
+   924→          if (stockInFilterStatus) filtered = filtered.filter(r => r.status === stockInFilterStatus)
+   925→          if (stockInFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockInFilterPerson.toLowerCase()))
+   926→
+   927→          const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
+   928→          const recPaged = filtered.slice((stockInRecPage - 1) * STOCK_IN_REC_PER_PAGE, stockInRecPage * STOCK_IN_REC_PER_PAGE)
+   929→
+   930→          return (<>
+   931→            {recPaged.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No receipts found</div>}
+   932→            {recPaged.map(r => { const isExp = expandedIn === r.id; const isExpanding = expandingInId === r.id; const pendingItems = getPendingInItems(r.id); const totalItems = r.items.length + pendingItems.length
+   933→              return (<Card key={r.id} className="shadow-sm"><CardContent className="p-2.5">
+   934→                <div className="flex items-center justify-between cursor-pointer" onClick={() => { if (isExp) { setExpandedIn(null) } else { setExpandingInId(r.id); setTimeout(() => { setExpandedIn(r.id); setExpandingInId(null) }, 200) } }}>
+   935→                  <div className="flex items-center gap-1.5">{isExpanding ? <Loader2 className="w-3 h-3 animate-spin text-emerald-500" /> : <ChevronRight className={`w-3.5 h-3.5 text-emerald-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />}
+   936→                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
+   937→                    {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
+   938→                  <div className="flex items-center gap-1">
+   939→                    <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+   940→                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openEdit('stockInRecorder', r) }} className="h-5 w-5 p-0 text-muted-foreground"><Pencil className="w-2.5 h-2.5" /></Button>}
+   941→                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); crud.remove(`/stock-in/${r.id}`) }} disabled={isCrudLoading('remove', `/stock-in/${r.id}`)} className="h-5 w-5 p-0 text-red-500">{isCrudLoading('remove', `/stock-in/${r.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button>}
+   942→                  </div>
+   943→                </div>
+   944→                {isExp && (<div className="mt-2 space-y-2 border-t pt-2">
+   945→                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+   946→                    {r.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5" />{r.personPhone}</span>}
+   947→                    {r.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5" />{r.personEmail}</span>}
+   948→                    {r.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" />{r.personAddress}</span>}
+   949→                    {r.notes && <span className="flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{r.notes}</span>}
+   950→                  </div>
+   951→
+   952→                  {/* ── Items Table (saved + pending) with pagination ── */}
+   953→                  {(() => { const allItems = [...r.items.map(i => ({ ...i, _pending: false })), ...pendingItems.map(i => ({ ...i, id: i.tempId, _pending: true }))] as any[]
+   954→                    const totalPages = Math.ceil(allItems.length / STOCK_IN_ITEMS_PER_PAGE); const paged = allItems.slice((stockInItemPage - 1) * STOCK_IN_ITEMS_PER_PAGE, stockInItemPage * STOCK_IN_ITEMS_PER_PAGE)
+   955→                    const totalQty = allItems.reduce((sum: number, i: any) => sum + i.quantity, 0)
+   956→                    const totalValue = allItems.reduce((sum: number, i: any) => sum + (i.quantity * (i.costPerUnit || 0)), 0)
+   957→                    return (<div id={`stockin-print-${r.id}`}>
+   958→                      <div className="flex items-center justify-between mb-1">
+   959→                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Items ({totalItems}) · Total Qty: {totalQty} · Value: {fmt(totalValue)}</span>
+   960→                        <Button size="sm" variant="outline" onClick={() => { const w = window.open('', '_blank', 'width=800,height=600'); if (!w) return; w.document.write('<html><head><title>Stock In - ' + r.recorderCode + '</title><style>body{font-family:system-ui,sans-serif;padding:24px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}th{background:#f1f5f9;font-weight:600}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.saved{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}h2{font-size:18px;margin:0}p{color:#64748b;font-size:13px;margin:4px 0}.summary{margin-top:8px;font-size:13px;color:#334155;font-weight:600}</style></head><body>'); w.document.write('<h2>' + r.recorderCode + '</h2>'); w.document.write('<p>Date: ' + new Date(r.createdAt).toLocaleString() + '</p>'); w.document.write('<p>Supplier: ' + r.personName + (r.personPhone ? ' | Phone: ' + r.personPhone : '') + (r.personEmail ? ' | Email: ' + r.personEmail : '') + '</p>'); if (r.personAddress) w.document.write('<p>Address: ' + r.personAddress + '</p>'); if (r.notes) w.document.write('<p>Notes: ' + r.notes + '</p>'); w.document.write('<table><thead><tr><th>Product</th><th style="text-align:right">Qty</th><th>Unit</th><th style="text-align:right">Cost/Unit</th><th style="text-align:right">Total</th><th>Status</th></tr></thead><tbody>'); allItems.forEach((item: any) => { const prod = products.find((p: any) => p.id === item.productId); w.document.write('<tr><td>' + (prod?.name || '#'+item.productId) + '</td><td style="text-align:right">' + item.quantity + '</td><td>' + item.unit + '</td><td style="text-align:right">' + (item.costPerUnit || 0).toFixed(2) + '</td><td style="text-align:right">' + ((item.costPerUnit || 0) * item.quantity).toFixed(2) + '</td><td><span class="badge ' + (item._pending ? 'pending' : 'saved') + '">' + (item._pending ? 'Pending' : 'Saved') + '</span></td></tr>') }); w.document.write('</tbody></table>'); w.document.write('<p class="summary">Total Items: ' + totalItems + ' · Total Qty: ' + totalQty + ' · Total Value: $' + totalValue.toFixed(2) + '</p>'); w.document.write('</body></html>'); w.document.close(); w.print() }} className="h-5 text-[10px] gap-0.5"><Printer className="w-2.5 h-2.5" />Print</Button>
+   961→                      </div>
+   962→                      {totalItems > 0 ? (<>
+   963→                        <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+   964→                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-6 text-[10px] text-right w-24">Total</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
+   965→                        </TableRow></TableHeader><TableBody>
+   966→                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+   967→                            return (<TableRow key={item.id} className={item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed' : ''}>
+   968→                              <TableCell className="py-1 text-[11px] font-medium">{prod?.name || `#${item.productId}`}</TableCell>
+   969→                              <TableCell className="py-1 text-[11px] text-right font-mono">{item.quantity}</TableCell>
+   970→                              <TableCell className="py-1 text-[11px] text-muted-foreground">{item.unit}</TableCell>
+   971→                              <TableCell className="py-1 text-[11px] text-right font-mono">{fmt(item.costPerUnit || 0)}</TableCell>
+   972→                              <TableCell className="py-1 text-[11px] text-right font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</TableCell>
+   973→                              <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
+   974→                              <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></TableCell>
+   975→                            </TableRow>)})}
+   976→                        </TableBody></Table></div>
+   977→                        <Pager page={stockInItemPage} totalPages={totalPages} onPageChange={setStockInItemPage} />
+   978→                      </>) : <div className="text-[10px] text-muted-foreground text-center py-2">No items yet</div>}
+   979→                    </div>)})()}
+   980→
+   981→                  {/* Submit pending button */}
+   982→                  {pendingItems.length > 0 && (
+   983→                    <div className="flex items-center gap-1.5">
+   984→                      <Button size="sm" disabled={submittingRecorder === r.id} onClick={() => submitPendingInItems(r.id, r.enterpriseId || eid || 0)} className="bg-emerald-600 text-white h-6 text-[11px]">{submittingRecorder === r.id ? <Loader2 className="w-2.5 h-2.5 mr-0.5 animate-spin" /> : <Check className="w-2.5 h-2.5 mr-0.5" />}Submit {pendingItems.length}</Button>
+   985→                      <Button size="sm" variant="ghost" onClick={() => clearPendingInItems(r.id)} className="h-6 text-[11px] text-muted-foreground" disabled={submittingRecorder === r.id}>Clear</Button>
+   986→                    </div>
+   987→                  )}
+   988→
+   989→                  {/* ── Add Items Section ── */}
+   990→                  <div className="bg-muted/30 rounded-md p-2">
+   991→                    <div className="flex items-center justify-between mb-1.5">
+   992→                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Add Items</span>
+   993→                      <div className="flex items-center bg-muted rounded-md p-0.5">
+   994→                        <button onClick={() => setStockInMode('pic')} className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${stockInMode === 'pic' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-muted-foreground'}`}><LayoutGrid className="w-2.5 h-2.5 inline mr-0.5" />Pick</button>
+   995→                        <button onClick={() => setStockInMode('table')} className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${stockInMode === 'table' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-muted-foreground'}`}><List className="w-2.5 h-2.5 inline mr-0.5" />Table</button>
+   996→                      </div>
+   997→                    </div>
+   998→
+   999→                    {/* ── Pick Mode ── */}
+  1000→                    {stockInMode === 'pic' ? (
+  1001→                      (() => {
+  1002→                        const sel = (stockInPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) as { productId: number; qty: number; unit: string; costPerUnit: number; notes: string }
+  1003→                        const filteredProds = products.filter(p => !stockInSearch || p.name.toLowerCase().includes(stockInSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockInSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name))
+  1004→                        const selTotalPages = Math.ceil(filteredProds.length / STOCK_IN_PICK_SELECT_PER_PAGE)
+  1005→                        const selPaged = filteredProds.slice((stockInPickSelectPage - 1) * STOCK_IN_PICK_SELECT_PER_PAGE, stockInPickSelectPage * STOCK_IN_PICK_SELECT_PER_PAGE)
+  1006→                        return (<div className="space-y-1.5">
+  1007→                          <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockInSearch} onChange={e => { setStockInSearch(e.target.value); setStockInPickSelectPage(1) }} className="h-6 text-[11px] pl-7" /></div>
+  1008→                          <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+  1009→                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
+  1010→                          </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-emerald-300 dark:border-b-emerald-600">
+  1011→                            <TableCell className="py-0.5"><Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}><SelectTrigger className="h-5 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">
+  1012→                              {selPaged.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span></SelectItem>)}
+  1013→                              {selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}
+  1014→                            </SelectContent></Select></TableCell>
+  1015→                            <TableCell className="py-0.5"><Input type="number" min={1} value={sel.qty || 1} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+  1016→                            <TableCell className="py-0.5"><Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+  1017→                            <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={sel.costPerUnit || ''} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], costPerUnit: parseFloat(e.target.value) || 0 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+  1018→                            <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '' }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+  1019→                          </TableRow></TableBody></Table></div>
+  1020→                          {selTotalPages > 1 && <div className="flex items-center justify-between pt-1"><span className="text-[10px] text-muted-foreground">Products page {stockInPickSelectPage}/{selTotalPages}</span><div className="flex gap-0.5"><Button size="sm" variant="outline" disabled={stockInPickSelectPage <= 1} onClick={() => setStockInPickSelectPage(p => p - 1)} className="h-5 w-5 p-0"><ChevronLeft className="w-2.5 h-2.5" /></Button><Button size="sm" variant="outline" disabled={stockInPickSelectPage >= selTotalPages} onClick={() => setStockInPickSelectPage(p => p + 1)} className="h-5 w-5 p-0"><ChevronRight className="w-2.5 h-2.5" /></Button></div></div>}
+  1021→                        </div>)
+  1022→                      })()
+  1023→                    ) : (
+  1024→                      // ── Table Mode ──
+  1025→                      (() => { const sortedProds = [...products].sort((a, b) => a.name.localeCompare(b.name)); const totalPages = Math.ceil(sortedProds.length / STOCK_IN_PRODUCTS_PER_PAGE); const paged = sortedProds.slice((stockInProductPage - 1) * STOCK_IN_PRODUCTS_PER_PAGE, stockInProductPage * STOCK_IN_PRODUCTS_PER_PAGE)
+  1026→                        return (<div>
+  1027→                          <div className="rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+  1028→                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
+  1029→                          </TableRow></TableHeader><TableBody>
+  1030→                            {paged.map(prod => { const inp = getInRowInput(prod.id)
+  1031→                              return (<TableRow key={prod.id}>
+  1032→                                <TableCell className="py-0.5 text-[11px]"><span className="font-medium">{prod.name}</span> <span className="text-muted-foreground font-mono text-[10px]">{prod.sku}</span></TableCell>
+  1033→                                <TableCell className="py-0.5"><Input type="number" min={1} value={inp.qty} onChange={e => updateInRowInput(prod.id, { qty: parseInt(e.target.value) || 1 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+  1034→                                <TableCell className="py-0.5"><Select value={inp.unit} onValueChange={v => updateInRowInput(prod.id, { unit: v })}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+  1035→                                <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={inp.costPerUnit || ''} onChange={e => updateInRowInput(prod.id, { costPerUnit: parseFloat(e.target.value) || 0 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+  1036→                                <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '' }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+  1037→                              </TableRow>)})}
+  1038→                          </TableBody></Table></div>
+  1039→                          <Pager page={stockInProductPage} totalPages={totalPages} onPageChange={setStockInProductPage} />
+  1040→                        </div>)
+  1041→                      })()
+  1042→                    )}
+  1043→                  </div>
+  1044→                </div>)}
+  1045→              </CardContent></Card>)})}
+  1046→            <Pager page={stockInRecPage} totalPages={recTotalPages} onPageChange={setStockInRecPage} />
+  1047→          </>)
+  1048→        })()}
+  1049→      </div>
+  1050→    )
+  1051→
+  1052→    // ─── STOCK OUT
+  1053→    if (page === 'stockOut') return (
+  1054→      <div className="space-y-3">
+  1055→        <div className="flex items-center justify-between flex-wrap gap-2">
+  1056→          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><ArrowUpFromLine className="w-4 h-4 text-orange-500" />Stock Out</h1></div>
+  1057→          <Button size="sm" onClick={() => openCreate('stockOut')} className="bg-gradient-to-r from-orange-500 to-red-500 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Recorder</Button>
+  1058→        </div>
+  1059→
+  1060→        {/* ── Filters ── */}
+  1061→        <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
+  1062→          <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
+  1063→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date From</Label><div className="w-32"><CustomDatePicker compact value={stockOutFilterDateFrom} onChange={v => { setStockOutFilterDateFrom(v); setStockOutRecPage(1) }} /></div></div>
+  1064→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date To</Label><div className="w-32"><CustomDatePicker compact value={stockOutFilterDateTo} onChange={v => { setStockOutFilterDateTo(v); setStockOutRecPage(1) }} /></div></div>
+  1065→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Status</Label><Select value={stockOutFilterStatus || '_all'} onValueChange={v => { setStockOutFilterStatus(v === '_all' ? '' : v); setStockOutRecPage(1) }}><SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="open">Open</SelectItem><SelectItem value="confirmed">Confirmed</SelectItem><SelectItem value="closed">Closed</SelectItem><SelectItem value="draft">Draft</SelectItem></SelectContent></Select></div>
+  1066→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Person</Label><Input value={stockOutFilterPerson} onChange={e => { setStockOutFilterPerson(e.target.value); setStockOutRecPage(1) }} placeholder="Search name..." className="h-7 text-xs w-32" /></div>
+  1067→          {(stockOutFilterDateFrom || stockOutFilterDateTo || stockOutFilterStatus || stockOutFilterPerson) && <Button size="sm" variant="ghost" onClick={() => { setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutRecPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
+  1068→        </div>
+  1069→
+  1070→        {(() => {
+  1071→          // Filter recorders
+  1072→          let filtered = [...stockOutData].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  1073→          if (stockOutFilterDateFrom) filtered = filtered.filter(r => new Date(r.createdAt) >= new Date(stockOutFilterDateFrom + 'T00:00:00'))
+  1074→          if (stockOutFilterDateTo) filtered = filtered.filter(r => new Date(r.createdAt) <= new Date(stockOutFilterDateTo + 'T23:59:59'))
+  1075→          if (stockOutFilterStatus) filtered = filtered.filter(r => r.status === stockOutFilterStatus)
+  1076→          if (stockOutFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockOutFilterPerson.toLowerCase()))
+  1077→
+  1078→          const recTotalPages = Math.ceil(filtered.length / STOCK_OUT_REC_PER_PAGE)
+  1079→          const recPaged = filtered.slice((stockOutRecPage - 1) * STOCK_OUT_REC_PER_PAGE, stockOutRecPage * STOCK_OUT_REC_PER_PAGE)
+
+[showing lines 860-1079 of 1720; use offset=1080 with limit to continue reading]

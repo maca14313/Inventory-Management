@@ -259,3 +259,53 @@ Work Log:
 Stage Summary:
 - page.tsx: 1719 lines, 0 batch refs, 65 stockIn refs, 14 Lots refs, 11 Tabs refs, 7 recharts refs, 17 aiChat refs, 1 footer, 17 Task5 pagination refs
 - Browser-verified (Agent Browser): login (4 quick buttons + 5 lang switchers), Dashboard (12 stat cards incl Total/Open Lots + Stock In/Out, 4 charts, Recent Activity feed), Products (two tabs: List table with 7 records + New Products recorder with Add Row/Register All), Stock (6-col table + View Lots dialog showing 2 lots with 8 columns), Stock In (2 recorders, expandable with items table + Print + Pick/Table add modes), AI widget (sent "How many products?" → reply "7 products." via POST /api/ai-assistant 200), sticky footer, no Batches anywhere, no console errors
+
+---
+Task ID: 5
+Agent: main (frontend refinements)
+Task: Apply user's 4 refinement requirements on top of the rebuilt IMS (multi-item-only product registration under one supplier; remove stock-in from stock page; verify lot-tracking; mobile-responsive tables with no horizontal scroll)
+
+Work Log:
+- Read prior worklog (Tasks 0-4) + current page.tsx (1719 lines) + db.ts registerItems/registerItem + schema.prisma Lot model + products/register route to understand current state
+- Verified backend lot-tracking already correct: registerItem/registerItems create Lot (source='register_item') when initialStock/quantity > 0; db.stock.stockIn + db.stockIn.addItem create Lots; db.stockOut.addItem deducts FIFO; db.stockIn.removeItem reverses Lots. Lot model carries many optional fields (lotNumber, quantity, remainingQty, unit, costPerUnit, supplierName, source, sourceRef, notes, receivedDate, closedAt).
+
+Requirement 1 — Multi-item-only product registration under one supplier:
+- Backend: extended registerItems(ctx, warehouseId, items, supplierInfo?) in db.ts to accept a top-level RegisterSupplierInfo {personName, personPhone, personEmail, personAddress, notes}; personName is applied to every Lot's supplierName (item.supplierName overrides only if item specifies its own); contact details folded into Lot notes; audit log includes supplier name.
+- Backend: updated /api/products/register route to parse body.supplierInfo and forward to registerItems.
+- Frontend: added registerSupplier state {personName, personPhone, personEmail, personAddress, notes}.
+- Frontend: removed BOTH single-product buttons ("Register Item" + "New Product") from Products page header — now only title + helper subtitle + two-tab layout. The New Products tab is the ONLY way to create products.
+- Frontend: added a "Supplier / Person (applies to all items)" header section to the New Products tab with 5 fields (Name/Phone/Email/Address/Notes) mirroring the Stock In/Out recorder header. Register All now sends supplierInfo alongside items[].
+
+Requirement 2 — Remove stock-in from stock page:
+- Removed the row-level "Stock In" button from the Stock page table (both mobile card + desktop table).
+- Updated Stock page subtitle to: "View current stock levels and lots per product. To receive new inventory, open the Stock In page in the sidebar."
+- Row actions on Stock page are now only: Lots (View Lots icon) + Adjust.
+
+Requirement 3 — Lot-tracking verification (already implemented, confirmed):
+- View Lots (Layers icon) button present on every Stock row (mobile + desktop).
+- Lots dialog shows all optional fields: Lot Number, Quantity, Remaining, Cost/Unit, Supplier, Source, Received, Status (+ notes on mobile) with 8/page pagination and Open/Closed status badges.
+- Browser-verified: registering "Test Widget X" with qty=50 via the multi-item tab (supplier="Test Supplier Co.") created LOT-2026-0012 (qty=50, remaining=50, cost=$10, supplier="Test Supplier Co.", source="register item", status=Open) — visible in the Lots dialog.
+- Browser-verified: Laptop Pro 15" shows 2 lots — LOT-2026-0001 (register_item, supplier="TechCorp Supplies (ACME)", 25→20 remaining via FIFO stock-out) + LOT-2026-0008 (stock_in, supplier="John Smith", 10/10). Confirms every stock-in path creates a lot and FIFO deduction works.
+
+Requirement 4 — Mobile-responsive tables (no horizontal scroll):
+- Converted ALL data tables to a dual-render pattern: stacked cards on mobile (`sm:hidden`) + real table on desktop (`hidden sm:block`).
+- Products List: mobile cards (name+SKU+status, 2-col grid of Category/Price/In Stock/Reorder, Edit+Delete buttons).
+- Stock table: mobile cards (product+status, 2-col grid of Warehouse/Quantity/Value, Lots+Adjust buttons).
+- Lots dialog: mobile cards (lot number+status, 2-col grid of Qty/Remaining/Cost-U/Source, Supplier/Received/notes full-width).
+- New Products recorder: mobile stacked cards per item row (name, SKU, category, unit+qty, price+cost+reorder) — desktop keeps the table.
+- Stock In/Out recorder item-list tables: mobile stacked cards (product+status, 2-col grid of Qty/Unit/Cost-U/Total, delete button).
+- Stock In/Out add-item Pick mode: mobile stacked form (product select, 3-col Qty/Unit/Cost, add button) — desktop keeps the single-row table.
+- Stock In/Out add-item Table mode: mobile stacked cards per product (name+stock, 3-col Qty/Unit/Ret, optional deadline, add button) — desktop keeps the table.
+- Browser-verified (iPhone 14 viewport, 390px): Products page scrollWidth=390==innerWidth (no horizontal scroll); Stock page scrollWidth=390==innerWidth; Stock In page scrollWidth=390==innerWidth; expanded recorder nested items scrollWidth=390==innerWidth. Desktop (1280px): Stock page scrollWidth=1280==innerWidth.
+
+Verification:
+- bun run lint → exit 0
+- npx tsc --noEmit → 0 errors in src/ (only pre-existing errors in examples/ + skills/ folders)
+- Agent Browser end-to-end: login as superadmin → Products page (no single-product buttons, two tabs, supplier header with 5 fields) → registered Test Widget X with supplier "Test Supplier Co." (POST /api/products/register 200) → product appears in List tab → Stock page (subtitle updated, rows have only Lots+Adjust) → Lots dialog shows LOT-2026-0012 with supplier "Test Supplier Co." + source "register item" → mobile viewport confirms no horizontal scroll on Products/Stock/Stock In pages.
+- Dashboard now shows 8 products (was 7) + 12 total lots (was 11) — confirming the new product + lot were created.
+
+Stage Summary:
+- page.tsx: ~1868 lines, 0 single-product creation buttons, registerSupplier state wired through to backend, all tables mobile-responsive (sm:hidden cards + hidden sm:block tables), Stock page has no Stock In button.
+- db.ts: registerItems accepts supplierInfo param, applies personName to every Lot.
+- /api/products/register: accepts + forwards supplierInfo.
+- All 4 user requirements implemented and browser-verified.
