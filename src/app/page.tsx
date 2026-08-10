@@ -68,7 +68,8 @@ interface StockInItem { id: number; recorderId: number; productId: number; wareh
 interface StockInRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockInItem[]; createdAt: string }
 interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string; createdAt?: string; updatedAt?: string }
 interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[]; createdAt: string }
-interface ReturnRecord { id: number; stockOutItemId: number; quantity: number; unit: string; notes: string; returnedAt: string; createdAt: string }
+interface ReturnRecord { id: number; stockOutItemId: number; returnRecorderId: number | null; quantity: number; unit: string; notes: string; returnedAt: string; createdAt: string }
+interface ReturnRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; returns?: (ReturnRecord & { stockOutItem?: { product: Product } })[] }
 interface ReturnableItem extends StockOutItem { returnedQty: number; remainingQty: number; product: Product; recorder: StockOutRecorder; returns: ReturnRecord[]; createdAt: string }
 interface DashboardStats { enterpriseCount: number; branchCount: number; warehouseCount: number; userCount: number; productCount: number; orderCount: number; pendingOrderCount: number; totalStockValue: number; lowStockProducts: { id: number; name: string; sku: string; reorderLevel: number; totalQty: number }[]; totalLots: number; openLots: number; stockInCount: number; stockOutCount: number }
 interface AnalyticsData { stockByWarehouse: { name: string; value: number }[]; stockByCategory: { name: string; value: number }[]; topProducts: { name: string; quantity: number; value: number }[]; recentActivity: { id: number; action: string; entity: string; entityId: number | null; details: string; createdAt: string; userName: string | null }[] }
@@ -291,12 +292,20 @@ export default function IMSApp() {
   // Source-record dialog (shows the StockOutRecorder that this item belongs to + return history)
   const [returnSourceDlg, setReturnSourceDlg] = useState<{ open: boolean; loading: boolean; item: ReturnableItem | null }>({ open: false, loading: false, item: null })
   // Group return dialog (mirrors Stock-In recorder creation: person header + warehouse + items)
+  // mode='prefilled' → opened from a person button (items pre-filled from that person)
+  // mode='new'       → opened from the "New Group Return" button (empty person + item picker across ALL returnable items)
   const [groupReturnDlg, setGroupReturnDlg] = useState<{
-    open: boolean; submitting: boolean; personKey: string;
+    open: boolean; submitting: boolean; mode: 'prefilled' | 'new'; personKey: string;
     personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string;
     warehouseId: number | null;
-    items: { item: ReturnableItem; qty: number; selected: boolean }[]
-  }>({ open: false, submitting: false, personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [] })
+    items: { item: ReturnableItem; qty: number; selected: boolean }[];
+    availableItems: ReturnableItem[]; itemSearch: string; loadingAvailable: boolean;
+  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false })
+  // Return Recorder records (created by group returns — mirrors Stock-In recorders list)
+  const [groupReturnRecords, setGroupReturnRecords] = useState<ReturnRecorder[]>([])
+  const [groupReturnRecordsLoading, setGroupReturnRecordsLoading] = useState(false)
+  const [expandedReturnRec, setExpandedReturnRec] = useState<number | null>(null)
+  const [returnRecordsOpen, setReturnRecordsOpen] = useState(false)
 
   const [dlgOpen, setDlgOpen] = useState(false)
   const [dlgType, setDlgType] = useState('')
@@ -527,8 +536,22 @@ export default function IMSApp() {
     setReturnsLoading(false)
   }, [auth])
 
+  // ─── Returns: load group-return recorder records (mirrors Stock-In recorders list) ────
+  const loadGroupReturnRecords = useCallback(async () => {
+    setGroupReturnRecordsLoading(true)
+    try {
+      const res = await fetch(`${BASE}/api/returns?recorders=1`, { headers: { ...auth.getAuthHeaders() } })
+      const data = await res.json()
+      setGroupReturnRecords(Array.isArray(data) ? data : [])
+    } catch (e: any) {
+      console.error('loadGroupReturnRecords error:', e)
+      setGroupReturnRecords([])
+    }
+    setGroupReturnRecordsLoading(false)
+  }, [auth])
+
   // Fetch returns whenever the Returns page is opened or the tab changes
-  useEffect(() => { if (auth.isLoggedIn && page === 'returns') { setReturnsPage(1); loadReturns(returnsTab) } }, [auth.isLoggedIn, page, returnsTab, loadReturns])
+  useEffect(() => { if (auth.isLoggedIn && page === 'returns') { setReturnsPage(1); loadReturns(returnsTab); loadGroupReturnRecords() } }, [auth.isLoggedIn, page, returnsTab, loadReturns, loadGroupReturnRecords])
 
   // ─── Returns: open single-item return dialog (qty defaults to full remaining) ────
   const openReturnDlg = (item: ReturnableItem) => {
@@ -565,14 +588,14 @@ export default function IMSApp() {
       setReturnSourceDlg({ open: true, loading: false, item })
     }
   }
-  // ─── Returns: open group-return dialog for a given person key ────
+  // ─── Returns: open group-return dialog for a given person key (prefilled mode) ────
   // Mirrors Stock-In recorder creation: pre-fills the person header + warehouse from the
   // first item's existing recorder so the user can review/edit before submitting the group return.
   const openGroupReturnDlg = (personKey: string, items: ReturnableItem[]) => {
     const first = items[0]
     const rec = first?.recorder
     setGroupReturnDlg({
-      open: true, submitting: false, personKey,
+      open: true, submitting: false, mode: 'prefilled', personKey,
       personName: rec?.personName || personKey,
       personPhone: rec?.personPhone || '',
       personEmail: rec?.personEmail || '',
@@ -580,27 +603,63 @@ export default function IMSApp() {
       notes: '',
       warehouseId: first?.warehouseId ?? null,
       items: items.map(it => ({ item: it, qty: it.remainingQty, selected: true })),
+      availableItems: [], itemSearch: '', loadingAvailable: false,
     })
   }
-  // ─── Returns: submit group return ────
-  // Sends the group notes (from the recorder-style header) as the per-item notes so each
-  // Return record in this group carries the same context.
+  // ─── Returns: open a NEW group-return record from scratch (new mode) ────
+  // Just like Stock-In "New Receipt": empty person header + an item picker that lists ALL
+  // returnable stock-out items (both tabs) so the user can build a brand-new group return
+  // combining items from different suppliers/persons/recorders.
+  const openNewGroupReturnDlg = async () => {
+    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true })
+    try {
+      const h = { ...auth.getAuthHeaders() }
+      const [flagged, notFlagged] = await Promise.all([
+        fetch(`${BASE}/api/returns?tab=flagged`, { headers: h }).then(r => r.json()).catch(() => []),
+        fetch(`${BASE}/api/returns?tab=not_flagged`, { headers: h }).then(r => r.json()).catch(() => []),
+      ])
+      const all = [...(Array.isArray(flagged) ? flagged : []), ...(Array.isArray(notFlagged) ? notFlagged : [])]
+      setGroupReturnDlg(s => ({ ...s, availableItems: all, loadingAvailable: false }))
+    } catch (e: any) {
+      console.error('openNewGroupReturnDlg error:', e)
+      setGroupReturnDlg(s => ({ ...s, availableItems: returnsData, loadingAvailable: false }))
+    }
+  }
+  // Add an available item to the new group return (defaults qty = full remaining)
+  const addReturnItemToGroup = (it: ReturnableItem) => {
+    setGroupReturnDlg(s => s.items.some(x => x.item.id === it.id) ? s : ({ ...s, items: [...s.items, { item: it, qty: it.remainingQty, selected: true }] }))
+  }
+  const removeReturnItemFromGroup = (id: number) => {
+    setGroupReturnDlg(s => ({ ...s, items: s.items.filter(x => x.item.id !== id) }))
+  }
+  // ─── Returns: submit group return (creates a NEW ReturnRecorder record) ────
+  // Sends the person header + items to /api/returns/group which creates a ReturnRecorder
+  // (RET-YYYY-NNNN) record — just like Stock-In creates a StockInRecorder — then processes
+  // each item return linked to it.
   const submitGroupReturn = async () => {
     const selected = groupReturnDlg.items.filter(i => i.selected && i.qty > 0)
     if (selected.length === 0) { toast({ title: 'Select at least one item with qty > 0', variant: 'destructive' }); return }
+    if (!groupReturnDlg.personName.trim()) { toast({ title: 'Enter the person/supplier name for this return record', variant: 'destructive' }); return }
     setGroupReturnDlg(s => ({ ...s, submitting: true }))
     try {
-      const groupNotes = groupReturnDlg.notes.trim()
       const res = await fetch(`${BASE}/api/returns/group`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() },
-        body: JSON.stringify({ items: selected.map(i => ({ stockOutItemId: i.item.id, quantity: i.qty, notes: groupNotes || undefined })) })
+        body: JSON.stringify({
+          personName: groupReturnDlg.personName.trim(),
+          personPhone: groupReturnDlg.personPhone,
+          personEmail: groupReturnDlg.personEmail,
+          personAddress: groupReturnDlg.personAddress,
+          notes: groupReturnDlg.notes.trim(),
+          items: selected.map(i => ({ stockOutItemId: i.item.id, quantity: i.qty })),
+        })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'Group return failed')
-      toast({ title: `Returned ${data.processed || 0} item(s)${data.lastError ? `. Stopped: ${data.lastError}` : ''}` })
+      toast({ title: `Created return record ${data.recorder?.recorderCode || ''} — ${data.processed || 0} item(s) returned${data.lastError ? `. Stopped: ${data.lastError}` : ''}` })
       setGroupReturnDlg(s => ({ ...s, open: false, submitting: false }))
       await loadReturns(returnsTab)
+      await loadGroupReturnRecords()
       await loadData(false)
     } catch (e: any) {
       toast({ title: e.message, variant: 'destructive' })
@@ -1648,6 +1707,7 @@ export default function IMSApp() {
           <div><h1 className="text-lg font-bold flex items-center gap-1.5"><RotateCcw className="w-4 h-4 text-violet-500" />Returns</h1>
             <p className="text-xs text-muted-foreground mt-0.5">Process returns for stock-outed items. Each return restocks inventory and is tracked against the original stock-out record.</p>
           </div>
+          <Button size="sm" onClick={openNewGroupReturnDlg} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Group Return</Button>
         </div>
 
         <Tabs value={returnsTab} onValueChange={v => setReturnsTab(v as 'flagged' | 'not_flagged')}>
@@ -1807,6 +1867,77 @@ export default function IMSApp() {
             })()}
           </TabsContent>
         </Tabs>
+
+        {/* ── Return Records (group returns — mirrors Stock-In recorders list) ── */}
+        <Collapsible open={returnRecordsOpen} onOpenChange={setReturnRecordsOpen}>
+          <div className="rounded-md border border-violet-200 dark:border-violet-500/20 bg-violet-50/40 dark:bg-violet-500/5">
+            <CollapsibleTrigger className="flex items-center justify-between w-full p-2.5 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition">
+              <div className="flex items-center gap-1.5">
+                <ChevronRight className={`w-3.5 h-3.5 text-violet-500 transition-transform ${returnRecordsOpen ? 'rotate-90' : ''}`} />
+                <Layers className="w-3.5 h-3.5 text-violet-500" />
+                <span className="text-xs font-semibold">Return Records</span>
+                <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px] h-4">{groupReturnRecords.length}</Badge>
+                <span className="text-[10px] text-muted-foreground hidden sm:inline">· group-return records created via "New Group Return" (each restocks inventory & creates a Lot)</span>
+              </div>
+              {groupReturnRecordsLoading && <Loader2 className="w-3 h-3 animate-spin text-violet-500" />}
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="px-2.5 pb-2.5 space-y-1.5">
+                {groupReturnRecords.length === 0 && !groupReturnRecordsLoading ? (
+                  <div className="text-center text-xs text-muted-foreground py-4">No group-return records yet. Click <span className="font-semibold text-violet-600">New Group Return</span> to create one.</div>
+                ) : (
+                  groupReturnRecords.map(r => {
+                    const isExp = expandedReturnRec === r.id
+                    return (<Card key={r.id} className="shadow-sm border-violet-100 dark:border-violet-500/20"><CardContent className="p-2.5">
+                      <div className="flex items-center justify-between cursor-pointer" onClick={() => setExpandedReturnRec(isExp ? null : r.id)}>
+                        <div className="flex items-center gap-1.5">
+                          <ChevronRight className={`w-3.5 h-3.5 text-violet-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />
+                          <span className="text-xs font-mono font-semibold">{r.recorderCode}</span>
+                          <Badge className={`${r.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' : r.status === 'partial' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'} border-0 text-[9px] h-4`}>{r.status}</Badge>
+                          {r.personName && <span className="text-xs font-medium">{r.personName}</span>}
+                          <span className="text-[10px] text-muted-foreground">{r.itemCount} item(s) · {r.totalQty} qty</span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+                      </div>
+                      {isExp && (<div className="mt-2 space-y-2 border-t pt-2">
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                          {r.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5" />{r.personPhone}</span>}
+                          {r.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5" />{r.personEmail}</span>}
+                          {r.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" />{r.personAddress}</span>}
+                          {r.notes && <span className="flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{r.notes}</span>}
+                        </div>
+                        {r.returns && r.returns.length > 0 ? (
+                          <div className="rounded-md border overflow-hidden">
+                            <Table>
+                              <TableHeader><TableRow>
+                                <TableHead className="h-6 text-[10px]">Product</TableHead>
+                                <TableHead className="h-6 text-[10px] text-right w-16">Qty</TableHead>
+                                <TableHead className="h-6 text-[10px] w-14">Unit</TableHead>
+                                <TableHead className="h-6 text-[10px]">From Item</TableHead>
+                                <TableHead className="h-6 text-[10px] w-28">Returned At</TableHead>
+                              </TableRow></TableHeader>
+                              <TableBody>
+                                {r.returns.map(rt => (
+                                  <TableRow key={rt.id}>
+                                    <TableCell className="py-1 text-[11px] font-medium">{rt.stockOutItem?.product?.name || `#${rt.stockOutItemId}`}</TableCell>
+                                    <TableCell className="py-1 text-[11px] text-right font-mono text-emerald-600">+{rt.quantity}</TableCell>
+                                    <TableCell className="py-1 text-[11px] text-muted-foreground">{rt.unit}</TableCell>
+                                    <TableCell className="py-1 text-[11px] font-mono text-muted-foreground">#{rt.stockOutItemId}</TableCell>
+                                    <TableCell className="py-1 text-[10px] text-muted-foreground">{new Date(rt.returnedAt).toLocaleString()}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        ) : <div className="text-xs text-muted-foreground">No items in this record.</div>}
+                      </div>)}
+                    </CardContent></Card>)
+                  })
+                )}
+              </div>
+            </CollapsibleContent>
+          </div>
+        </Collapsible>
       </div>
     )
 
@@ -2430,62 +2561,102 @@ export default function IMSApp() {
         {/* ─── RETURNS: group-return dialog (mirrors Stock-In recorder creation) ─── */}
         <Dialog open={groupReturnDlg.open} onOpenChange={o => setGroupReturnDlg(s => ({ ...s, open: o }))}>
           <DialogContent className="max-w-2xl w-[95vw]">
-            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Users className="w-4 h-4 text-violet-500" />New Group Return Record</DialogTitle>
-              <p className="text-[11px] text-muted-foreground font-normal">Mirrors the Stock-In recorder flow: review the supplier/person, confirm the restock warehouse, then set the return quantity per item.</p>
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Users className="w-4 h-4 text-violet-500" />{groupReturnDlg.mode === 'new' ? 'New Group Return Record' : `Group Return: ${groupReturnDlg.personKey}`}</DialogTitle>
+              <p className="text-[11px] text-muted-foreground font-normal">{groupReturnDlg.mode === 'new' ? 'Create a brand-new return record (like Stock-In "New Receipt"): enter the returning party, add items from any stock-out, then submit — this creates a RET- record that restocks inventory.' : 'Review the supplier/person, confirm the restock warehouse, then set the return quantity per item. Submitting creates a new RET- return record.'}</p>
             </DialogHeader>
             <div className="space-y-2.5 max-h-[62vh] overflow-y-auto pr-1">
               {/* ── Supplier / Person header (editable, mirrors Stock-In recorder) ── */}
               <div className="bg-violet-50/60 dark:bg-violet-500/5 rounded-lg p-2.5 space-y-2 border border-violet-100 dark:border-violet-500/20">
                 <SectionHeader icon={Truck}>Supplier / Person (returning party)</SectionHeader>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={groupReturnDlg.personName} onChange={e => setGroupReturnDlg(s => ({ ...s, personName: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
+                  <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={groupReturnDlg.personName} onChange={e => setGroupReturnDlg(s => ({ ...s, personName: e.target.value }))} placeholder="Enter name..." className="h-8 text-sm rounded-md" /></div>
                   <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={groupReturnDlg.personPhone} onChange={e => setGroupReturnDlg(s => ({ ...s, personPhone: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
                   <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={groupReturnDlg.personEmail} onChange={e => setGroupReturnDlg(s => ({ ...s, personEmail: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
                   <div className="space-y-1"><IconLabel icon={MapPin}>Address</IconLabel><Input value={groupReturnDlg.personAddress} onChange={e => setGroupReturnDlg(s => ({ ...s, personAddress: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
                 </div>
               </div>
 
-              {/* ── Restock warehouse (read-only display — items return to their original warehouse) ── */}
-              <div className="bg-violet-50/60 dark:bg-violet-500/5 rounded-lg p-2.5 space-y-1.5 border border-violet-100 dark:border-violet-500/20">
-                <SectionHeader icon={WHIcon}>Restock Warehouse</SectionHeader>
-                <div className="flex items-center gap-2 text-xs">
-                  <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0">{warehouses.find(w => w.id === groupReturnDlg.warehouseId)?.code || '—'}</Badge>
-                  <span className="font-medium">{warehouses.find(w => w.id === groupReturnDlg.warehouseId)?.name || 'No warehouse'}</span>
-                  <span className="text-muted-foreground">· items return to their original warehouse</span>
+              {/* ── Restock warehouse ── */}
+              {groupReturnDlg.mode === 'prefilled' ? (
+                <div className="bg-violet-50/60 dark:bg-violet-500/5 rounded-lg p-2.5 space-y-1.5 border border-violet-100 dark:border-violet-500/20">
+                  <SectionHeader icon={WHIcon}>Restock Warehouse</SectionHeader>
+                  <div className="flex items-center gap-2 text-xs">
+                    <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0">{warehouses.find(w => w.id === groupReturnDlg.warehouseId)?.code || '—'}</Badge>
+                    <span className="font-medium">{warehouses.find(w => w.id === groupReturnDlg.warehouseId)?.name || 'No warehouse'}</span>
+                    <span className="text-muted-foreground">· items return to their original warehouse</span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="bg-violet-50/60 dark:bg-violet-500/5 rounded-lg p-2.5 space-y-1 border border-violet-100 dark:border-violet-500/20">
+                  <SectionHeader icon={WHIcon}>Restock</SectionHeader>
+                  <p className="text-[11px] text-muted-foreground">Each item returns to its original warehouse (shown per item below).</p>
+                </div>
+              )}
 
-              {/* ── Items table (mirrors Stock-In add-items: per-row qty input + Full button) ── */}
+              {/* ── Item picker (NEW mode only) — search & add items from ALL returnable stock-outs ── */}
+              {groupReturnDlg.mode === 'new' && (
+                <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Search className="w-3 h-3" />Add Items to Return</span>
+                    {groupReturnDlg.loadingAvailable && <Loader2 className="w-3 h-3 animate-spin text-violet-500" />}
+                  </div>
+                  <Input value={groupReturnDlg.itemSearch} onChange={e => setGroupReturnDlg(s => ({ ...s, itemSearch: e.target.value }))} placeholder="Search by product, SKU, person, or recorder code..." className="h-8 text-xs" />
+                  <div className="max-h-40 overflow-y-auto rounded-md border bg-background">
+                    {(() => {
+                      const q = groupReturnDlg.itemSearch.toLowerCase().trim()
+                      const addedIds = new Set(groupReturnDlg.items.map(x => x.item.id))
+                      const avail = groupReturnDlg.availableItems
+                        .filter(it => !addedIds.has(it.id))
+                        .filter(it => !q || (it.product?.name || '').toLowerCase().includes(q) || (it.product?.sku || '').toLowerCase().includes(q) || (it.recorder?.personName || '').toLowerCase().includes(q) || (it.recorder?.recorderCode || '').toLowerCase().includes(q))
+                      if (groupReturnDlg.loadingAvailable) return <div className="text-center text-[11px] text-muted-foreground py-3">Loading returnable items...</div>
+                      if (avail.length === 0) return <div className="text-center text-[11px] text-muted-foreground py-3">{addedIds.size === groupReturnDlg.availableItems.length ? 'All returnable items added.' : 'No items match your search.'}</div>
+                      return <div className="divide-y">
+                        {avail.slice(0, 30).map(it => { const wh = warehouses.find(w => w.id === it.warehouseId)
+                          return (<div key={it.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-violet-50/50 dark:hover:bg-violet-500/5">
+                            <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span></div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
+                            <Button size="sm" variant="outline" onClick={() => addReturnItemToGroup(it)} className="h-6 text-[10px] px-2 shrink-0 border-violet-300 text-violet-700 dark:border-violet-500/40 dark:text-violet-400"><Plus className="w-2.5 h-2.5 mr-0.5" />Add</Button>
+                          </div>)
+                        })}
+                        {avail.length > 30 && <div className="text-center text-[10px] text-muted-foreground py-1">{avail.length - 30} more — refine your search to see them.</div>}
+                      </div>
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Items table (per-row qty input + Full; Remove in NEW mode, Switch in prefilled) ── */}
               <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Items to Return ({groupReturnDlg.items.length})</span>
-                  <div className="flex items-center gap-1">
+                  {groupReturnDlg.mode === 'prefilled' && <div className="flex items-center gap-1">
                     <Button size="sm" variant="ghost" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map(x => ({ ...x, selected: true })) }))} className="h-5 text-[10px] text-muted-foreground px-1.5">Select all</Button>
                     <Button size="sm" variant="ghost" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map(x => ({ ...x, selected: false })) }))} className="h-5 text-[10px] text-muted-foreground px-1.5">None</Button>
-                  </div>
+                  </div>}
                 </div>
-                {groupReturnDlg.items.length === 0 ? <div className="text-center text-sm text-muted-foreground py-4">No items in this group.</div> : (
+                {groupReturnDlg.items.length === 0 ? <div className="text-center text-sm text-muted-foreground py-4">{groupReturnDlg.mode === 'new' ? 'No items added yet — search and add items above.' : 'No items in this group.'}</div> : (
                   <div className="space-y-1.5">
                     {groupReturnDlg.items.map((entry, idx) => {
                       const it = entry.item; const wh = warehouses.find(w => w.id === it.warehouseId)
                       return (<div key={it.id} className={`rounded-md border p-2 ${entry.selected ? 'bg-violet-50/40 dark:bg-violet-500/5 border-violet-200 dark:border-violet-500/30' : 'bg-muted/20'}`}>
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <div className="flex items-center gap-1.5 min-w-0">
-                            <Switch checked={entry.selected} onCheckedChange={v => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, selected: v } : x) }))} className="scale-75" />
-                            <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `#${it.warehouseId}`}</div></div>
+                            {groupReturnDlg.mode === 'prefilled' ? (
+                              <Switch checked={entry.selected} onCheckedChange={v => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, selected: v } : x) }))} className="scale-75" />
+                            ) : (
+                              <Button size="sm" variant="ghost" onClick={() => removeReturnItemFromGroup(it.id)} className="h-5 w-5 p-0 text-red-500 shrink-0" title="Remove"><X className="w-3 h-3" /></Button>
+                            )}
+                            <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `#${it.warehouseId}`}{groupReturnDlg.mode === 'new' && <span> · {it.recorder?.personName || '—'}</span>}</div></div>
                           </div>
                           <div className="text-[10px] text-muted-foreground shrink-0 text-right">
                             <div>Out: <span className="font-mono font-medium text-foreground">{it.quantity}</span></div>
                             <div>Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div>
                           </div>
                         </div>
-                        {entry.selected && (
-                          <div className="flex items-center gap-1.5 pl-6">
-                            <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Qty to return:</Label>
-                            <Input type="number" min={1} max={it.remainingQty} value={entry.qty} onChange={e => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: parseInt(e.target.value) || 0 } : x) }))} className="h-6 text-[11px] w-20" />
-                            <Button size="sm" variant="outline" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: it.remainingQty } : x) }))} className="h-6 text-[10px] px-1.5">Full</Button>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-1.5 pl-6">
+                          <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Qty to return:</Label>
+                          <Input type="number" min={1} max={it.remainingQty} value={entry.qty} onChange={e => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: parseInt(e.target.value) || 0 } : x) }))} className="h-6 text-[11px] w-20" />
+                          <Button size="sm" variant="outline" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: it.remainingQty } : x) }))} className="h-6 text-[10px] px-1.5">Full</Button>
+                        </div>
                       </div>)
                     })}
                   </div>
@@ -2500,13 +2671,13 @@ export default function IMSApp() {
 
               {/* ── Summary bar ── */}
               <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2 text-[11px] text-violet-700 dark:text-violet-400">
-                {groupReturnDlg.items.filter(i => i.selected && i.qty > 0).length} item(s) selected · Total qty to return: {groupReturnDlg.items.filter(i => i.selected && i.qty > 0).reduce((s, i) => s + i.qty, 0)}
+                {groupReturnDlg.items.filter(i => (groupReturnDlg.mode === 'new' || i.selected) && i.qty > 0).length} item(s) selected · Total qty to return: {groupReturnDlg.items.filter(i => (groupReturnDlg.mode === 'new' || i.selected) && i.qty > 0).reduce((s, i) => s + i.qty, 0)}
               </div>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setGroupReturnDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={groupReturnDlg.submitting}>{t(locale, 'cancel')}</Button>
-              <Button onClick={submitGroupReturn} disabled={groupReturnDlg.submitting || groupReturnDlg.items.filter(i => i.selected && i.qty > 0).length === 0} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">
-                {groupReturnDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Create Group Return
+              <Button onClick={submitGroupReturn} disabled={groupReturnDlg.submitting || groupReturnDlg.items.filter(i => (groupReturnDlg.mode === 'new' || i.selected) && i.qty > 0).length === 0 || (groupReturnDlg.mode === 'new' && !groupReturnDlg.personName.trim())} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">
+                {groupReturnDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Create Return Record
               </Button>
             </DialogFooter>
           </DialogContent>

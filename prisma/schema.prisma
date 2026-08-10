@@ -36,6 +36,7 @@ model Enterprise {
   features        Feature[]
   stockInRecorders StockInRecorder[]
   stockOutRecorders StockOutRecorder[]
+  returnRecorders ReturnRecorder[]
   auditLogs       AuditLog[]
   lots            Lot[]
 }
@@ -363,20 +364,45 @@ model StockOutItem {
   @@index([isReturnable])
 }
 
-// ─── 15b. Return (tracks each return transaction against a StockOutItem) ──
-model Return {
-  id             Int      @id @default(autoincrement())
-  stockOutItemId Int
-  quantity       Int      @default(0)
-  unit           String   @default("piece")
-  notes          String   @default("")
-  returnedAt     DateTime @default(now())
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+// ─── 15b. ReturnRecorder (a first-class record for a group return — mirrors StockInRecorder) ──
+model ReturnRecorder {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  recorderCode  String   @unique  // RET-YYYY-NNNN
+  personName    String   @default("")
+  personPhone   String   @default("")
+  personEmail   String   @default("")
+  personAddress String   @default("")
+  notes         String   @default("")
+  status        String   @default("completed")  // group returns are processed immediately
+  itemCount     Int      @default(0)
+  totalQty      Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  stockOutItem   StockOutItem @relation(fields: [stockOutItemId], references: [id], onDelete: Cascade)
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  returns       Return[]
+
+  @@index([enterpriseId])
+}
+
+// ─── 15c. Return (tracks each return transaction against a StockOutItem) ──
+model Return {
+  id                Int      @id @default(autoincrement())
+  stockOutItemId    Int
+  returnRecorderId  Int?
+  quantity          Int      @default(0)
+  unit              String   @default("piece")
+  notes             String   @default("")
+  returnedAt        DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  stockOutItem   StockOutItem    @relation(fields: [stockOutItemId], references: [id], onDelete: Cascade)
+  returnRecorder ReturnRecorder? @relation(fields: [returnRecorderId], references: [id], onDelete: SetNull)
 
   @@index([stockOutItemId])
+  @@index([returnRecorderId])
 }
 
 // ─── 16. AuditLog ──────────────────────────────────────────

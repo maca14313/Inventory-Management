@@ -14,7 +14,7 @@
 
 import { PrismaClient } from '@prisma/client'
 
-export const PRISMA_CLIENT_VERSION = 'ims-v1-20250810'
+export const PRISMA_CLIENT_VERSION = 'ims-v1-20250810-returnrec'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined

@@ -140,8 +140,16 @@ export interface StockOutItem {
 }
 
 export interface ReturnRecord {
-  id: number; stockOutItemId: number; quantity: number; unit: string; notes: string
+  id: number; stockOutItemId: number; returnRecorderId: number | null; quantity: number; unit: string; notes: string
   returnedAt: string; createdAt: string; updatedAt: string
+}
+
+export interface ReturnRecorder {
+  id: number; enterpriseId: number; recorderCode: string
+  personName: string; personPhone: string; personEmail: string; personAddress: string
+  notes: string; status: string; itemCount: number; totalQty: number
+  createdAt: string; updatedAt: string
+  returns?: ReturnRecord[]
 }
 
 export interface ReturnableItem extends StockOutItem {
@@ -2142,9 +2150,25 @@ export const db = {
           updatedAt: it.updatedAt.toISOString(),
           returnedQty,
           remainingQty,
-          product: ser(it.product) as Product,
-          recorder: ser(it.recorder) as StockOutRecorder,
-          returns: ser(it.returns) as ReturnRecord[],
+          product: {
+            id: it.product.id, enterpriseId: it.product.enterpriseId, name: it.product.name,
+            sku: it.product.sku, description: it.product.description, categoryId: it.product.categoryId,
+            price: it.product.price, cost: it.product.cost, unit: it.product.unit,
+            reorderLevel: it.product.reorderLevel, isActive: it.product.isActive,
+            createdAt: it.product.createdAt.toISOString(), updatedAt: it.product.updatedAt.toISOString(),
+          } as Product,
+          recorder: {
+            id: it.recorder.id, enterpriseId: it.recorder.enterpriseId, warehouseId: it.recorder.warehouseId,
+            recorderCode: it.recorder.recorderCode, personName: it.recorder.personName,
+            personPhone: it.recorder.personPhone, personEmail: it.recorder.personEmail,
+            personAddress: it.recorder.personAddress, notes: it.recorder.notes, status: it.recorder.status,
+            createdAt: it.recorder.createdAt.toISOString(), updatedAt: it.recorder.updatedAt.toISOString(),
+          } as StockOutRecorder,
+          returns: it.returns.map(r => ({
+            id: r.id, stockOutItemId: r.stockOutItemId, returnRecorderId: r.returnRecorderId,
+            quantity: r.quantity, unit: r.unit, notes: r.notes,
+            returnedAt: r.returnedAt.toISOString(), createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+          })) as ReturnRecord[],
         })
       }
       return out
@@ -2165,9 +2189,32 @@ export const db = {
         returnDeadline: it.returnDeadline ? it.returnDeadline.toISOString() : null,
         notes: it.notes, createdAt: it.createdAt.toISOString(), updatedAt: it.updatedAt.toISOString(),
         returnedQty, remainingQty: it.quantity - returnedQty,
-        product: ser(it.product) as Product,
-        recorder: ser(it.recorder) as StockOutRecorder,
-        returns: ser(it.returns) as ReturnRecord[],
+        product: {
+          id: it.product.id, enterpriseId: it.product.enterpriseId, name: it.product.name,
+          sku: it.product.sku, description: it.product.description, categoryId: it.product.categoryId,
+          price: it.product.price, cost: it.product.cost, unit: it.product.unit,
+          reorderLevel: it.product.reorderLevel, isActive: it.product.isActive,
+          createdAt: it.product.createdAt.toISOString(), updatedAt: it.product.updatedAt.toISOString(),
+        } as Product,
+        recorder: {
+          id: it.recorder.id, enterpriseId: it.recorder.enterpriseId, warehouseId: it.recorder.warehouseId,
+          recorderCode: it.recorder.recorderCode, personName: it.recorder.personName,
+          personPhone: it.recorder.personPhone, personEmail: it.recorder.personEmail,
+          personAddress: it.recorder.personAddress, notes: it.recorder.notes, status: it.recorder.status,
+          createdAt: it.recorder.createdAt.toISOString(), updatedAt: it.recorder.updatedAt.toISOString(),
+          items: (it.recorder as any).items ? (it.recorder as any).items.map((si: any) => ({
+            id: si.id, recorderId: si.recorderId, productId: si.productId, warehouseId: si.warehouseId,
+            quantity: si.quantity, unit: si.unit, isReturnable: si.isReturnable,
+            returnDeadline: si.returnDeadline ? si.returnDeadline.toISOString() : null, notes: si.notes,
+            createdAt: si.createdAt.toISOString(), updatedAt: si.updatedAt.toISOString(),
+            product: si.product ? { id: si.product.id, name: si.product.name, sku: si.product.sku, unit: si.product.unit } as any : undefined,
+          })) : [],
+        } as StockOutRecorder,
+        returns: it.returns.map(r => ({
+          id: r.id, stockOutItemId: r.stockOutItemId, returnRecorderId: r.returnRecorderId,
+          quantity: r.quantity, unit: r.unit, notes: r.notes,
+          returnedAt: r.returnedAt.toISOString(), createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+        })) as ReturnRecord[],
       }
     },
 
@@ -2178,7 +2225,7 @@ export const db = {
      */
     processReturn: async (
       ctx: AuthContext,
-      d: { stockOutItemId: number; quantity: number; notes?: string },
+      d: { stockOutItemId: number; quantity: number; notes?: string; returnRecorderId?: number },
     ): Promise<ReturnRecord> => {
       if (!d.stockOutItemId) throw new Error('Validation: stockOutItemId is required')
       if (!d.quantity || d.quantity <= 0) throw new Error('Validation: quantity must be positive')
@@ -2193,10 +2240,11 @@ export const db = {
       if (d.quantity > remaining) throw new Error(`Validation: only ${remaining} remaining to return`)
 
       const result = await prisma.$transaction(async (tx) => {
-        // Create the Return record
+        // Create the Return record (optionally linked to a ReturnRecorder for group returns)
         const ret = await tx.return.create({
           data: {
             stockOutItemId: d.stockOutItemId,
+            returnRecorderId: d.returnRecorderId ?? null,
             quantity: d.quantity,
             unit: it.unit,
             notes: d.notes || '',
@@ -2225,9 +2273,10 @@ export const db = {
           notes: `Return of stock-out item #${it.id} from recorder ${it.recorder.recorderCode}${d.notes ? ` — ${d.notes}` : ''}`,
         })
         // Update StockOutRecorder status: 'returned' if all items fully returned, else 'partial_return'
+        // Use select (not include) to avoid materializing full Return relation objects
         const allItems = await tx.stockOutItem.findMany({
           where: { recorderId: it.recorderId },
-          include: { returns: true },
+          select: { id: true, quantity: true, returns: { select: { quantity: true } } },
         })
         const allReturned = allItems.every(i => {
           const rq = i.returns.reduce((s, r) => s + r.quantity, 0)
@@ -2251,31 +2300,132 @@ export const db = {
         })
         return ret
       })
-      return ser(result) as ReturnRecord
+      return {
+        id: result.id, stockOutItemId: result.stockOutItemId, returnRecorderId: result.returnRecorderId,
+        quantity: result.quantity, unit: result.unit, notes: result.notes,
+        returnedAt: result.returnedAt.toISOString(), createdAt: result.createdAt.toISOString(), updatedAt: result.updatedAt.toISOString(),
+      } as ReturnRecord
     },
 
     /**
-     * Process a group return: multiple stock-out items in one call (e.g. all items from one supplier/person).
-     * Each entry: { stockOutItemId, quantity, notes? }.
-     * Stops on first error (e.g. insufficient remaining).
+     * Process a group return: creates a NEW ReturnRecorder record (with person info — mirrors
+     * the StockInRecorder flow), then processes each stock-out item return linked to it.
+     * Stops on first error (e.g. insufficient remaining). The ReturnRecorder persists even if
+     * some items fail, so the user has a first-class record of the group return attempt.
      */
     processGroupReturn: async (
       ctx: AuthContext,
-      items: { stockOutItemId: number; quantity: number; notes?: string }[],
-    ): Promise<{ processed: number; returns: ReturnRecord[]; lastError: string | null }> => {
-      if (!Array.isArray(items) || items.length === 0) throw new Error('Validation: no items to return')
+      opts: {
+        personName: string
+        personPhone?: string
+        personEmail?: string
+        personAddress?: string
+        notes?: string
+        items: { stockOutItemId: number; quantity: number; notes?: string }[]
+      },
+    ): Promise<{ recorder: ReturnRecorder; processed: number; lastError: string | null }> => {
+      if (!Array.isArray(opts.items) || opts.items.length === 0) throw new Error('Validation: no items to return')
+      // Derive enterpriseId from the first item's recorder (works for super_admin too)
+      const firstItem = await prisma.stockOutItem.findUnique({
+        where: { id: opts.items[0].stockOutItemId },
+        include: { recorder: true },
+      })
+      if (!firstItem) throw new Error('StockOutItem not found')
+      const enterpriseId = firstItem.recorder.enterpriseId
+      // 1. Create the ReturnRecorder record (RET-YYYY-NNNN)
+      const recorder = await prisma.$transaction(async (tx) => {
+        const year = new Date().getFullYear()
+        const fullPrefix = `RET-${year}-`
+        const count = await tx.returnRecorder.count({ where: { recorderCode: { startsWith: fullPrefix } } })
+        const recorderCode = `${fullPrefix}${String(count + 1).padStart(4, '0')}`
+        return tx.returnRecorder.create({
+          data: {
+            enterpriseId,
+            recorderCode,
+            personName: opts.personName || '',
+            personPhone: opts.personPhone || '',
+            personEmail: opts.personEmail || '',
+            personAddress: opts.personAddress || '',
+            notes: opts.notes || '',
+            status: 'completed',
+            itemCount: 0,
+            totalQty: 0,
+          },
+        })
+      })
+      // 2. Process each return, linking to the new ReturnRecorder
       const processed: ReturnRecord[] = []
       let lastError: string | null = null
-      for (const it of items) {
+      for (const it of opts.items) {
         try {
-          const r = await db.returns.processReturn(ctx, it)
+          const r = await db.returns.processReturn(ctx, { ...it, returnRecorderId: recorder.id })
           processed.push(r)
         } catch (e: any) {
           lastError = e.message || String(e)
           break
         }
       }
-      return { processed: processed.length, returns: processed, lastError }
+      // 3. Update the recorder with final counts + status
+      const updated = await prisma.returnRecorder.update({
+        where: { id: recorder.id },
+        data: {
+          itemCount: processed.length,
+          totalQty: processed.reduce((s, r) => s + r.quantity, 0),
+          status: processed.length === opts.items.length ? 'completed' : (processed.length > 0 ? 'partial' : 'failed'),
+        },
+      })
+      await prisma.auditLog.create({
+        data: {
+          userId: ctx.userId, enterpriseId,
+          action: 'return.group', entity: 'ReturnRecorder', entityId: recorder.id,
+          details: `Created group return ${recorder.recorderCode} for ${opts.personName || '(no person)'}: ${processed.length}/${opts.items.length} item(s) processed, total qty ${processed.reduce((s, r) => s + r.quantity, 0)}${lastError ? `. Stopped: ${lastError}` : ''}`,
+        },
+      })
+      return {
+        recorder: {
+          id: updated.id, enterpriseId: updated.enterpriseId, recorderCode: updated.recorderCode,
+          personName: updated.personName, personPhone: updated.personPhone, personEmail: updated.personEmail,
+          personAddress: updated.personAddress, notes: updated.notes, status: updated.status,
+          itemCount: updated.itemCount, totalQty: updated.totalQty,
+          createdAt: updated.createdAt.toISOString(), updatedAt: updated.updatedAt.toISOString(),
+        } as ReturnRecorder,
+        processed: processed.length,
+        lastError,
+      }
+    },
+
+    /** List all ReturnRecorder records for the user's accessible enterprise (newest first). */
+    findRecorders: async (ctx: AuthContext): Promise<ReturnRecorder[]> => {
+      const where: Prisma.ReturnRecorderWhereInput = {}
+      if (ctx.role !== 'super_admin' && ctx.enterpriseId) where.enterpriseId = ctx.enterpriseId
+      const rows = await prisma.returnRecorder.findMany({
+        where,
+        include: { returns: { include: { stockOutItem: { include: { product: true } } } } },
+        orderBy: { id: 'desc' },
+      })
+      return rows.map(r => ({
+        id: r.id, enterpriseId: r.enterpriseId, recorderCode: r.recorderCode,
+        personName: r.personName, personPhone: r.personPhone, personEmail: r.personEmail,
+        personAddress: r.personAddress, notes: r.notes, status: r.status,
+        itemCount: r.itemCount, totalQty: r.totalQty,
+        createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+        returns: r.returns.map(rt => ({
+          id: rt.id, stockOutItemId: rt.stockOutItemId, returnRecorderId: rt.returnRecorderId,
+          quantity: rt.quantity, unit: rt.unit, notes: rt.notes,
+          returnedAt: rt.returnedAt.toISOString(), createdAt: rt.createdAt.toISOString(), updatedAt: rt.updatedAt.toISOString(),
+          stockOutItem: rt.stockOutItem ? {
+            id: rt.stockOutItem.id, recorderId: rt.stockOutItem.recorderId, productId: rt.stockOutItem.productId,
+            warehouseId: rt.stockOutItem.warehouseId, quantity: rt.stockOutItem.quantity, unit: rt.stockOutItem.unit,
+            isReturnable: rt.stockOutItem.isReturnable,
+            returnDeadline: rt.stockOutItem.returnDeadline ? rt.stockOutItem.returnDeadline.toISOString() : null,
+            notes: rt.stockOutItem.notes,
+            createdAt: rt.stockOutItem.createdAt.toISOString(), updatedAt: rt.stockOutItem.updatedAt.toISOString(),
+            product: rt.stockOutItem.product ? {
+              id: rt.stockOutItem.product.id, name: rt.stockOutItem.product.name, sku: rt.stockOutItem.product.sku, unit: rt.stockOutItem.product.unit,
+            } as any : undefined,
+          } as any : undefined,
+        })),
+      })) as ReturnRecorder[]
     },
   },
 }

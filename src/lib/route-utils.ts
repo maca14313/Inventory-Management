@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server'
  */
 export function handleError(e: unknown) {
   const msg = e instanceof Error ? e.message : 'Unknown error'
+  console.error('[handleError]', msg)
   if (msg === 'FORBIDDEN' || msg.startsWith('FORBIDDEN')) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }

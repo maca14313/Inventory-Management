@@ -5,10 +5,13 @@ import { handleError } from '@/lib/route-utils'
 
 /**
  * POST /api/returns/group
- *   Body: { items: [{ stockOutItemId, quantity, notes? }] }
- *   Processes a group return — multiple stock-out items in one call (e.g. all items from one supplier/person).
- *   Stops on first error (e.g. insufficient remaining).
- *   Returns: { processed, lastError }
+ *   Body: {
+ *     personName, personPhone?, personEmail?, personAddress?, notes?,
+ *     items: [{ stockOutItemId, quantity, notes? }]
+ *   }
+ *   Creates a NEW ReturnRecorder record (RET-YYYY-NNNN) with the person info — mirrors
+ *   the StockInRecorder flow — then processes each stock-out item return linked to it.
+ *   Returns: { recorder, processed, lastError }
  */
 export async function POST(req: Request) {
   try {
@@ -22,7 +25,14 @@ export async function POST(req: Request) {
       quantity: parseInt(it.quantity, 10),
       notes: it.notes || undefined,
     }))
-    const data = await db.returns.processGroupReturn(ctx, items)
+    const data = await db.returns.processGroupReturn(ctx, {
+      personName: body.personName || '',
+      personPhone: body.personPhone || '',
+      personEmail: body.personEmail || '',
+      personAddress: body.personAddress || '',
+      notes: body.notes || '',
+      items,
+    })
     return NextResponse.json(data)
   } catch (e) { return handleError(e) }
 }

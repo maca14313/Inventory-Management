@@ -14,6 +14,11 @@ export async function GET(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
     const url = new URL(req.url)
+    // GET /api/returns?recorders=1 → list ReturnRecorder records (group-return records)
+    if (url.searchParams.get('recorders') === '1') {
+      const data = await db.returns.findRecorders(ctx)
+      return NextResponse.json(data)
+    }
     const tabParam = url.searchParams.get('tab') || 'flagged'
     const widParam = url.searchParams.get('wid')
     const tab: 'flagged' | 'not_flagged' = tabParam === 'not_flagged' ? 'not_flagged' : 'flagged'

@@ -422,3 +422,56 @@ Stage Summary:
 - All 4 user requests fulfilled: (1) Group Return mirrors Stock-In recorder creation; (2) better tab labels; (3) collapsible advanced filter on Returns; (4) all filters in the app are now collapsible and advanced
 - Reusable FilterPanel component keeps filter UX consistent across Products/Stock/Stock In/Stock Out/Orders/Returns
 - No backend changes needed (returns group API already accepts items[] with notes; all filtering is client-side on already-loaded data)
+
+---
+Task ID: group-return-new-record
+Agent: main
+Task: Make Group Return create a NEW record (like Stock In "New Receipt") with the ability to start fresh with a new person + pick items from ALL returnable stock-outs (not just existing person buttons)
+
+Work Log:
+- Added `ReturnRecorder` model to prisma/schema.prisma (id, enterpriseId, recorderCode RET-YYYY-NNNN, personName/Phone/Email/Address, notes, status, itemCount, totalQty, timestamps) + `returnRecorderId Int?` FK on Return + `returnRecorders ReturnRecorder[]` relation on Enterprise
+- Ran `bun run db:push` to apply schema (ReturnRecorder table + returnRecorderId column)
+- src/lib/db.ts: 
+  - Added `ReturnRecorder` interface + `returnRecorderId` to `ReturnRecord` interface
+  - Modified `processReturn` to accept optional `returnRecorderId` and set it on Return.create
+  - Rewrote `processGroupReturn` to: (1) create a ReturnRecorder record (RET-YYYY-NNNN), (2) loop processReturn with returnRecorderId, (3) update recorder with itemCount/totalQty/status, (4) audit log. Returns `{ recorder, processed, lastError }`
+  - Added `findRecorders(ctx)` to list all ReturnRecorder records with nested returns+stockOutItem+product
+  - Fixed Prisma serialization crashes in Next.js runtime: replaced `ser()` calls with manual field mapping (explicit field-by-field object construction) in findReturnable, findItemById, processReturn, processGroupReturn, findRecorders — the `ser()` function's `Object.keys()` iteration on Prisma objects caused segfaults in the Turbopack/node runtime
+  - Changed `findMany({ include: { returns: true } })` to `findMany({ select: { returns: { select: { quantity: true } } } })` in processReturn's status check to avoid materializing full Return relation objects
+- src/app/api/returns/route.ts: added `?recorders=1` query branch to list ReturnRecorder records (avoids creating a new route file which crashed Turbopack)
+- src/app/api/returns/group/route.ts: updated to accept `{ personName, personPhone, personEmail, personAddress, notes, items[] }` and pass to processGroupReturn
+- src/app/page.tsx:
+  - Added `ReturnRecorder` interface + `returnRecorderId` to ReturnRecord
+  - Extended groupReturnDlg state with `mode: 'prefilled' | 'new'`, `availableItems`, `itemSearch`, `loadingAvailable`
+  - Added `groupReturnRecords` state + `loadGroupReturnRecords` callback (fetches /api/returns?recorders=1)
+  - Added `openNewGroupReturnDlg()` — fetches ALL returnable items (both tabs), opens fresh dialog with empty person + item picker
+  - Added `addReturnItemToGroup` / `removeReturnItemFromGroup` helpers for the item picker
+  - Updated `submitGroupReturn` to send person info + items to /api/returns/group (creates ReturnRecorder record)
+  - Added "New Group Return" button to Returns page header (violet gradient, mirrors Stock In "New Receipt")
+  - Rewrote Group Return dialog to support two modes:
+    - 'new' mode: empty person header (editable) + item picker (search ALL returnable items, Add buttons) + items list with Remove buttons + notes + summary
+    - 'prefilled' mode: person header pre-filled from existing recorder + items with Switch toggles (existing behavior)
+  - Added collapsible "Return Records" section below the tabs showing created ReturnRecorder records (expandable cards with recorder code, person, status, itemCount, totalQty, returns table) — mirrors Stock In recorders list
+  - Updated useEffect to load group return records when Returns page opens
+- Bumped PRISMA_CLIENT_VERSION stamp to force dev server to pick up regenerated Prisma client
+
+Verification:
+- npx tsc --noEmit → 0 errors in src/ ✓
+- bun run lint → clean ✓
+- bun script tests (with valid userId 78):
+  - findReturnable flagged → 1 item, not_flagged → 2 items ✓
+  - processGroupReturn → created RET-2026-0003 with personName, itemCount=1, totalQty=1, status=completed ✓
+  - findRecorders → lists all ReturnRecorder records with nested returns ✓
+- curl tests (with correct x-user-id: 78, x-user-role: super_admin headers):
+  - GET /api/returns?tab=flagged → 200, returns Laptop Pro 15" item ✓
+  - GET /api/returns?tab=not_flagged → 200, returns Network Switch + Wireless Keyboard items ✓
+  - GET /api/returns?recorders=1 → 200, returns ReturnRecorder records ✓
+  - POST /api/returns/group → 200, created RET-2026-0003 with full recorder data ✓
+- Browser verification partially completed (first session showed Returns page UI with New Group Return button + dialog); full re-verification blocked by sandbox 4GB memory limit (chrome + node dev server cannot coexist stably when multiple API routes need compilation)
+
+Stage Summary:
+- Group Return now creates a NEW ReturnRecorder record (RET-YYYY-NNNN) — exactly like Stock In creates a StockInRecorder. The "New Group Return" button opens a fresh dialog with an empty person header + an item picker that searches ALL returnable stock-outs (both tabs, all persons/recorders), so the user can build a brand-new group return combining items from different sources. The created records appear in a collapsible "Return Records" section.
+- Key fix: replaced `ser()` with manual field mapping in all returns db functions to fix Prisma object serialization segfaults in the Next.js Turbopack/node runtime
+- Schema: +ReturnRecorder model, +returnRecorderId FK on Return, +returnRecorders relation on Enterprise
+- API: /api/returns/group now creates a ReturnRecorder; /api/returns?recorders=1 lists them
+- Frontend: New Group Return button + item picker dialog + Return Records section
