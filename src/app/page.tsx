@@ -24,7 +24,7 @@ import {
   Key, Lock, ToggleLeft, ToggleRight, Menu, X, ChevronDown, ChevronRight,
   ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw, Calendar, Check, Eye, LayoutGrid, List,
   Sun, Moon, Phone, Mail, MapPin, FileText, Hash, ChevronLeft, Sparkles, ChevronRight as ChevronRightIcon, SkipBack, SkipForward, Printer, Filter, CalendarDays,
-  MessageSquare, Send,
+  MessageSquare, Send, Ban,
 } from 'lucide-react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -71,7 +71,85 @@ interface StockOutItem { id: number; recorderId: number; productId: number; ware
 interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[]; createdAt: string }
 interface ReturnRecord { id: number; stockOutItemId: number; returnRecorderId: number | null; quantity: number; unit: string; notes: string; returnedAt: string; createdAt: string }
 interface ReturnRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; returns?: (ReturnRecord & { stockOutItem?: { product: Product } })[] }
-interface ReturnableItem extends StockOutItem { returnedQty: number; remainingQty: number; product: Product; recorder: StockOutRecorder; returns: ReturnRecord[]; createdAt: string }
+interface NonReturnable { id: number; stockOutItemId: number; nonReturnableRecorderId: number | null; quantity: number; unit: string; reason: string; reasonDetail: string; notes: string; decidedAt: string; createdAt: string; stockOutItem?: { id: number; productId: number; warehouseId: number; quantity: number; unit: string; product?: Product } }
+interface NonReturnableRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; nonReturnables?: (NonReturnable & { stockOutItem?: { product: Product } })[] }
+interface ReturnableItem extends StockOutItem { returnedQty: number; remainingQty: number; nonReturnableQty: number; product: Product; recorder: StockOutRecorder; returns: ReturnRecord[]; nonReturnables?: NonReturnable[]; createdAt: string }
+
+// ─── Non-Returnable reasons catalogue ────────────────────────────
+// Curated list of why a "should-be-returned" item cannot be returned.
+// Each entry is stored in the DB as the `reason` key (e.g. "damaged") and shown
+// to the user as the human-readable label (e.g. "Damaged"). The "other" entry is
+// always last and triggers a free-text reasonDetail input.
+const NON_RETURNABLE_REASONS: { key: string; label: string }[] = [
+  { key: 'altered', label: 'Altered' },
+  { key: 'assembled', label: 'Assembled' },
+  { key: 'biohazard', label: 'Biohazard' },
+  { key: 'clearance-item', label: 'Clearance Item' },
+  { key: 'code-revealed', label: 'Code Revealed' },
+  { key: 'contaminated', label: 'Contaminated' },
+  { key: 'counterfeit-suspected', label: 'Counterfeit Suspected' },
+  { key: 'custom-made', label: 'Custom Made' },
+  { key: 'customer-banned', label: 'Customer Banned' },
+  { key: 'damaged', label: 'Damaged' },
+  { key: 'damaged-in-transit', label: 'Damaged In Transit' },
+  { key: 'dead', label: 'Dead' },
+  { key: 'destroyed', label: 'Destroyed' },
+  { key: 'dirty', label: 'Dirty' },
+  { key: 'disposed', label: 'Disposed' },
+  { key: 'duplicate-return', label: 'Duplicate Return' },
+  { key: 'electrical-fault', label: 'Electrical Fault' },
+  { key: 'excessive-wear', label: 'Excessive Wear' },
+  { key: 'expired', label: 'Expired' },
+  { key: 'export-restricted', label: 'Export Restricted' },
+  { key: 'final-sale', label: 'Final Sale' },
+  { key: 'fraud-suspected', label: 'Fraud Suspected' },
+  { key: 'free-gift-missing', label: 'Free Gift Missing' },
+  { key: 'gift-restriction', label: 'Gift Restriction' },
+  { key: 'hazardous-material', label: 'Hazardous Material' },
+  { key: 'hygiene-seal-broken', label: 'Hygiene Seal Broken' },
+  { key: 'improperly-packaged', label: 'Improperly Packaged' },
+  { key: 'incompatible-item', label: 'Incompatible Item' },
+  { key: 'laundered', label: 'Laundered' },
+  { key: 'liquid-damaged', label: 'Liquid Damaged' },
+  { key: 'lost', label: 'Lost' },
+  { key: 'manufacturer-defect', label: 'Manufacturer Defect' },
+  { key: 'missing-accessories', label: 'Missing Accessories' },
+  { key: 'missing-invoice', label: 'Missing Invoice' },
+  { key: 'missing-packaging', label: 'Missing Packaging' },
+  { key: 'missing-parts', label: 'Missing Parts' },
+  { key: 'missing-serial-label', label: 'Missing Serial Label' },
+  { key: 'non-original-condition', label: 'Non-Original Condition' },
+  { key: 'no-receipt', label: 'No Receipt' },
+  { key: 'not-purchased-here', label: 'Not Purchased Here' },
+  { key: 'odor-tainted', label: 'Odor Tainted' },
+  { key: 'opened', label: 'Opened' },
+  { key: 'oversized-return', label: 'Oversized Return' },
+  { key: 'policy-abuse', label: 'Policy Abuse' },
+  { key: 'quarantine', label: 'Quarantine' },
+  { key: 'recalled', label: 'Recalled' },
+  { key: 'refurbished', label: 'Refurbished' },
+  { key: 'regulated-item', label: 'Regulated Item' },
+  { key: 'restocking-fee-zeroes-refund', label: 'Restocking Fee Zeroes Refund' },
+  { key: 'return-window-closed', label: 'Return Window Closed' },
+  { key: 'seasonal-item', label: 'Seasonal Item' },
+  { key: 'serial-mismatch', label: 'Serial Mismatch' },
+  { key: 'software-unsealed', label: 'Software Unsealed' },
+  { key: 'spoiled', label: 'Spoiled' },
+  { key: 'stolen', label: 'Stolen' },
+  { key: 'swapped', label: 'Swapped' },
+  { key: 'tampered', label: 'Tampered' },
+  { key: 'time-lapsed', label: 'Time Lapsed' },
+  { key: 'unauthorized-return', label: 'Unauthorized Return' },
+  { key: 'unpaid-return-shipping', label: 'Unpaid Return Shipping' },
+  { key: 'used', label: 'Used' },
+  { key: 'warranty-voided', label: 'Warranty Voided' },
+  { key: 'worn-out', label: 'Worn Out' },
+  { key: 'wrong-address', label: 'Wrong Address' },
+  { key: 'wrong-item-returned', label: 'Wrong Item Returned' },
+  { key: 'other', label: 'Other (specify in notes)' },
+]
+// Quick lookup: reason key → human-readable label
+const REASON_LABELS: Record<string, string> = Object.fromEntries(NON_RETURNABLE_REASONS.map(r => [r.key, r.label]))
 interface DashboardStats { enterpriseCount: number; branchCount: number; warehouseCount: number; userCount: number; productCount: number; orderCount: number; pendingOrderCount: number; totalStockValue: number; lowStockProducts: { id: number; name: string; sku: string; reorderLevel: number; totalQty: number }[]; totalLots: number; openLots: number; stockInCount: number; stockOutCount: number }
 interface AnalyticsData { stockByWarehouse: { name: string; value: number }[]; stockByCategory: { name: string; value: number }[]; topProducts: { name: string; quantity: number; value: number }[]; recentActivity: { id: number; action: string; entity: string; entityId: number | null; details: string; createdAt: string; userName: string | null }[] }
 
@@ -419,7 +497,7 @@ export default function IMSApp() {
 
   // ─── Returns page state ─────────────────────────────────────────
   // 'records' = the 3rd top-level tab showing created group-return (ReturnRecorder) records
-  const [returnsTab, setReturnsTab] = useState<'flagged' | 'not_flagged' | 'records'>('flagged')
+  const [returnsTab, setReturnsTab] = useState<'flagged' | 'not_flagged' | 'records' | 'non_returnable'>('flagged')
   const [returnsData, setReturnsData] = useState<ReturnableItem[]>([])
   const [returnsLoading, setReturnsLoading] = useState(false)
   const [returnsPage, setReturnsPage] = useState(1)
@@ -471,6 +549,60 @@ export default function IMSApp() {
   const [groupReturnRecords, setGroupReturnRecords] = useState<ReturnRecorder[]>([])
   const [groupReturnRecordsLoading, setGroupReturnRecordsLoading] = useState(false)
   const [expandedReturnRec, setExpandedReturnRec] = useState<number | null>(null)
+
+  // ─── Non-Returnables state (mirrors returns state — for the "mark as non-returnable" feature) ──
+  // 'flagged' = the items to mark (reuses the same flagged StockOutItem list as Returns);
+  // 'records' = the 4th tab showing NR- records.
+  const [nonRetTab, setNonRetTab] = useState<'flagged' | 'records'>('flagged')
+  const [nonRetData, setNonRetData] = useState<ReturnableItem[]>([])
+  const [nonRetLoading, setNonRetLoading] = useState(false)
+  const [nonRetPage, setNonRetPage] = useState(1)
+  const NON_RET_PER_PAGE = 8
+  // Pagination for the "Group Non-Returnable by Person" person-button bar
+  const [nonRetGroupPage, setNonRetGroupPage] = useState(1)
+  const NON_RET_GROUP_PER_PAGE = 8
+  // Pagination for the Non-Returnable Records (4th tab) list
+  const [nonRetRecordsPage, setNonRetRecordsPage] = useState(1)
+  const NON_RET_RECORDS_PER_PAGE = 6
+  // Searchable warehouse combobox state (Non-Returnable filter) — handles many warehouses
+  const [nonRetWhComboOpen, setNonRetWhComboOpen] = useState(false)
+  const [nonRetWhComboSearch, setNonRetWhComboSearch] = useState('')
+  // Advanced filter state (mirrors returns filters)
+  const [nonRetSearch, setNonRetSearch] = useState('')
+  const [nonRetWarehouseFilter, setNonRetWarehouseFilter] = useState<number | ''>('')
+  const [nonRetFilterDateFrom, setNonRetFilterDateFrom] = useState('')
+  const [nonRetFilterDateTo, setNonRetFilterDateTo] = useState('')
+  const [nonRetFilterRecorder, setNonRetFilterRecorder] = useState('')
+  const [nonRetFilterProgress, setNonRetFilterProgress] = useState<'' | 'none' | 'partial' | 'full'>('')
+  const [nonRetFilterCategory, setNonRetFilterCategory] = useState<number | ''>('')
+  const [nonRetFilterPerson, setNonRetFilterPerson] = useState('')
+  const [nonRetFilterReason, setNonRetFilterReason] = useState<string>('')
+  // Single-item "mark as non-returnable" dialog (mirrors returnDlg)
+  const [nonRetDlg, setNonRetDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; reason: string; reasonDetail: string; notes: string; submitting: boolean }>({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false })
+  // Group "mark as non-returnable" dialog (mirrors groupReturnDlg)
+  // mode='prefilled' → opened from a person button (items pre-filled from that person)
+  // mode='new'       → opened from the "New Group Non-Returnable" button (empty person + item picker)
+  const [groupNonRetDlg, setGroupNonRetDlg] = useState<{
+    open: boolean; submitting: boolean; mode: 'prefilled' | 'new'; personKey: string;
+    personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string;
+    warehouseId: number | null;
+    items: { item: ReturnableItem; qty: number; reason: string; reasonDetail: string; selected: boolean }[];
+    availableItems: ReturnableItem[]; itemSearch: string; loadingAvailable: boolean;
+    availPage: number; itemsPage: number;
+    // Advanced filters for the item picker (NEW mode)
+    filterWarehouse: number | '';
+    filterCategory: number | '';
+    filterPerson: string;
+    filterDateFrom: string;
+    filterDateTo: string;
+    filterProgress: '' | 'none' | 'partial' | 'full';
+    whComboOpen: boolean;
+    whComboSearch: string;
+  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', whComboOpen: false, whComboSearch: '' })
+  // Non-Returnable Recorder records (NR- records created by group non-returnable)
+  const [groupNonRetRecords, setGroupNonRetRecords] = useState<NonReturnableRecorder[]>([])
+  const [groupNonRetRecordsLoading, setGroupNonRetRecordsLoading] = useState(false)
+  const [expandedNonRetRec, setExpandedNonRetRec] = useState<number | null>(null)
 
   const [dlgOpen, setDlgOpen] = useState(false)
   const [dlgType, setDlgType] = useState('')
@@ -686,8 +818,8 @@ export default function IMSApp() {
   // ─── Returns: fetch list of returnable items for active tab ────────
   // 'records' tab is handled separately (shows ReturnRecorder records), so this fetch
   // is only called for 'flagged' / 'not_flagged'. The union type keeps the call-site happy.
-  const loadReturns = useCallback(async (tab: 'flagged' | 'not_flagged' | 'records') => {
-    if (tab === 'records') return
+  const loadReturns = useCallback(async (tab: 'flagged' | 'not_flagged' | 'records' | 'non_returnable') => {
+    if (tab === 'records' || tab === 'non_returnable') return
     setReturnsLoading(true)
     try {
       const params = new URLSearchParams({ tab })
@@ -717,13 +849,14 @@ export default function IMSApp() {
 
   // Fetch returns whenever the Returns page is opened or the tab changes.
   // 'records' tab shows ReturnRecorder records (loaded via loadGroupReturnRecords),
-  // so we skip the per-item returns fetch when that tab is active.
+  // 'non_returnable' tab is handled by the separate non-returnable loader.
+  // So we skip the per-item returns fetch when either of those tabs is active.
   useEffect(() => {
     if (!auth.isLoggedIn || page !== 'returns') return
     setReturnsPage(1)
     setReturnsGroupPage(1)
     setReturnRecordsPage(1)
-    if (returnsTab !== 'records') loadReturns(returnsTab)
+    if (returnsTab !== 'records' && returnsTab !== 'non_returnable') loadReturns(returnsTab)
     loadGroupReturnRecords()
   }, [auth.isLoggedIn, page, returnsTab, loadReturns, loadGroupReturnRecords])
 
@@ -843,6 +976,148 @@ export default function IMSApp() {
     } catch (e: any) {
       toast({ title: e.message, variant: 'destructive' })
       setGroupReturnDlg(s => ({ ...s, submitting: false }))
+    }
+  }
+
+  // ─── Non-Returnables: fetch list of flagged items eligible for the non-returnable decision ──
+  const loadNonReturnables = useCallback(async (tab: 'flagged' | 'records') => {
+    if (tab === 'records') return // records tab is handled by loadGroupNonRetRecords
+    setNonRetLoading(true)
+    try {
+      const params = new URLSearchParams({ tab: 'flagged' })
+      const res = await fetch(`${BASE}/api/non-returnables?${params.toString()}`, { headers: { ...auth.getAuthHeaders() } })
+      const data = await res.json()
+      setNonRetData(Array.isArray(data) ? data : [])
+    } catch (e) {
+      console.error('loadNonReturnables error:', e)
+      setNonRetData([])
+    }
+    setNonRetLoading(false)
+  }, [auth])
+
+  // ─── Non-Returnables: load group-non-returnable recorder records (mirrors loadGroupReturnRecords) ──
+  const loadGroupNonRetRecords = useCallback(async () => {
+    setGroupNonRetRecordsLoading(true)
+    try {
+      const res = await fetch(`${BASE}/api/non-returnables?recorders=1`, { headers: { ...auth.getAuthHeaders() } })
+      const data = await res.json()
+      setGroupNonRetRecords(Array.isArray(data) ? data : [])
+    } catch (e) {
+      console.error('loadGroupNonRetRecords error:', e)
+      setGroupNonRetRecords([])
+    }
+    setGroupNonRetRecordsLoading(false)
+  }, [auth])
+
+  // Fetch non-returnable data whenever the Returns page is opened or the non-returnable tab changes.
+  useEffect(() => {
+    if (!auth.isLoggedIn || page !== 'returns') return
+    setNonRetPage(1)
+    setNonRetGroupPage(1)
+    setNonRetRecordsPage(1)
+    if (nonRetTab !== 'records') loadNonReturnables(nonRetTab)
+    loadGroupNonRetRecords()
+  }, [auth.isLoggedIn, page, nonRetTab, loadNonReturnables, loadGroupNonRetRecords])
+
+  // ─── Non-Returnables: open single-item dialog (qty defaults to full remaining; reason unselected) ──
+  const openNonRetDlg = (item: ReturnableItem) => {
+    setNonRetDlg({ open: true, item, qty: item.remainingQty, reason: '', reasonDetail: '', notes: '', submitting: false })
+  }
+  // ─── Non-Returnables: submit single-item decision ──
+  const submitNonReturnable = async () => {
+    const it = nonRetDlg.item
+    if (!it) return
+    if (!nonRetDlg.qty || nonRetDlg.qty <= 0) { toast({ title: 'Quantity must be positive', variant: 'destructive' }); return }
+    if (nonRetDlg.qty > it.remainingQty) { toast({ title: `Only ${it.remainingQty} remaining to mark`, variant: 'destructive' }); return }
+    if (!nonRetDlg.reason) { toast({ title: 'Choose a reason', variant: 'destructive' }); return }
+    if (nonRetDlg.reason === 'other' && !nonRetDlg.reasonDetail.trim()) { toast({ title: 'For "Other", specify the reason in the detail field', variant: 'destructive' }); return }
+    setNonRetDlg(s => ({ ...s, submitting: true }))
+    try {
+      await apiFetch(`/non-returnables`, {
+        method: 'POST',
+        body: JSON.stringify({
+          stockOutItemId: it.id,
+          quantity: nonRetDlg.qty,
+          reason: nonRetDlg.reason,
+          reasonDetail: nonRetDlg.reasonDetail || undefined,
+          notes: nonRetDlg.notes || undefined,
+        }),
+      })
+      toast({ title: `Marked ${nonRetDlg.qty} ${it.unit} of ${it.product.name} as non-returnable (${REASON_LABELS[nonRetDlg.reason] || nonRetDlg.reason})` })
+      setNonRetDlg({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false })
+      await loadNonReturnables(nonRetTab)
+      await loadReturns(returnsTab) // refresh the Returns page too (remaining qty changed)
+      await loadGroupNonRetRecords()
+    } catch (e: any) {
+      toast({ title: e.message, variant: 'destructive' })
+      setNonRetDlg(s => ({ ...s, submitting: false }))
+    }
+  }
+
+  // ─── Non-Returnables: open group dialog for a given person key (prefilled mode) ──
+  const openGroupNonRetDlg = (personKey: string, items: ReturnableItem[]) => {
+    const whId = items[0]?.warehouseId ?? null
+    setGroupNonRetDlg({
+      open: true, submitting: false, mode: 'prefilled', personKey,
+      personName: personKey === '(no person)' ? '' : personKey,
+      personPhone: '', personEmail: '', personAddress: '', notes: '',
+      warehouseId: whId,
+      items: items.map(it => ({ item: it, qty: it.remainingQty, reason: '', reasonDetail: '', selected: true })),
+      availableItems: [], itemSearch: '', loadingAvailable: false,
+      availPage: 1, itemsPage: 1,
+      filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '',
+      whComboOpen: false, whComboSearch: '',
+    })
+  }
+  // ─── Non-Returnables: open a NEW group-non-returnable record from scratch (new mode) ──
+  const openNewGroupNonRetDlg = async () => {
+    setGroupNonRetDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', whComboOpen: false, whComboSearch: '' })
+    try {
+      const h = auth.getAuthHeaders()
+      const res = await fetch(`${BASE}/api/non-returnables?tab=flagged`, { headers: h })
+      const arr: ReturnableItem[] = await res.json().catch(() => [])
+      setGroupNonRetDlg(s => ({ ...s, availableItems: Array.isArray(arr) ? arr : [], loadingAvailable: false }))
+    } catch (e) {
+      console.error('openNewGroupNonRetDlg error:', e)
+      setGroupNonRetDlg(s => ({ ...s, availableItems: nonRetData, loadingAvailable: false }))
+    }
+  }
+  const addNonRetItemToGroup = (it: ReturnableItem) => {
+    setGroupNonRetDlg(s => s.items.some(x => x.item.id === it.id) ? s : ({ ...s, items: [...s.items, { item: it, qty: it.remainingQty, reason: '', reasonDetail: '', selected: true }], itemsPage: 1 }))
+  }
+  const removeNonRetItemFromGroup = (id: number) => {
+    setGroupNonRetDlg(s => ({ ...s, items: s.items.filter(x => x.item.id !== id), itemsPage: 1 }))
+  }
+  // ─── Non-Returnables: submit group decision (creates a NEW NonReturnableRecorder record) ──
+  const submitGroupNonReturnable = async () => {
+    const selected = groupNonRetDlg.items.filter(i => i.selected && i.qty > 0 && i.reason)
+    if (selected.length === 0) { toast({ title: 'Select at least one item with qty > 0 and a reason', variant: 'destructive' }); return }
+    if (selected.some(i => i.reason === 'other' && !i.reasonDetail.trim())) { toast({ title: 'For "Other" reasons, fill in the detail field', variant: 'destructive' }); return }
+    if (!groupNonRetDlg.personName.trim()) { toast({ title: 'Enter the person/inspector name for this record', variant: 'destructive' }); return }
+    setGroupNonRetDlg(s => ({ ...s, submitting: true }))
+    try {
+      const res = await fetch(`${BASE}/api/non-returnables/group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() },
+        body: JSON.stringify({
+          personName: groupNonRetDlg.personName.trim(),
+          personPhone: groupNonRetDlg.personPhone,
+          personEmail: groupNonRetDlg.personEmail,
+          personAddress: groupNonRetDlg.personAddress,
+          notes: groupNonRetDlg.notes.trim(),
+          items: selected.map(i => ({ stockOutItemId: i.item.id, quantity: i.qty, reason: i.reason, reasonDetail: i.reasonDetail || undefined, notes: i.reasonDetail || undefined })),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Group non-returnable failed')
+      toast({ title: `Created non-returnable record ${data.recorder?.recorderCode || ''} — ${data.processed || 0} item(s) marked${data.lastError ? `. Stopped: ${data.lastError}` : ''}` })
+      setGroupNonRetDlg(s => ({ ...s, open: false, submitting: false }))
+      await loadNonReturnables(nonRetTab)
+      await loadReturns(returnsTab) // refresh Returns too (remaining qty changed)
+      await loadGroupNonRetRecords()
+    } catch (e: any) {
+      toast({ title: e.message, variant: 'destructive' })
+      setGroupNonRetDlg(s => ({ ...s, submitting: false }))
     }
   }
 
@@ -1970,20 +2245,24 @@ export default function IMSApp() {
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div><h1 className="text-lg font-bold flex items-center gap-1.5"><RotateCcw className="w-4 h-4 text-violet-500" />Returns</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">Process returns for stock-outed items. Each return restocks inventory and is tracked against the original stock-out record.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">Process returns for stock-outed items — or mark flagged items as non-returnable when they cannot be returned (with a reason).</p>
           </div>
-          <Button size="sm" onClick={openNewGroupReturnDlg} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Group Return</Button>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" onClick={openNewGroupNonRetDlg} className="bg-gradient-to-r from-rose-600 to-red-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Group Non-Returnable</Button>
+            <Button size="sm" onClick={openNewGroupReturnDlg} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Group Return</Button>
+          </div>
         </div>
 
-        <Tabs value={returnsTab} onValueChange={v => setReturnsTab(v as 'flagged' | 'not_flagged' | 'records')}>
-          <TabsList className="grid grid-cols-3 w-full max-w-2xl h-9">
+        <Tabs value={returnsTab} onValueChange={v => setReturnsTab(v as 'flagged' | 'not_flagged' | 'records' | 'non_returnable')}>
+          <TabsList className="grid grid-cols-4 w-full max-w-3xl h-9">
             <TabsTrigger value="flagged" className="text-xs gap-1"><RotateCcw className="w-3 h-3" />Flagged for Return</TabsTrigger>
             <TabsTrigger value="not_flagged" className="text-xs gap-1"><Package className="w-3 h-3" />Other Stock-Outs</TabsTrigger>
             <TabsTrigger value="records" className="text-xs gap-1"><Layers className="w-3 h-3" />Return Records</TabsTrigger>
+            <TabsTrigger value="non_returnable" className="text-xs gap-1"><Ban className="w-3 h-3" />Non-Returnable</TabsTrigger>
           </TabsList>
 
           {/* Items view — rendered for both 'flagged' and 'not_flagged' tabs */}
-          {returnsTab !== 'records' && (
+          {returnsTab !== 'records' && returnsTab !== 'non_returnable' && (
           <div className="mt-3 space-y-3">
             {/* Advanced Filters */}
             <FilterPanel
@@ -2126,6 +2405,7 @@ export default function IMSApp() {
                       <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
                         <div><span className="text-muted-foreground">Out: </span><span className="font-mono font-medium">{it.quantity}</span> <span className="text-muted-foreground">{it.unit}</span></div>
                         <div><span className="text-muted-foreground">Returned: </span><span className="font-mono font-medium text-emerald-600">{it.returnedQty}</span></div>
+                        {returnsTab === 'flagged' && (it.nonReturnableQty || 0) > 0 && <div><span className="text-muted-foreground">Non-Ret: </span><span className="font-mono font-medium text-rose-600">{it.nonReturnableQty}</span></div>}
                         <div><span className="text-muted-foreground">Remaining: </span><span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div>
                         <div><span className="text-muted-foreground">Warehouse: </span><span className="font-medium truncate">{wh?.name || `#${it.warehouseId}`}</span></div>
                         <div className="col-span-2"><span className="text-muted-foreground">Person: </span><span className="font-medium">{it.recorder?.personName || '—'}</span></div>
@@ -2147,6 +2427,7 @@ export default function IMSApp() {
                     <TableHead className="h-7 text-[10px]">Recorder</TableHead>
                     <TableHead className="h-7 text-[10px] text-right w-14">Out</TableHead>
                     <TableHead className="h-7 text-[10px] text-right w-16">Returned</TableHead>
+                    {returnsTab === 'flagged' && <TableHead className="h-7 text-[10px] text-right w-16">Non-Ret</TableHead>}
                     <TableHead className="h-7 text-[10px] text-right w-16">Remaining</TableHead>
                     <TableHead className="h-7 text-[10px] w-24">Deadline</TableHead>
                     <TableHead className="h-7 text-[10px] w-28">Progress</TableHead>
@@ -2162,6 +2443,7 @@ export default function IMSApp() {
                         <TableCell className="py-1 text-[11px]"><span className="font-mono">{it.recorder?.recorderCode}</span><div className="text-[9px] text-muted-foreground">{new Date(it.createdAt).toLocaleDateString()}</div></TableCell>
                         <TableCell className="py-1 text-[11px] text-right font-mono">{it.quantity} <span className="text-muted-foreground">{it.unit}</span></TableCell>
                         <TableCell className="py-1 text-[11px] text-right font-mono text-emerald-600">{it.returnedQty}</TableCell>
+                        {returnsTab === 'flagged' && <TableCell className="py-1 text-[11px] text-right font-mono text-rose-600">{it.nonReturnableQty || 0}</TableCell>}
                         <TableCell className="py-1 text-[11px] text-right font-mono text-violet-600 font-semibold">{it.remainingQty}</TableCell>
                         <TableCell className="py-1 text-[11px]">{it.returnDeadline ? <span className="text-amber-600">{it.returnDeadline}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="py-1"><div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-500 to-violet-500" style={{ width: `${pct}%` }} /></div><div className="text-[9px] text-muted-foreground mt-0.5 text-center">{pct.toFixed(0)}%</div></TableCell>
@@ -2169,6 +2451,7 @@ export default function IMSApp() {
                           <div className="flex items-center justify-end gap-0.5">
                             <Button size="sm" variant="ghost" onClick={() => openReturnSourceDlg(it)} className="h-5 w-5 p-0 text-muted-foreground" title="View source record"><Eye className="w-3 h-3" /></Button>
                             <Button size="sm" onClick={() => openReturnDlg(it)} className="h-5 text-[10px] bg-violet-600 text-white px-1.5" title="Return this item"><RotateCcw className="w-2.5 h-2.5 mr-0.5" />Return</Button>
+                            {returnsTab === 'flagged' && <Button size="sm" onClick={() => openNonRetDlg(it)} className="h-5 text-[10px] bg-rose-600 text-white px-1.5" title="Mark as non-returnable (with reason)"><Ban className="w-2.5 h-2.5 mr-0.5" />Non-Ret</Button>}
                           </div>
                         </TableCell>
                       </TableRow>)
@@ -2252,6 +2535,303 @@ export default function IMSApp() {
                   })}
                 </div>
                 <Pager page={recSafePage} totalPages={recTotalPages} onPageChange={setReturnRecordsPage} />
+              </>)
+            })()}
+          </div>
+          )}
+
+          {/* ── Non-Returnable tab (4th tab) — mirrors the Flagged tab + Return Records section,
+              but with rose/red accents and "Mark Non-Returnable" actions instead of "Return".
+              Also adds a "Reason" filter and shows nonReturnableQty per item. ── */}
+          {returnsTab === 'non_returnable' && (
+          <div className="mt-3 space-y-3">
+            {/* Advanced Filters (rose theme) */}
+            <FilterPanel
+              activeCount={(nonRetSearch ? 1 : 0) + (nonRetWarehouseFilter !== '' ? 1 : 0) + (nonRetFilterDateFrom ? 1 : 0) + (nonRetFilterDateTo ? 1 : 0) + (nonRetFilterRecorder ? 1 : 0) + (nonRetFilterProgress ? 1 : 0) + (nonRetFilterCategory !== '' ? 1 : 0) + (nonRetFilterPerson.trim() ? 1 : 0) + (nonRetFilterReason ? 1 : 0)}
+              onClear={() => { setNonRetSearch(''); setNonRetWarehouseFilter(''); setNonRetFilterDateFrom(''); setNonRetFilterDateTo(''); setNonRetFilterRecorder(''); setNonRetFilterProgress(''); setNonRetFilterCategory(''); setNonRetFilterPerson(''); setNonRetFilterReason(''); setNonRetPage(1) }}
+              resultLabel={`${nonRetData.length} item(s)`}
+            >
+              <FilterField label="Search" width="w-56">
+                <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Product, SKU, person, code..." value={nonRetSearch} onChange={e => { setNonRetSearch(e.target.value); setNonRetPage(1) }} className="h-8 text-xs pl-7" /></div>
+              </FilterField>
+              <FilterField label="Warehouse" width="w-44">
+                <Popover open={nonRetWhComboOpen} onOpenChange={o => { setNonRetWhComboOpen(o); if (!o) setNonRetWhComboSearch('') }}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" className="h-8 text-xs justify-between w-full font-normal px-2">
+                      <span className="truncate">{nonRetWarehouseFilter === '' ? 'All Warehouses' : (warehouses.find(w => w.id === nonRetWarehouseFilter)?.name || `#${nonRetWarehouseFilter}`)}</span>
+                      <ChevronDown className="w-3 h-3 opacity-50 shrink-0" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-44 p-0" align="start">
+                    <div className="p-1.5 border-b sticky top-0 bg-popover">
+                      <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-1.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search warehouse..." value={nonRetWhComboSearch} onChange={e => setNonRetWhComboSearch(e.target.value)} className="h-7 text-xs pl-6" /></div>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      <button onClick={() => { setNonRetWarehouseFilter(''); setNonRetPage(1); setNonRetWhComboOpen(false) }} className={`w-full text-left px-2 py-1.5 text-xs hover:bg-rose-50 dark:hover:bg-rose-500/10 ${nonRetWarehouseFilter === '' ? 'bg-rose-50 dark:bg-rose-500/10 font-medium text-rose-700 dark:text-rose-400' : ''}`}>All Warehouses</button>
+                      {warehouses.filter(w => { const s = nonRetWhComboSearch.toLowerCase(); return !s || w.name.toLowerCase().includes(s) || (w.code || '').toLowerCase().includes(s) }).map(w => (
+                        <button key={w.id} onClick={() => { setNonRetWarehouseFilter(w.id); setNonRetPage(1); setNonRetWhComboOpen(false) }} className={`w-full text-left px-2 py-1.5 text-xs hover:bg-rose-50 dark:hover:bg-rose-500/10 ${nonRetWarehouseFilter === w.id ? 'bg-rose-50 dark:bg-rose-500/10 font-medium text-rose-700 dark:text-rose-400' : ''}`}>{w.name} <span className="text-[9px] text-muted-foreground font-mono">{w.code}</span></button>
+                      ))}
+                      {warehouses.filter(w => { const s = nonRetWhComboSearch.toLowerCase(); return !s || w.name.toLowerCase().includes(s) || (w.code || '').toLowerCase().includes(s) }).length === 0 && <div className="px-2 py-2 text-[11px] text-muted-foreground text-center">No warehouse matches.</div>}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </FilterField>
+              <FilterField label="Category" width="w-44">
+                <PaginatedCombobox
+                  items={categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+                  value={nonRetFilterCategory === '' ? '_all' : String(nonRetFilterCategory)}
+                  onChange={v => { setNonRetFilterCategory(v === '_all' ? '' : parseInt(v)); setNonRetPage(1) }}
+                  allLabel="All Categories"
+                  placeholder="All"
+                />
+              </FilterField>
+              <FilterField label="Person / Supplier" width="w-44">
+                <Input value={nonRetFilterPerson} onChange={e => { setNonRetFilterPerson(e.target.value); setNonRetPage(1) }} placeholder="Name contains..." className="h-8 text-xs" />
+              </FilterField>
+              <FilterField label="Out Date From" width="w-32"><CustomDatePicker compact value={nonRetFilterDateFrom} onChange={v => { setNonRetFilterDateFrom(v); setNonRetPage(1) }} /></FilterField>
+              <FilterField label="Out Date To" width="w-32"><CustomDatePicker compact value={nonRetFilterDateTo} onChange={v => { setNonRetFilterDateTo(v); setNonRetPage(1) }} /></FilterField>
+              <FilterField label="Recorder Code" width="w-40"><Input value={nonRetFilterRecorder} onChange={e => { setNonRetFilterRecorder(e.target.value); setNonRetPage(1) }} placeholder="SOUT-..." className="h-8 text-xs" /></FilterField>
+              <FilterField label="Progress" width="w-40">
+                <Select value={nonRetFilterProgress || '_all'} onValueChange={v => { setNonRetFilterProgress(v === '_all' ? '' : v as 'none' | 'partial' | 'full'); setNonRetPage(1) }}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                  <SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="none">Not started</SelectItem><SelectItem value="partial">Partial</SelectItem><SelectItem value="full">Fully resolved</SelectItem></SelectContent>
+                </Select>
+              </FilterField>
+              <FilterField label="Reason" width="w-48">
+                <PaginatedCombobox
+                  items={NON_RETURNABLE_REASONS.map(r => ({ value: r.key, label: r.label }))}
+                  value={nonRetFilterReason || '_all'}
+                  onChange={v => { setNonRetFilterReason(v === '_all' ? '' : v); setNonRetPage(1) }}
+                  allLabel="All Reasons"
+                  placeholder="All"
+                  perPage={12}
+                />
+              </FilterField>
+            </FilterPanel>
+
+            {nonRetLoading ? (
+              <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-rose-500" /><span className="ml-2 text-sm text-muted-foreground">Loading non-returnable items...</span></div>
+            ) : (() => {
+              // Apply search + advanced filters (mirrors the Returns filter chain, + reason filter)
+              const q = nonRetSearch.toLowerCase()
+              const recQ = nonRetFilterRecorder.toLowerCase()
+              const personQ = nonRetFilterPerson.toLowerCase().trim()
+              const filtered = nonRetData.filter(it => {
+                if (nonRetWarehouseFilter !== '' && it.warehouseId !== nonRetWarehouseFilter) return false
+                if (nonRetFilterCategory !== '' && it.product?.categoryId !== nonRetFilterCategory) return false
+                if (personQ && !(it.recorder?.personName || '').toLowerCase().includes(personQ)) return false
+                if (nonRetFilterDateFrom && new Date(it.createdAt) < new Date(nonRetFilterDateFrom + 'T00:00:00')) return false
+                if (nonRetFilterDateTo && new Date(it.createdAt) > new Date(nonRetFilterDateTo + 'T23:59:59')) return false
+                if (recQ && !(it.recorder?.recorderCode || '').toLowerCase().includes(recQ)) return false
+                if (nonRetFilterProgress) {
+                  if (nonRetFilterProgress === 'none' && (it.returnedQty > 0 || it.nonReturnableQty > 0)) return false
+                  if (nonRetFilterProgress === 'partial' && !((it.returnedQty > 0 || it.nonReturnableQty > 0) && it.remainingQty > 0)) return false
+                  if (nonRetFilterProgress === 'full' && it.remainingQty > 0) return false
+                }
+                // Reason filter: match if any of the item's nonReturnables has this reason
+                if (nonRetFilterReason && !(it.nonReturnables || []).some(n => n.reason === nonRetFilterReason)) return false
+                if (!q) return true
+                return (it.product?.name || '').toLowerCase().includes(q)
+                  || (it.product?.sku || '').toLowerCase().includes(q)
+                  || (it.recorder?.personName || '').toLowerCase().includes(q)
+                  || (it.recorder?.recorderCode || '').toLowerCase().includes(q)
+              })
+              const totalPages = Math.ceil(filtered.length / NON_RET_PER_PAGE) || 1
+              const safePage = Math.min(nonRetPage, totalPages)
+              const paged = filtered.slice((safePage - 1) * NON_RET_PER_PAGE, safePage * NON_RET_PER_PAGE)
+
+              // Group by personName for the "Group Non-Returnable by Person" feature
+              const groups: Record<string, ReturnableItem[]> = {}
+              for (const it of filtered) {
+                const key = it.recorder?.personName?.trim() || '(no person)'
+                if (!groups[key]) groups[key] = []
+                groups[key].push(it)
+              }
+              const groupEntries = Object.entries(groups).filter(([, items]) => items.length > 0).sort((a, b) => a[0].localeCompare(b[0]))
+
+              if (filtered.length === 0) return <div className="text-center text-sm text-muted-foreground py-10">No flagged items to mark as non-returnable. Items that "should be returned" (isReturnable=true) appear here.</div>
+
+              return (<>
+                {/* Group non-returnable bar — paginated person buttons (rose theme) */}
+                {groupEntries.length > 0 && (() => {
+                  const grpTotalPages = Math.ceil(groupEntries.length / NON_RET_GROUP_PER_PAGE) || 1
+                  const grpSafePage = Math.min(nonRetGroupPage, grpTotalPages)
+                  const grpPaged = groupEntries.slice((grpSafePage - 1) * NON_RET_GROUP_PER_PAGE, grpSafePage * NON_RET_GROUP_PER_PAGE)
+                  return (
+                  <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-md p-2">
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-1.5"><Users className="w-3 h-3 text-rose-600" /><span className="text-[10px] font-semibold text-rose-700 dark:text-rose-400 uppercase tracking-wider">Group Non-Returnable by Person</span><Badge className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[9px] h-4">{groupEntries.length}</Badge></div>
+                      <span className="text-[10px] text-muted-foreground">{grpSafePage}/{grpTotalPages}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {grpPaged.map(([person, items]) => (
+                        <button key={person} onClick={() => openGroupNonRetDlg(person, items)} className="text-[11px] px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-rose-200 dark:border-rose-500/30 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition flex items-center gap-1">
+                          <Users className="w-3 h-3 text-rose-500" />
+                          <span className="font-medium">{person}</span>
+                          <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[9px] h-4">{items.length}</Badge>
+                        </button>
+                      ))}
+                    </div>
+                    {grpTotalPages > 1 && (
+                      <div className="flex items-center justify-end gap-1 mt-1.5 pt-1.5 border-t border-rose-200 dark:border-rose-500/20">
+                        <Button size="sm" variant="outline" disabled={grpSafePage <= 1} onClick={() => setNonRetGroupPage(grpSafePage - 1)} className="h-6 w-6 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+                        <Button size="sm" variant="outline" disabled={grpSafePage >= grpTotalPages} onClick={() => setNonRetGroupPage(grpSafePage + 1)} className="h-6 w-6 p-0"><ChevronRight className="w-3 h-3" /></Button>
+                      </div>
+                    )}
+                  </div>
+                  )
+                })()}
+
+                {/* Mobile: stacked cards */}
+                <div className="sm:hidden space-y-2">
+                  {paged.map(it => {
+                    const wh = warehouses.find(w => w.id === it.warehouseId)
+                    return (<Card key={it.id} className="shadow-sm"><CardContent className="p-2.5 space-y-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div>
+                          <div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</div></div>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <Button size="sm" variant="ghost" onClick={() => openReturnSourceDlg(it)} className="h-5 w-5 p-0 text-muted-foreground" title="View source record"><Eye className="w-3 h-3" /></Button>
+                          <Button size="sm" onClick={() => openNonRetDlg(it)} className="h-5 text-[10px] bg-rose-600 text-white px-1.5" title="Mark as non-returnable"><Ban className="w-2.5 h-2.5 mr-0.5" />Non-Ret</Button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+                        <div><span className="text-muted-foreground">Out: </span><span className="font-mono font-medium">{it.quantity}</span> <span className="text-muted-foreground">{it.unit}</span></div>
+                        <div><span className="text-muted-foreground">Returned: </span><span className="font-mono font-medium text-emerald-600">{it.returnedQty}</span></div>
+                        <div><span className="text-muted-foreground">Non-Ret: </span><span className="font-mono font-medium text-rose-600">{it.nonReturnableQty || 0}</span></div>
+                        <div><span className="text-muted-foreground">Remaining: </span><span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div>
+                        <div><span className="text-muted-foreground">Warehouse: </span><span className="font-medium truncate">{wh?.name || `#${it.warehouseId}`}</span></div>
+                        <div className="col-span-2"><span className="text-muted-foreground">Person: </span><span className="font-medium">{it.recorder?.personName || '—'}</span></div>
+                        <div className="col-span-2"><span className="text-muted-foreground">Recorder: </span><span className="font-mono text-[10px]">{it.recorder?.recorderCode}</span> <span className="text-muted-foreground">· {new Date(it.createdAt).toLocaleDateString()}</span></div>
+                      </div>
+                      {/* Non-Returnable reasons already applied (small badges) */}
+                      {it.nonReturnables && it.nonReturnables.length > 0 && (
+                        <div className="flex flex-wrap gap-1 pt-1 border-t">
+                          {it.nonReturnables.slice(0, 4).map(n => (<Badge key={n.id} className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[9px] h-4">{REASON_LABELS[n.reason] || n.reason} ×{n.quantity}</Badge>))}
+                          {it.nonReturnables.length > 4 && <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[9px] h-4">+{it.nonReturnables.length - 4} more</Badge>}
+                        </div>
+                      )}
+                    </CardContent></Card>
+                  )
+                  })}
+                </div>
+
+                {/* Desktop: table */}
+                <div className="hidden sm:block rounded-md border overflow-hidden"><Table>
+                  <TableHeader><TableRow>
+                    <TableHead className="h-7 text-[10px]">Product</TableHead>
+                    <TableHead className="h-7 text-[10px]">Person</TableHead>
+                    <TableHead className="h-7 text-[10px]">Recorder</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right w-14">Out</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right w-16">Returned</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right w-16">Non-Ret</TableHead>
+                    <TableHead className="h-7 text-[10px] text-right w-16">Remaining</TableHead>
+                    <TableHead className="h-7 text-[10px] w-28">Reasons</TableHead>
+                    <TableHead className="h-7 w-24 text-right">Actions</TableHead>
+                  </TableRow></TableHeader>
+                  <TableBody>
+                    {paged.map(it => {
+                      const wh = warehouses.find(w => w.id === it.warehouseId)
+                      return (<TableRow key={it.id}>
+                        <TableCell className="py-1 text-[11px]"><div className="font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`}</div></TableCell>
+                        <TableCell className="py-1 text-[11px]">{it.recorder?.personName || '—'}</TableCell>
+                        <TableCell className="py-1 text-[11px]"><span className="font-mono">{it.recorder?.recorderCode}</span><div className="text-[9px] text-muted-foreground">{new Date(it.createdAt).toLocaleDateString()}</div></TableCell>
+                        <TableCell className="py-1 text-[11px] text-right font-mono">{it.quantity} <span className="text-muted-foreground">{it.unit}</span></TableCell>
+                        <TableCell className="py-1 text-[11px] text-right font-mono text-emerald-600">{it.returnedQty}</TableCell>
+                        <TableCell className="py-1 text-[11px] text-right font-mono text-rose-600 font-semibold">{it.nonReturnableQty || 0}</TableCell>
+                        <TableCell className="py-1 text-[11px] text-right font-mono text-violet-600 font-semibold">{it.remainingQty}</TableCell>
+                        <TableCell className="py-1">
+                          {it.nonReturnables && it.nonReturnables.length > 0 ? (
+                            <div className="flex flex-wrap gap-0.5">{it.nonReturnables.slice(0, 2).map(n => (<Badge key={n.id} className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[8px] h-3.5 px-1">{REASON_LABELS[n.reason] || n.reason}×{n.quantity}</Badge>))}{it.nonReturnables.length > 2 && <span className="text-[9px] text-muted-foreground">+{it.nonReturnables.length - 2}</span>}</div>
+                          ) : <span className="text-[9px] text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="py-1 text-right">
+                          <div className="flex items-center justify-end gap-0.5">
+                            <Button size="sm" variant="ghost" onClick={() => openReturnSourceDlg(it)} className="h-5 w-5 p-0 text-muted-foreground" title="View source record"><Eye className="w-3 h-3" /></Button>
+                            <Button size="sm" onClick={() => openNonRetDlg(it)} className="h-5 text-[10px] bg-rose-600 text-white px-1.5" title="Mark as non-returnable (with reason)"><Ban className="w-2.5 h-2.5 mr-0.5" />Non-Ret</Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>)
+                    })}
+                  </TableBody>
+                </Table></div>
+                <Pager page={safePage} totalPages={totalPages} onPageChange={setNonRetPage} />
+              </>)
+            })()}
+          </div>
+          )}
+
+          {/* ── Non-Returnable Records section (inside the Non-Returnable tab, below the items) ── */}
+          {returnsTab === 'non_returnable' && (
+          <div className="mt-4 space-y-3 border-t pt-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-1.5">
+                <Ban className="w-3.5 h-3.5 text-rose-500" />
+                <span className="text-xs font-semibold">Non-Returnable Records</span>
+                <Badge className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[9px] h-4">{groupNonRetRecords.length}</Badge>
+                <span className="text-[10px] text-muted-foreground hidden sm:inline">· group non-returnable decisions created via "New Group Non-Returnable" (each records the reason per item; does NOT restock inventory)</span>
+              </div>
+              {groupNonRetRecordsLoading && <Loader2 className="w-3 h-3 animate-spin text-rose-500" />}
+            </div>
+            {groupNonRetRecordsLoading ? (
+              <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-rose-500" /><span className="ml-2 text-sm text-muted-foreground">Loading non-returnable records...</span></div>
+            ) : groupNonRetRecords.length === 0 ? (
+              <div className="text-center text-sm text-muted-foreground py-10">No non-returnable records yet. Click <span className="font-semibold text-rose-600">New Group Non-Returnable</span> to create one, or mark individual items from the list above.</div>
+            ) : (() => {
+              const recTotalPages = Math.ceil(groupNonRetRecords.length / NON_RET_RECORDS_PER_PAGE) || 1
+              const recSafePage = Math.min(nonRetRecordsPage, recTotalPages)
+              const recPaged = groupNonRetRecords.slice((recSafePage - 1) * NON_RET_RECORDS_PER_PAGE, recSafePage * NON_RET_RECORDS_PER_PAGE)
+              return (<>
+                <div className="space-y-1.5">
+                  {recPaged.map(r => {
+                    const isExp = expandedNonRetRec === r.id
+                    return (<Card key={r.id} className="shadow-sm border-rose-100 dark:border-rose-500/20"><CardContent className="p-2.5">
+                      <div className="flex items-center justify-between cursor-pointer" onClick={() => setExpandedNonRetRec(isExp ? null : r.id)}>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <ChevronRight className={`w-3.5 h-3.5 text-rose-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />
+                          <span className="text-xs font-mono font-semibold">{r.recorderCode}</span>
+                          <Badge className={`${r.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' : r.status === 'partial' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'} border-0 text-[9px] h-4`}>{r.status}</Badge>
+                          {r.personName && <span className="text-xs font-medium">{r.personName}</span>}
+                          <span className="text-[10px] text-muted-foreground">{r.itemCount} item(s) · {r.totalQty} qty</span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+                      </div>
+                      {isExp && (<div className="mt-2 space-y-2 border-t pt-2">
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                          {r.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5" />{r.personPhone}</span>}
+                          {r.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5" />{r.personEmail}</span>}
+                          {r.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" />{r.personAddress}</span>}
+                          {r.notes && <span className="flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{r.notes}</span>}
+                        </div>
+                        {r.nonReturnables && r.nonReturnables.length > 0 ? (
+                          <div className="rounded-md border overflow-hidden">
+                            <Table>
+                              <TableHeader><TableRow>
+                                <TableHead className="h-6 text-[10px]">Product</TableHead>
+                                <TableHead className="h-6 text-[10px] text-right w-16">Qty</TableHead>
+                                <TableHead className="h-6 text-[10px] w-32">Reason</TableHead>
+                                <TableHead className="h-6 text-[10px]">Detail / Notes</TableHead>
+                                <TableHead className="h-6 text-[10px] w-28">Decided At</TableHead>
+                              </TableRow></TableHeader>
+                              <TableBody>
+                                {r.nonReturnables.map(nr => (
+                                  <TableRow key={nr.id}>
+                                    <TableCell className="py-1 text-[11px] font-medium">{nr.stockOutItem?.product?.name || `#${nr.stockOutItemId}`}</TableCell>
+                                    <TableCell className="py-1 text-[11px] text-right font-mono text-rose-600">×{nr.quantity}</TableCell>
+                                    <TableCell className="py-1 text-[11px]"><Badge className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[9px] h-4">{REASON_LABELS[nr.reason] || nr.reason}</Badge></TableCell>
+                                    <TableCell className="py-1 text-[11px] text-muted-foreground">{nr.reasonDetail || nr.notes || '—'}</TableCell>
+                                    <TableCell className="py-1 text-[10px] text-muted-foreground">{new Date(nr.decidedAt).toLocaleString()}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        ) : <div className="text-xs text-muted-foreground">No items in this record.</div>}
+                      </div>)}
+                    </CardContent></Card>)
+                  })}
+                </div>
+                <Pager page={recSafePage} totalPages={recTotalPages} onPageChange={setNonRetRecordsPage} />
               </>)
             })()}
           </div>
@@ -2901,10 +3481,28 @@ export default function IMSApp() {
                     </div>
                   )}
                 </div>
+                {/* Non-Returnable history (mirrors Return history, rose theme) */}
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-1.5">
+                  <SectionHeader icon={Ban}>Non-Returnable History ({it.nonReturnables?.length || 0})</SectionHeader>
+                  {(!it.nonReturnables || it.nonReturnables.length === 0) ? (
+                    <div className="text-[11px] text-muted-foreground text-center py-2">No non-returnable decisions yet.</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {it.nonReturnables.map(n => (
+                        <div key={n.id} className="bg-background border rounded-md p-1.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0"><div className="text-[11px] font-mono flex items-center gap-1"><span className="text-rose-600 font-semibold">×{n.quantity}</span> <span className="text-muted-foreground">{n.unit}</span><Badge className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[9px] h-4">{REASON_LABELS[n.reason] || n.reason}</Badge></div>
+                            {(n.reasonDetail || n.notes) && <div className="text-[10px] text-muted-foreground italic truncate">{n.reasonDetail || n.notes}</div>}</div>
+                          <div className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">{new Date(n.decidedAt).toLocaleString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>)
             })()}
             <DialogFooter>
               <Button variant="ghost" onClick={() => setReturnSourceDlg(s => ({ ...s, open: false }))} className="text-muted-foreground">Close</Button>
+              {returnSourceDlg.item && returnSourceDlg.item.isReturnable && returnSourceDlg.item.remainingQty > 0 && <Button onClick={() => { const it: ReturnableItem | null = returnSourceDlg.item; if (!it) return; setReturnSourceDlg(s => ({ ...s, open: false })); openNonRetDlg(it); }} className="bg-gradient-to-r from-rose-600 to-red-600 text-white"><Ban className="w-4 h-4 mr-1.5" />Mark Non-Returnable</Button>}
               {returnSourceDlg.item && <Button onClick={() => { const it: ReturnableItem | null = returnSourceDlg.item; if (!it) return; setReturnSourceDlg(s => ({ ...s, open: false })); openReturnDlg(it); }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white"><RotateCcw className="w-4 h-4 mr-1.5" />Return This Item</Button>}
             </DialogFooter>
           </DialogContent>
@@ -3160,6 +3758,301 @@ export default function IMSApp() {
               <Button variant="ghost" onClick={() => setGroupReturnDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={groupReturnDlg.submitting}>{t(locale, 'cancel')}</Button>
               <Button onClick={submitGroupReturn} disabled={groupReturnDlg.submitting || groupReturnDlg.items.filter(i => (groupReturnDlg.mode === 'new' || i.selected) && i.qty > 0).length === 0 || (groupReturnDlg.mode === 'new' && !groupReturnDlg.personName.trim())} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">
                 {groupReturnDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Create Return Record
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── NON-RETURNABLES: single-item "mark as non-returnable" dialog (mirrors returnDlg) ─── */}
+        <Dialog open={nonRetDlg.open} onOpenChange={o => setNonRetDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Ban className="w-4 h-4 text-rose-500" />Mark as Non-Returnable</DialogTitle></DialogHeader>
+            {nonRetDlg.item && (() => { const it = nonRetDlg.item; const wh = warehouses.find(w => w.id === it.warehouseId)
+              return (<div className="space-y-2.5">
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-1">
+                  <div className="text-sm font-semibold">{it.product?.name}</div>
+                  <div className="text-[11px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `WH #${it.warehouseId}`}</div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] mt-1">
+                    <span className="text-muted-foreground">Out: <span className="font-mono font-medium text-foreground">{it.quantity} {it.unit}</span></span>
+                    <span className="text-muted-foreground">Returned: <span className="font-mono font-medium text-emerald-600">{it.returnedQty}</span></span>
+                    <span className="text-muted-foreground">Non-Ret: <span className="font-mono font-medium text-rose-600">{it.nonReturnableQty || 0}</span></span>
+                    <span className="text-muted-foreground">Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></span>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">Recorder: <span className="font-mono">{it.recorder?.recorderCode}</span> · Person: <span className="font-medium text-foreground">{it.recorder?.personName || '—'}</span></div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Ban}>Non-Returnable Decision</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={Hash}>Quantity to mark (max {it.remainingQty})</IconLabel>
+                    <Input type="number" min={1} max={it.remainingQty} value={nonRetDlg.qty} onChange={e => setNonRetDlg(s => ({ ...s, qty: parseInt(e.target.value) || 0 }))} className="h-9 text-sm rounded-md" />
+                    <div className="flex gap-1.5 mt-1">
+                      <Button size="sm" variant="outline" onClick={() => setNonRetDlg(s => ({ ...s, qty: it.remainingQty }))} className="h-6 text-[10px]">Full ({it.remainingQty})</Button>
+                      <Button size="sm" variant="outline" onClick={() => setNonRetDlg(s => ({ ...s, qty: Math.max(1, Math.floor(it.remainingQty / 2)) }))} className="h-6 text-[10px]">Half</Button>
+                    </div>
+                  </div>
+                  <div className="space-y-1"><IconLabel icon={AlertTriangle}>Reason <span className="text-rose-500">*</span></IconLabel>
+                    <PaginatedCombobox
+                      items={NON_RETURNABLE_REASONS.map(r => ({ value: r.key, label: r.label }))}
+                      value={nonRetDlg.reason || ''}
+                      onChange={v => setNonRetDlg(s => ({ ...s, reason: v }))}
+                      placeholder="Choose a reason..."
+                      perPage={12}
+                      contentClassName="w-64"
+                    />
+                  </div>
+                  {nonRetDlg.reason === 'other' && (
+                    <div className="space-y-1"><IconLabel icon={FileText}>Reason Detail <span className="text-rose-500">*</span></IconLabel>
+                      <Input value={nonRetDlg.reasonDetail} onChange={e => setNonRetDlg(s => ({ ...s, reasonDetail: e.target.value }))} placeholder="Specify the reason..." className="h-9 text-sm rounded-md" />
+                    </div>
+                  )}
+                  <div className="space-y-1"><IconLabel icon={FileText}>Notes (optional)</IconLabel>
+                    <Textarea value={nonRetDlg.notes} onChange={e => setNonRetDlg(s => ({ ...s, notes: e.target.value }))} placeholder="Additional context, condition, inspector notes, etc." className="rounded-md min-h-[60px]" />
+                  </div>
+                </div>
+                <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-md p-2 text-[11px] text-rose-700 dark:text-rose-400 flex items-start gap-1.5">
+                  <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
+                  <span>This will mark <span className="font-mono font-semibold">{nonRetDlg.qty || 0} {it.unit}</span> of <span className="font-semibold">{it.product?.name}</span> as non-returnable with reason <span className="font-semibold">{REASON_LABELS[nonRetDlg.reason] || nonRetDlg.reason || '(none selected)'}</span>. Inventory is NOT restocked — the units are simply recorded as non-returnable.</span>
+                </div>
+              </div>)
+            })()}
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setNonRetDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={nonRetDlg.submitting}>{t(locale, 'cancel')}</Button>
+              <Button onClick={submitNonReturnable} disabled={nonRetDlg.submitting || !nonRetDlg.qty || !nonRetDlg.reason || (nonRetDlg.item ? nonRetDlg.qty > nonRetDlg.item.remainingQty : true) || (nonRetDlg.reason === 'other' && !nonRetDlg.reasonDetail.trim())} className="bg-gradient-to-r from-rose-600 to-red-600 text-white">
+                {nonRetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Ban className="w-4 h-4 mr-1.5" />}Mark Non-Returnable
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── NON-RETURNABLES: group dialog (mirrors groupReturnDlg, with per-item reason dropdown) ─── */}
+        <Dialog open={groupNonRetDlg.open} onOpenChange={o => setGroupNonRetDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-2xl w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Users className="w-4 h-4 text-rose-500" />{groupNonRetDlg.mode === 'new' ? 'New Group Non-Returnable Record' : `Group Non-Returnable: ${groupNonRetDlg.personKey}`}</DialogTitle>
+              <p className="text-[11px] text-muted-foreground font-normal">{groupNonRetDlg.mode === 'new' ? 'Create a brand-new non-returnable record (NR-YYYY-NNNN): enter the inspector/party, add flagged items from any stock-out, choose a reason per item, then submit. This records the decision without restocking inventory.' : 'Review the person, confirm the restock warehouse, then set the quantity + reason per item. Submitting creates a new NR- non-returnable record.'}</p>
+            </DialogHeader>
+            <div className="space-y-2.5 max-h-[62vh] overflow-y-auto pr-1">
+              {/* ── Person header (editable) ── */}
+              <div className="bg-rose-50/60 dark:bg-rose-500/5 rounded-lg p-2.5 space-y-2 border border-rose-100 dark:border-rose-500/20">
+                <SectionHeader icon={Truck}>Inspector / Party (making the decision)</SectionHeader>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={groupNonRetDlg.personName} onChange={e => setGroupNonRetDlg(s => ({ ...s, personName: e.target.value }))} placeholder="Enter name..." className="h-8 text-sm rounded-md" /></div>
+                  <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={groupNonRetDlg.personPhone} onChange={e => setGroupNonRetDlg(s => ({ ...s, personPhone: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
+                  <div className="space-y-1"><IconLabel icon={Mail}>Email</IconLabel><Input value={groupNonRetDlg.personEmail} onChange={e => setGroupNonRetDlg(s => ({ ...s, personEmail: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
+                  <div className="space-y-1"><IconLabel icon={MapPin}>Address</IconLabel><Input value={groupNonRetDlg.personAddress} onChange={e => setGroupNonRetDlg(s => ({ ...s, personAddress: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
+                </div>
+              </div>
+
+              {/* ── Item picker (NEW mode only) — search + ADVANCED collapsible filters ── */}
+              {groupNonRetDlg.mode === 'new' && (
+                <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Search className="w-3 h-3" />Add Flagged Items to Mark</span>
+                    {groupNonRetDlg.loadingAvailable && <Loader2 className="w-3 h-3 animate-spin text-rose-500" />}
+                  </div>
+                  <Input value={groupNonRetDlg.itemSearch} onChange={e => setGroupNonRetDlg(s => ({ ...s, itemSearch: e.target.value, availPage: 1 }))} placeholder="Search by product, SKU, person, or recorder code..." className="h-8 text-xs" />
+                  {(() => {
+                    const advActive = (groupNonRetDlg.filterWarehouse !== '' ? 1 : 0)
+                      + (groupNonRetDlg.filterCategory !== '' ? 1 : 0)
+                      + (groupNonRetDlg.filterPerson.trim() ? 1 : 0)
+                      + (groupNonRetDlg.filterDateFrom ? 1 : 0)
+                      + (groupNonRetDlg.filterDateTo ? 1 : 0)
+                      + (groupNonRetDlg.filterProgress ? 1 : 0)
+                    const clearAdv = () => setGroupNonRetDlg(s => ({ ...s, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', availPage: 1 }))
+                    return (
+                      <FilterPanel
+                        activeCount={advActive}
+                        onClear={clearAdv}
+                        title="Advanced Filters"
+                        defaultOpen={false}
+                        resultLabel={`${groupNonRetDlg.availableItems.length} flagged item(s)`}
+                      >
+                        <FilterField label="Warehouse" width="w-44">
+                          <Popover open={groupNonRetDlg.whComboOpen} onOpenChange={o => setGroupNonRetDlg(s => ({ ...s, whComboOpen: o, whComboSearch: o ? s.whComboSearch : '' }))}>
+                            <PopoverTrigger asChild>
+                              <Button variant="outline" role="combobox" className="h-8 text-xs justify-between w-full font-normal px-2">
+                                <span className="truncate">{groupNonRetDlg.filterWarehouse === '' ? 'All Warehouses' : (warehouses.find(w => w.id === groupNonRetDlg.filterWarehouse)?.name || `#${groupNonRetDlg.filterWarehouse}`)}</span>
+                                <ChevronDown className="w-3 h-3 opacity-50 shrink-0" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-44 p-0" align="start">
+                              <div className="p-1.5 border-b sticky top-0 bg-popover">
+                                <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-1.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search warehouse..." value={groupNonRetDlg.whComboSearch} onChange={e => setGroupNonRetDlg(s => ({ ...s, whComboSearch: e.target.value }))} className="h-7 text-xs pl-6" /></div>
+                              </div>
+                              <div className="max-h-40 overflow-y-auto">
+                                <button onClick={() => { setGroupNonRetDlg(s => ({ ...s, filterWarehouse: '', availPage: 1, whComboOpen: false })); }} className={`w-full text-left px-2 py-1.5 text-xs hover:bg-rose-50 dark:hover:bg-rose-500/10 ${groupNonRetDlg.filterWarehouse === '' ? 'bg-rose-50 dark:bg-rose-500/10 font-medium text-rose-700 dark:text-rose-400' : ''}`}>All Warehouses</button>
+                                {warehouses.filter(w => { const s = groupNonRetDlg.whComboSearch.toLowerCase(); return !s || w.name.toLowerCase().includes(s) || (w.code || '').toLowerCase().includes(s) }).map(w => (
+                                  <button key={w.id} onClick={() => { setGroupNonRetDlg(s => ({ ...s, filterWarehouse: w.id, availPage: 1, whComboOpen: false })); }} className={`w-full text-left px-2 py-1.5 text-xs hover:bg-rose-50 dark:hover:bg-rose-500/10 ${groupNonRetDlg.filterWarehouse === w.id ? 'bg-rose-50 dark:bg-rose-500/10 font-medium text-rose-700 dark:text-rose-400' : ''}`}>{w.name} <span className="text-[9px] text-muted-foreground font-mono">{w.code}</span></button>
+                                ))}
+                                {warehouses.filter(w => { const s = groupNonRetDlg.whComboSearch.toLowerCase(); return !s || w.name.toLowerCase().includes(s) || (w.code || '').toLowerCase().includes(s) }).length === 0 && <div className="px-2 py-2 text-[11px] text-muted-foreground text-center">No warehouse matches.</div>}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </FilterField>
+                        <FilterField label="Category" width="w-40">
+                          <PaginatedCombobox
+                            items={categories.map(c => ({ value: String(c.id), label: c.name }))}
+                            value={groupNonRetDlg.filterCategory === '' ? '_all' : String(groupNonRetDlg.filterCategory)}
+                            onChange={v => setGroupNonRetDlg(s => ({ ...s, filterCategory: v === '_all' ? '' : Number(v), availPage: 1 }))}
+                            allLabel="All Categories"
+                            placeholder="All Categories"
+                          />
+                        </FilterField>
+                        <FilterField label="Person / Supplier" width="w-44">
+                          <Input value={groupNonRetDlg.filterPerson} onChange={e => setGroupNonRetDlg(s => ({ ...s, filterPerson: e.target.value, availPage: 1 }))} placeholder="Name contains..." className="h-8 text-xs" />
+                        </FilterField>
+                        <FilterField label="Stock-Out From" width="w-40">
+                          <Input type="date" value={groupNonRetDlg.filterDateFrom} onChange={e => setGroupNonRetDlg(s => ({ ...s, filterDateFrom: e.target.value, availPage: 1 }))} className="h-8 text-xs" />
+                        </FilterField>
+                        <FilterField label="Stock-Out To" width="w-40">
+                          <Input type="date" value={groupNonRetDlg.filterDateTo} onChange={e => setGroupNonRetDlg(s => ({ ...s, filterDateTo: e.target.value, availPage: 1 }))} className="h-8 text-xs" />
+                        </FilterField>
+                        <FilterField label="Progress" width="w-40">
+                          <Select value={groupNonRetDlg.filterProgress || '_all'} onValueChange={v => setGroupNonRetDlg(s => ({ ...s, filterProgress: v === '_all' ? '' : v as 'none' | 'partial' | 'full', availPage: 1 }))}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                            <SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="none">Not started</SelectItem><SelectItem value="partial">Partial</SelectItem><SelectItem value="full">Fully resolved</SelectItem></SelectContent>
+                          </Select>
+                        </FilterField>
+                      </FilterPanel>
+                    )
+                  })()}
+                  <div className="max-h-56 overflow-y-auto rounded-md border bg-background">
+                    {(() => {
+                      const q = groupNonRetDlg.itemSearch.toLowerCase().trim()
+                      const personQ = groupNonRetDlg.filterPerson.toLowerCase().trim()
+                      const addedIds = new Set(groupNonRetDlg.items.map(x => x.item.id))
+                      const avail = groupNonRetDlg.availableItems
+                        .filter(it => !addedIds.has(it.id))
+                        .filter(it => !q || (it.product?.name || '').toLowerCase().includes(q) || (it.product?.sku || '').toLowerCase().includes(q) || (it.recorder?.personName || '').toLowerCase().includes(q) || (it.recorder?.recorderCode || '').toLowerCase().includes(q))
+                        .filter(it => groupNonRetDlg.filterWarehouse === '' || it.warehouseId === groupNonRetDlg.filterWarehouse)
+                        .filter(it => groupNonRetDlg.filterCategory === '' || it.product?.categoryId === groupNonRetDlg.filterCategory)
+                        .filter(it => !personQ || (it.recorder?.personName || '').toLowerCase().includes(personQ))
+                        .filter(it => !groupNonRetDlg.filterDateFrom || new Date(it.createdAt || it.recorder?.createdAt || '') >= new Date(groupNonRetDlg.filterDateFrom + 'T00:00:00'))
+                        .filter(it => !groupNonRetDlg.filterDateTo || new Date(it.createdAt || it.recorder?.createdAt || '') <= new Date(groupNonRetDlg.filterDateTo + 'T23:59:59'))
+                        .filter(it => {
+                          if (!groupNonRetDlg.filterProgress) return true
+                          if (groupNonRetDlg.filterProgress === 'none') return it.returnedQty <= 0 && it.nonReturnableQty <= 0
+                          if (groupNonRetDlg.filterProgress === 'partial') return (it.returnedQty > 0 || it.nonReturnableQty > 0) && it.remainingQty > 0
+                          if (groupNonRetDlg.filterProgress === 'full') return it.remainingQty <= 0
+                          return true
+                        })
+                      if (groupNonRetDlg.loadingAvailable) return <div className="text-center text-[11px] text-muted-foreground py-3">Loading flagged items...</div>
+                      if (avail.length === 0) return <div className="text-center text-[11px] text-muted-foreground py-3">{addedIds.size === groupNonRetDlg.availableItems.length ? 'All flagged items added.' : 'No items match your filters.'}</div>
+                      const perPage = 8
+                      const totalPages = Math.ceil(avail.length / perPage) || 1
+                      const safePage = Math.min(groupNonRetDlg.availPage, totalPages)
+                      const paged = avail.slice((safePage - 1) * perPage, safePage * perPage)
+                      return (<>
+                        <div className="divide-y">
+                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId)
+                            return (<div key={it.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-rose-50/50 dark:hover:bg-rose-500/5">
+                              <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span></div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
+                              <Button size="sm" variant="outline" onClick={() => addNonRetItemToGroup(it)} className="h-6 text-[10px] px-2 shrink-0 border-rose-300 text-rose-700 dark:border-rose-500/40 dark:text-rose-400"><Plus className="w-2.5 h-2.5 mr-0.5" />Add</Button>
+                            </div>)
+                          })}
+                        </div>
+                        {totalPages > 1 && (
+                          <div className="flex items-center justify-between gap-1 p-1 border-t bg-muted/30">
+                            <span className="text-[10px] text-muted-foreground px-1">{safePage}/{totalPages} · {avail.length} available</span>
+                            <div className="flex items-center gap-1">
+                              <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setGroupNonRetDlg(s => ({ ...s, availPage: safePage - 1 }))} className="h-6 w-6 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+                              <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setGroupNonRetDlg(s => ({ ...s, availPage: safePage + 1 }))} className="h-6 w-6 p-0"><ChevronRight className="w-3 h-3" /></Button>
+                            </div>
+                          </div>
+                        )}
+                      </>)
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Items table (per-row qty + reason dropdown + remove/switch) ── */}
+              <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Items to Mark ({groupNonRetDlg.items.length})</span>
+                  {groupNonRetDlg.mode === 'prefilled' && <div className="flex items-center gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => setGroupNonRetDlg(s => ({ ...s, items: s.items.map(x => ({ ...x, selected: true })) }))} className="h-5 text-[10px] text-muted-foreground px-1.5">Select all</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setGroupNonRetDlg(s => ({ ...s, items: s.items.map(x => ({ ...x, selected: false })) }))} className="h-5 text-[10px] text-muted-foreground px-1.5">None</Button>
+                  </div>}
+                </div>
+                {groupNonRetDlg.items.length === 0 ? <div className="text-center text-sm text-muted-foreground py-4">{groupNonRetDlg.mode === 'new' ? 'No items added yet — search and add items above.' : 'No items in this group.'}</div> : (
+                  (() => {
+                    const perPage = 6
+                    const totalPages = Math.ceil(groupNonRetDlg.items.length / perPage) || 1
+                    const safePage = Math.min(groupNonRetDlg.itemsPage, totalPages)
+                    const paged = groupNonRetDlg.items.slice((safePage - 1) * perPage, safePage * perPage)
+                    return (<>
+                  <div className="space-y-1.5">
+                    {paged.map(entry => {
+                      const it = entry.item; const wh = warehouses.find(w => w.id === it.warehouseId)
+                      return (<div key={it.id} className={`rounded-md border p-2 ${entry.selected ? 'bg-rose-50/40 dark:bg-rose-500/5 border-rose-200 dark:border-rose-500/30' : 'bg-muted/20'}`}>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {groupNonRetDlg.mode === 'prefilled' ? (
+                              <Switch checked={entry.selected} onCheckedChange={v => setGroupNonRetDlg(s => ({ ...s, items: s.items.map(x => x.item.id === it.id ? { ...x, selected: v } : x) }))} className="scale-75" />
+                            ) : (
+                              <Button size="sm" variant="ghost" onClick={() => removeNonRetItemFromGroup(it.id)} className="h-5 w-5 p-0 text-red-500 shrink-0" title="Remove"><X className="w-3 h-3" /></Button>
+                            )}
+                            <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `#${it.warehouseId}`}{groupNonRetDlg.mode === 'new' && <span> · {it.recorder?.personName || '—'}</span>}</div></div>
+                          </div>
+                          <div className="text-[10px] text-muted-foreground shrink-0 text-right">
+                            <div>Out: <span className="font-mono font-medium text-foreground">{it.quantity}</span></div>
+                            <div>Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5 pl-6">
+                          <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Qty:</Label>
+                          <Input type="number" min={1} max={it.remainingQty} value={entry.qty} onChange={e => setGroupNonRetDlg(s => ({ ...s, items: s.items.map(x => x.item.id === it.id ? { ...x, qty: parseInt(e.target.value) || 0 } : x) }))} className="h-6 text-[11px] w-16" />
+                          <Button size="sm" variant="outline" onClick={() => setGroupNonRetDlg(s => ({ ...s, items: s.items.map(x => x.item.id === it.id ? { ...x, qty: it.remainingQty } : x) }))} className="h-6 text-[10px] px-1.5">Full</Button>
+                          <Label className="text-[10px] text-muted-foreground whitespace-nowrap ml-1">Reason <span className="text-rose-500">*</span>:</Label>
+                          <div className="flex-1 min-w-[140px]">
+                            <PaginatedCombobox
+                              items={NON_RETURNABLE_REASONS.map(r => ({ value: r.key, label: r.label }))}
+                              value={entry.reason || ''}
+                              onChange={v => setGroupNonRetDlg(s => ({ ...s, items: s.items.map(x => x.item.id === it.id ? { ...x, reason: v } : x) }))}
+                              placeholder="Choose reason..."
+                              perPage={12}
+                              compact
+                              contentClassName="w-56"
+                            />
+                          </div>
+                        </div>
+                        {entry.reason === 'other' && (
+                          <div className="flex items-center gap-1.5 pl-6 mt-1">
+                            <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Detail <span className="text-rose-500">*</span>:</Label>
+                            <Input value={entry.reasonDetail} onChange={e => setGroupNonRetDlg(s => ({ ...s, items: s.items.map(x => x.item.id === it.id ? { ...x, reasonDetail: e.target.value } : x) }))} placeholder="Specify the reason..." className="h-6 text-[11px] flex-1" />
+                          </div>
+                        )}
+                      </div>)
+                    })}
+                  </div>
+                      {totalPages > 1 && (
+                        <div className="flex items-center justify-between gap-1 pt-1">
+                          <span className="text-[10px] text-muted-foreground">Page {safePage} of {totalPages} · {groupNonRetDlg.items.length} item(s)</span>
+                          <div className="flex items-center gap-1">
+                            <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setGroupNonRetDlg(s => ({ ...s, itemsPage: safePage - 1 }))} className="h-6 w-6 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+                            <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setGroupNonRetDlg(s => ({ ...s, itemsPage: safePage + 1 }))} className="h-6 w-6 p-0"><ChevronRight className="w-3 h-3" /></Button>
+                          </div>
+                        </div>
+                      )}
+                    </>)
+                    })()
+                  )}
+              </div>
+
+              {/* ── Notes ── */}
+              <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
+                <SectionHeader icon={FileText}>Group Notes (applies to all items in this record)</SectionHeader>
+                <Textarea value={groupNonRetDlg.notes} onChange={e => setGroupNonRetDlg(s => ({ ...s, notes: e.target.value }))} placeholder="Optional notes for this group non-returnable decision..." className="text-sm rounded-md min-h-[50px]" />
+              </div>
+
+              {/* ── Summary bar ── */}
+              <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-md p-2 text-[11px] text-rose-700 dark:text-rose-400">
+                {groupNonRetDlg.items.filter(i => (groupNonRetDlg.mode === 'new' || i.selected) && i.qty > 0 && i.reason).length} item(s) ready · Total qty to mark: {groupNonRetDlg.items.filter(i => (groupNonRetDlg.mode === 'new' || i.selected) && i.qty > 0 && i.reason).reduce((s, i) => s + i.qty, 0)}{groupNonRetDlg.items.some(i => (groupNonRetDlg.mode === 'new' || i.selected) && i.qty > 0 && !i.reason) && <span className="ml-2 text-amber-600">· some items missing a reason</span>}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setGroupNonRetDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={groupNonRetDlg.submitting}>{t(locale, 'cancel')}</Button>
+              <Button onClick={submitGroupNonReturnable} disabled={groupNonRetDlg.submitting || groupNonRetDlg.items.filter(i => (groupNonRetDlg.mode === 'new' || i.selected) && i.qty > 0 && i.reason).length === 0 || (groupNonRetDlg.mode === 'new' && !groupNonRetDlg.personName.trim())} className="bg-gradient-to-r from-rose-600 to-red-600 text-white">
+                {groupNonRetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Ban className="w-4 h-4 mr-1.5" />}Create Non-Returnable Record
               </Button>
             </DialogFooter>
           </DialogContent>

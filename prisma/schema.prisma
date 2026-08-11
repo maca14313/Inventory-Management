@@ -37,6 +37,7 @@ model Enterprise {
   stockInRecorders StockInRecorder[]
   stockOutRecorders StockOutRecorder[]
   returnRecorders ReturnRecorder[]
+  nonReturnableRecorders NonReturnableRecorder[]
   auditLogs       AuditLog[]
   lots            Lot[]
 }
@@ -357,6 +358,7 @@ model StockOutItem {
   product       Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse     Warehouse        @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   returns       Return[]
+  nonReturnables NonReturnable[]
 
   @@index([recorderId])
   @@index([productId])
@@ -403,6 +405,52 @@ model Return {
 
   @@index([stockOutItemId])
   @@index([returnRecorderId])
+}
+
+// ─── 15d. NonReturnableRecorder (a first-class record for a group "mark as non-returnable"
+//    decision — mirrors ReturnRecorder exactly so the UX parallels the Returns feature) ──
+model NonReturnableRecorder {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  recorderCode  String   @unique  // NR-YYYY-NNNN
+  personName    String   @default("")
+  personPhone   String   @default("")
+  personEmail   String   @default("")
+  personAddress String   @default("")
+  notes         String   @default("")
+  status        String   @default("completed")  // group decisions are processed immediately
+  itemCount     Int      @default(0)
+  totalQty      Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  nonReturnables NonReturnable[]
+
+  @@index([enterpriseId])
+}
+
+// ─── 15e. NonReturnable (tracks each "this item cannot be returned" decision against a
+//    StockOutItem, with a reason chosen from a fixed catalogue — mirrors Return) ──
+model NonReturnable {
+  id                       Int      @id @default(autoincrement())
+  stockOutItemId           Int
+  nonReturnableRecorderId  Int?
+  quantity                 Int      @default(0)
+  unit                     String   @default("piece")
+  reason                   String   // one of the NON_RETURNABLE_REASONS keys (e.g. "damaged")
+  reasonDetail             String   @default("")  // free-text note when reason="other"
+  notes                    String   @default("")  // additional operator notes
+  decidedAt                DateTime @default(now())
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  stockOutItem          StockOutItem           @relation(fields: [stockOutItemId], references: [id], onDelete: Cascade)
+  nonReturnableRecorder NonReturnableRecorder? @relation(fields: [nonReturnableRecorderId], references: [id], onDelete: SetNull)
+
+  @@index([stockOutItemId])
+  @@index([nonReturnableRecorderId])
+  @@index([reason])
 }
 
 // ─── 16. AuditLog ──────────────────────────────────────────

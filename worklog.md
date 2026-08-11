@@ -628,3 +628,77 @@ Stage Summary:
 - Replaced 23 large-data <Select> dropdowns (warehouses / categories / products / enterprises / branches) with PaginatedCombobox across all 6 list-page filter panels, the multi-item product registration form, the Stock In/Out Pick-mode product pickers, and the 7 create/edit dialogs (product, registerItem, stockIn, stockOut, stockOutItem, order, branch, warehouse, user, stockInRecorder). Cleaned up two now-unused `*PickSelectPage`/`*_PER_PAGE` state+constant pairs.
 - Lint clean (exit 0), TypeScript clean for src/, dev server compiling cleanly, browser-verified end-to-end: search + pagination + selection all work in Stock filter Warehouse+Category, Orders dialog Warehouse, Stock In Pick product, Stock Out Pick product (with stock badge).
 - Small/fixed selects (year/month, status, type, unit/measurement, role, progress, flagged-status) intentionally left as native <Select>.
+
+---
+Task ID: 12
+Agent: main
+Task: Add a "Non-Returnable" feature to the Returns page — items that "should be returned" (isReturnable=true) but cannot be returned for a reason chosen from a catalogue of ~66 reasons. Must mirror the Returns feature exactly (all features + style), with single-item + group operations, records, advanced filters, and pagination everywhere.
+
+Work Log:
+- prisma/schema.prisma:
+  - Added `NonReturnableRecorder` model (mirrors `ReturnRecorder`): id, enterpriseId, recorderCode "NR-YYYY-NNNN", personName/Phone/Email/Address, notes, status, itemCount, totalQty, timestamps, relation to NonReturnable[]
+  - Added `NonReturnable` model (mirrors `Return`): id, stockOutItemId, nonReturnableRecorderId?, quantity, unit, reason (key from NON_RETURNABLE_REASONS), reasonDetail (free-text for "other"), notes, decidedAt, timestamps, relations to StockOutItem + NonReturnableRecorder
+  - Added `nonReturnables NonReturnable[]` relation on Enterprise and StockOutItem
+  - Ran `bun run db:push` to apply schema
+- src/lib/db.ts:
+  - Added `NonReturnable` + `NonReturnableRecorder` interfaces
+  - Extended `ReturnableItem` with `nonReturnableQty: number` and `nonReturnables?: NonReturnable[]`
+  - Updated `findReturnable` to include `nonReturnables` in the Prisma include, compute `nonReturnableQty = sum(nonReturnables.quantity)`, and compute `remainingQty = quantity - returnedQty - nonReturnableQty` (so fully-resolved items drop from both Returns + Non-Returnable lists)
+  - Updated `findItemById` the same way (so the source-record dialog shows non-returnable history)
+  - Updated `processReturn` to include `nonReturnables` in the include and validate against the new remaining (qty - returned - nonReturnable) — prevents returning units already marked non-returnable
+  - Added `db.nonReturnables` domain (mirrors `db.returns`):
+    - `processNonReturnable(ctx, { stockOutItemId, quantity, reason, reasonDetail?, notes?, nonReturnableRecorderId? })` — creates a NonReturnable record (NO stock change), validates remaining > 0, audit log
+    - `processGroupNonReturnable(ctx, { personName, personPhone?, ..., items })` — creates a NEW NonReturnableRecorder (NR-YYYY-NNNN), loops processNonReturnable, updates recorder with itemCount/totalQty/status, audit log
+    - `findRecorders(ctx)` — lists all NonReturnableRecorder records with nested nonReturnables + stockOutItem + product
+- API routes:
+  - `src/app/api/non-returnables/route.ts` — GET (?recorders=1 lists NR- records; ?tab=flagged lists flagged items via db.returns.findReturnable) + POST (single-item decision)
+  - `src/app/api/non-returnables/group/route.ts` — POST (group decision, creates NR- record)
+  - `src/app/api/non-returnables/[id]/route.ts` — GET (single stock-out item with returns + nonReturnables, reuses db.returns.findItemById)
+- src/app/page.tsx:
+  - Added `NON_RETURNABLE_REASONS` constant — 66 reasons (the user's ~50 + 16 additional: contaminated, counterfeit-suspected, damaged-in-transit, dead-on-arrival→"dead", destroyed, disposed, electrical-fault, export-restricted, incompatible-item, liquid-damaged, manufacturer-defect, quarantine, recalled, refurbished, regulated-item, return-window-closed) + "other" (always last, triggers free-text reasonDetail)
+  - Added `REASON_LABELS` lookup map (reason key → human-readable label)
+  - Added `NonReturnable` + `NonReturnableRecorder` interfaces (frontend)
+  - Extended `ReturnableItem` interface with `nonReturnableQty` + `nonReturnables`
+  - Imported `Ban` icon from lucide-react
+  - Widened `returnsTab` state type to include `'non_returnable'`
+  - Added full non-returnable state block (mirrors returns state): nonRetTab, nonRetData, nonRetLoading, nonRetPage, nonRetGroupPage, nonRetRecordsPage, nonRetWhComboOpen/Search, 9 filter states (search, warehouse, dateFrom/To, recorder, progress, category, person, reason), nonRetDlg (single), groupNonRetDlg (group), groupNonRetRecords, expandedNonRetRec
+  - Added handlers: loadNonReturnables, loadGroupNonRetRecords, openNonRetDlg, submitNonReturnable, openGroupNonRetDlg, openNewGroupNonRetDlg, addNonRetItemToGroup, removeNonRetItemFromGroup, submitGroupNonReturnable
+  - Updated loadReturns to skip fetch for 'non_returnable' tab; updated the Returns useEffect to handle the new tab
+  - Updated Returns page header: added "New Group Non-Returnable" button (rose gradient) next to "New Group Return"
+  - Updated TabsList from 3 to 4 columns; added 4th "Non-Returnable" tab (Ban icon)
+  - Added "Mark Non-Returnable" button (rose, `Non-Ret` label) next to "Return" on all Flagged-tab items (mobile cards + desktop table)
+  - Added "Non-Ret" column to the Flagged-tab desktop table (conditional on returnsTab === 'flagged')
+  - Added "Non-Ret: X" line to the Flagged-tab mobile cards (only when nonReturnableQty > 0)
+  - Added full Non-Returnable tab content (rose theme throughout): FilterPanel with 9 filters (Search, Warehouse combobox, Category, Person, Out Date range, Recorder Code, Progress, Reason — the Reason filter is a PaginatedCombobox over NON_RETURNABLE_REASONS), Group Non-Returnable by Person bar (paginated), mobile cards + desktop table (with Non-Ret + Reasons columns), Pager
+  - Added Non-Returnable Records section below the items (paginated, expandable cards showing NR- code, person, status, itemCount, totalQty, and a table of nonReturnables with Product/Qty/Reason badge/Detail/Decided At)
+  - Added single-item "Mark as Non-Returnable" dialog (rose theme): item summary, qty input (Full/Half buttons), reason PaginatedCombobox (perPage=12, searchable), conditional reasonDetail input (when reason='other'), notes textarea, summary callout, submit button
+  - Added group "New Group Non-Returnable Record" dialog (rose theme, mirrors groupReturnDlg): person header (editable), item picker with advanced filters (Warehouse combobox, Category, Person, Date range, Progress), per-item qty + reason PaginatedCombobox + conditional reasonDetail, notes, summary bar, submit button
+  - Updated source-record dialog: added "Non-Returnable History" section (rose badges for each decision with reason + qty + decidedAt), added "Mark Non-Returnable" button to the footer (alongside "Return This Item")
+
+Verification:
+- `bun run db:push` → schema applied, Prisma client regenerated
+- `bun run lint` → 0 errors
+- `npx tsc --noEmit` → 0 errors in src/
+- curl tests:
+  - GET /api/non-returnables?recorders=1 → 200, returns NR- records
+  - GET /api/non-returnables?tab=flagged → 200, returns flagged items with nonReturnableQty + remainingQty
+  - POST /api/non-returnables → 200, creates NonReturnable record
+  - POST /api/non-returnables/group → 200, creates NR- record (NR-2026-0001)
+  - GET /api/non-returnables/22 → 200, returns item with nonReturnables[]
+- Browser verification (agent-browser, superadmin):
+  - Returns page shows 4 tabs (Flagged for Return · Other Stock-Outs · Return Records · Non-Returnable) + both "New Group Non-Returnable" (rose) + "New Group Return" (violet) buttons
+  - Flagged tab: each item has "Return" + "Non-Ret" buttons; desktop table has a "Non-Ret" column showing nonReturnableQty; mobile card shows "Non-Ret: X" when > 0
+  - Non-Returnable tab: FilterPanel with 9 filters (including Reason filter), Group Non-Returnable by Person bar (paginated), items table (Out/Returned/Non-Ret/Remaining/Reasons/Actions), Non-Returnable Records section below with expandable NR- cards
+  - Single-item dialog: qty defaults to full remaining, reason PaginatedCombobox opens with sticky search + 12 reasons per page + pagination, selecting "other" reveals reasonDetail input, submit creates NonReturnable + toast "Marked N piece of X as non-returnable (Reason)"
+  - Group dialog: person header + item picker (with advanced filters) + per-item reason dropdown + submit creates NR- record (NR-2026-0002) + toast "Created non-returnable record NR-2026-0002 — 1 item(s) marked"
+  - Source-record dialog: shows both "Return History" + "Non-Returnable History" sections; footer has both "Mark Non-Returnable" (rose) + "Return This Item" (violet) buttons
+  - Items disappear from lists when fully resolved (remaining = qty - returned - nonReturnable = 0)
+  - All dev.log API calls return 200, no runtime/compile errors
+
+Stage Summary:
+- New "Non-Returnable" feature mirrors the Returns feature 1:1 — same UX, same style (rose/red accent instead of violet), same feature set (single-item + group operations, records, advanced collapsible filters, pagination everywhere including PaginatedCombobox dropdowns).
+- 66 reasons in the catalogue (user's ~50 + 16 additional + "other" with free-text detail).
+- New schema: +NonReturnableRecorder, +NonReturnable models. Existing ReturnableItem extended with nonReturnableQty; remainingQty now = qty - returned - nonReturnable (so items drop from both lists when fully resolved).
+- New API: /api/non-returnables (GET+POST), /api/non-returnables/group (POST), /api/non-returnables/[id] (GET).
+- Frontend: 4th "Non-Returnable" tab on Returns page; "Mark Non-Returnable" buttons on Flagged-tab items + source-record dialog; "New Group Non-Returnable" button; single + group dialogs with per-item reason dropdown; Non-Returnable Records section; "Non-Returnable History" section in source-record dialog; "Non-Ret" column on Flagged-tab table; Reason filter in the Non-Returnable tab's advanced filters.
+- Lint clean, TypeScript clean, browser-verified end-to-end.

@@ -152,12 +152,29 @@ export interface ReturnRecorder {
   returns?: ReturnRecord[]
 }
 
+export interface NonReturnable {
+  id: number; stockOutItemId: number; nonReturnableRecorderId: number | null
+  quantity: number; unit: string; reason: string; reasonDetail: string; notes: string
+  decidedAt: string; createdAt: string; updatedAt: string
+  stockOutItem?: { id: number; productId: number; warehouseId: number; quantity: number; unit: string; product?: Product }
+}
+
+export interface NonReturnableRecorder {
+  id: number; enterpriseId: number; recorderCode: string
+  personName: string; personPhone: string; personEmail: string; personAddress: string
+  notes: string; status: string; itemCount: number; totalQty: number
+  createdAt: string; updatedAt: string
+  nonReturnables?: (NonReturnable & { stockOutItem?: { product: Product } })[]
+}
+
 export interface ReturnableItem extends StockOutItem {
   returnedQty: number
   remainingQty: number
+  nonReturnableQty: number
   product: Product
   recorder: StockOutRecorder
   returns: ReturnRecord[]
+  nonReturnables?: NonReturnable[]
 }
 
 export interface AuditLog {
@@ -2127,14 +2144,17 @@ export const db = {
           product: true,
           recorder: true,
           returns: { orderBy: { id: 'desc' } },
+          nonReturnables: { orderBy: { id: 'desc' } },
         },
         orderBy: { id: 'desc' },
       })
-      // Compute returnedQty & remainingQty; drop fully-returned items
+      // Compute returnedQty & nonReturnableQty; remaining = qty - returned - nonReturnable.
+      // Drop items fully resolved (remaining <= 0).
       const out: ReturnableItem[] = []
       for (const it of rows) {
         const returnedQty = it.returns.reduce((s, r) => s + r.quantity, 0)
-        const remainingQty = it.quantity - returnedQty
+        const nonReturnableQty = (it.nonReturnables || []).reduce((s, n) => s + n.quantity, 0)
+        const remainingQty = it.quantity - returnedQty - nonReturnableQty
         if (remainingQty <= 0) continue
         out.push({
           id: it.id,
@@ -2149,6 +2169,7 @@ export const db = {
           createdAt: it.createdAt.toISOString(),
           updatedAt: it.updatedAt.toISOString(),
           returnedQty,
+          nonReturnableQty,
           remainingQty,
           product: {
             id: it.product.id, enterpriseId: it.product.enterpriseId, name: it.product.name,
@@ -2169,6 +2190,11 @@ export const db = {
             quantity: r.quantity, unit: r.unit, notes: r.notes,
             returnedAt: r.returnedAt.toISOString(), createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
           })) as ReturnRecord[],
+          nonReturnables: (it.nonReturnables || []).map(n => ({
+            id: n.id, stockOutItemId: n.stockOutItemId, nonReturnableRecorderId: n.nonReturnableRecorderId,
+            quantity: n.quantity, unit: n.unit, reason: n.reason, reasonDetail: n.reasonDetail, notes: n.notes,
+            decidedAt: n.decidedAt.toISOString(), createdAt: n.createdAt.toISOString(), updatedAt: n.updatedAt.toISOString(),
+          })) as NonReturnable[],
         })
       }
       return out
@@ -2178,17 +2204,23 @@ export const db = {
     findItemById: async (ctx: AuthContext, stockOutItemId: number): Promise<ReturnableItem | null> => {
       const it = await prisma.stockOutItem.findUnique({
         where: { id: stockOutItemId },
-        include: { product: true, recorder: { include: { items: { include: { product: true } } } }, returns: { orderBy: { id: 'desc' } } },
+        include: {
+          product: true,
+          recorder: { include: { items: { include: { product: true } } } },
+          returns: { orderBy: { id: 'desc' } },
+          nonReturnables: { orderBy: { id: 'desc' } },
+        },
       })
       if (!it) return null
       if (ctx.role !== 'super_admin' && it.recorder.enterpriseId !== ctx.enterpriseId) return null
       const returnedQty = it.returns.reduce((s, r) => s + r.quantity, 0)
+      const nonReturnableQty = (it.nonReturnables || []).reduce((s, n) => s + n.quantity, 0)
       return {
         id: it.id, recorderId: it.recorderId, productId: it.productId, warehouseId: it.warehouseId,
         quantity: it.quantity, unit: it.unit, isReturnable: it.isReturnable,
         returnDeadline: it.returnDeadline ? it.returnDeadline.toISOString() : null,
         notes: it.notes, createdAt: it.createdAt.toISOString(), updatedAt: it.updatedAt.toISOString(),
-        returnedQty, remainingQty: it.quantity - returnedQty,
+        returnedQty, nonReturnableQty, remainingQty: it.quantity - returnedQty - nonReturnableQty,
         product: {
           id: it.product.id, enterpriseId: it.product.enterpriseId, name: it.product.name,
           sku: it.product.sku, description: it.product.description, categoryId: it.product.categoryId,
@@ -2215,6 +2247,11 @@ export const db = {
           quantity: r.quantity, unit: r.unit, notes: r.notes,
           returnedAt: r.returnedAt.toISOString(), createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
         })) as ReturnRecord[],
+        nonReturnables: (it.nonReturnables || []).map(n => ({
+          id: n.id, stockOutItemId: n.stockOutItemId, nonReturnableRecorderId: n.nonReturnableRecorderId,
+          quantity: n.quantity, unit: n.unit, reason: n.reason, reasonDetail: n.reasonDetail, notes: n.notes,
+          decidedAt: n.decidedAt.toISOString(), createdAt: n.createdAt.toISOString(), updatedAt: n.updatedAt.toISOString(),
+        })) as NonReturnable[],
       }
     },
 
@@ -2231,12 +2268,14 @@ export const db = {
       if (!d.quantity || d.quantity <= 0) throw new Error('Validation: quantity must be positive')
       const it = await prisma.stockOutItem.findUnique({
         where: { id: d.stockOutItemId },
-        include: { recorder: true, product: true, returns: true },
+        include: { recorder: true, product: true, returns: true, nonReturnables: true },
       })
       if (!it) throw new Error('StockOutItem not found')
       if (ctx.role !== 'super_admin' && it.recorder.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
       const returnedQty = it.returns.reduce((s, r) => s + r.quantity, 0)
-      const remaining = it.quantity - returnedQty
+      const nonReturnableQty = (it.nonReturnables || []).reduce((s, n) => s + n.quantity, 0)
+      const remaining = it.quantity - returnedQty - nonReturnableQty
+      if (remaining <= 0) throw new Error('Validation: this item is fully resolved (returned + non-returnable)')
       if (d.quantity > remaining) throw new Error(`Validation: only ${remaining} remaining to return`)
 
       const result = await prisma.$transaction(async (tx) => {
@@ -2426,6 +2465,189 @@ export const db = {
           } as any : undefined,
         })),
       })) as ReturnRecorder[]
+    },
+  },
+
+  // ── Non-Returnables (mark "should-be-returned" items as non-returnable, with a reason).
+  //    Mirrors the Returns domain exactly so the UX is parallel. The Non-Returnable decision
+  //    does NOT restock inventory — it just records that N units of a flagged stock-out item
+  //    cannot be returned, with a reason chosen from NON_RETURNABLE_REASONS.
+  //    The data source for the "items to mark" list is db.returns.findReturnable(tab='flagged')
+  //    — that function already returns nonReturnableQty + remainingQty for each flagged item.
+  nonReturnables: {
+    /**
+     * Process a single "mark as non-returnable" decision:
+     *  - validates that the stock-out item exists, is in the user's enterprise, and has enough remaining
+     *  - creates a NonReturnable record (no stock change)
+     *  - optionally links to a NonReturnableRecorder for group decisions
+     */
+    processNonReturnable: async (
+      ctx: AuthContext,
+      d: {
+        stockOutItemId: number
+        quantity: number
+        reason: string
+        reasonDetail?: string
+        notes?: string
+        nonReturnableRecorderId?: number
+      },
+    ): Promise<NonReturnable> => {
+      if (!d.stockOutItemId) throw new Error('Validation: stockOutItemId is required')
+      if (!d.quantity || d.quantity <= 0) throw new Error('Validation: quantity must be positive')
+      if (!d.reason) throw new Error('Validation: reason is required')
+      const it = await prisma.stockOutItem.findUnique({
+        where: { id: d.stockOutItemId },
+        include: { recorder: true, product: true, returns: true, nonReturnables: true },
+      })
+      if (!it) throw new Error('StockOutItem not found')
+      if (ctx.role !== 'super_admin' && it.recorder.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+      const returnedQty = it.returns.reduce((s, r) => s + r.quantity, 0)
+      const nonReturnableQty = (it.nonReturnables || []).reduce((s, n) => s + n.quantity, 0)
+      const remaining = it.quantity - returnedQty - nonReturnableQty
+      if (remaining <= 0) throw new Error('Validation: this item is fully resolved (returned + non-returnable)')
+      if (d.quantity > remaining) throw new Error(`Validation: only ${remaining} remaining to mark non-returnable`)
+
+      const result = await prisma.$transaction(async (tx) => {
+        const nr = await tx.nonReturnable.create({
+          data: {
+            stockOutItemId: d.stockOutItemId,
+            nonReturnableRecorderId: d.nonReturnableRecorderId ?? null,
+            quantity: d.quantity,
+            unit: it.unit,
+            reason: d.reason,
+            reasonDetail: d.reasonDetail || '',
+            notes: d.notes || '',
+          },
+        })
+        await tx.auditLog.create({
+          data: {
+            userId: ctx.userId, enterpriseId: it.recorder.enterpriseId,
+            action: 'non_returnable.process', entity: 'NonReturnable', entityId: nr.id,
+            details: `Marked ${d.quantity} ${it.unit} of ${it.product.name} (stock-out item #${it.id}, recorder ${it.recorder.recorderCode}) as non-returnable. Reason: ${d.reason}${d.reasonDetail ? ` — ${d.reasonDetail}` : ''}.${d.notes ? ` Notes: ${d.notes}.` : ''}`,
+          },
+        })
+        return nr
+      })
+      return {
+        id: result.id, stockOutItemId: result.stockOutItemId, nonReturnableRecorderId: result.nonReturnableRecorderId,
+        quantity: result.quantity, unit: result.unit, reason: result.reason, reasonDetail: result.reasonDetail, notes: result.notes,
+        decidedAt: result.decidedAt.toISOString(), createdAt: result.createdAt.toISOString(), updatedAt: result.updatedAt.toISOString(),
+      } as NonReturnable
+    },
+
+    /**
+     * Process a group "mark as non-returnable" decision: creates a NEW NonReturnableRecorder
+     * record (NR-YYYY-NNNN) — mirrors processGroupReturn — then processes each stock-out item
+     * linked to it. Stops on first error. The recorder persists even if some items fail.
+     */
+    processGroupNonReturnable: async (
+      ctx: AuthContext,
+      opts: {
+        personName: string
+        personPhone?: string
+        personEmail?: string
+        personAddress?: string
+        notes?: string
+        items: { stockOutItemId: number; quantity: number; reason: string; reasonDetail?: string; notes?: string }[]
+      },
+    ): Promise<{ recorder: NonReturnableRecorder; processed: number; lastError: string | null }> => {
+      if (!Array.isArray(opts.items) || opts.items.length === 0) throw new Error('Validation: no items to mark')
+      const firstItem = await prisma.stockOutItem.findUnique({
+        where: { id: opts.items[0].stockOutItemId },
+        include: { recorder: true },
+      })
+      if (!firstItem) throw new Error('StockOutItem not found')
+      const enterpriseId = firstItem.recorder.enterpriseId
+      // 1. Create the NonReturnableRecorder record (NR-YYYY-NNNN)
+      const recorder = await prisma.$transaction(async (tx) => {
+        const year = new Date().getFullYear()
+        const fullPrefix = `NR-${year}-`
+        const count = await tx.nonReturnableRecorder.count({ where: { recorderCode: { startsWith: fullPrefix } } })
+        const recorderCode = `${fullPrefix}${String(count + 1).padStart(4, '0')}`
+        return tx.nonReturnableRecorder.create({
+          data: {
+            enterpriseId,
+            recorderCode,
+            personName: opts.personName || '',
+            personPhone: opts.personPhone || '',
+            personEmail: opts.personEmail || '',
+            personAddress: opts.personAddress || '',
+            notes: opts.notes || '',
+            status: 'completed',
+            itemCount: 0,
+            totalQty: 0,
+          },
+        })
+      })
+      // 2. Process each decision, linking to the new recorder
+      const processed: NonReturnable[] = []
+      let lastError: string | null = null
+      for (const it of opts.items) {
+        try {
+          const r = await db.nonReturnables.processNonReturnable(ctx, { ...it, nonReturnableRecorderId: recorder.id })
+          processed.push(r)
+        } catch (e: any) {
+          lastError = e.message || String(e)
+          break
+        }
+      }
+      // 3. Update the recorder with final counts + status
+      const updated = await prisma.nonReturnableRecorder.update({
+        where: { id: recorder.id },
+        data: {
+          itemCount: processed.length,
+          totalQty: processed.reduce((s, r) => s + r.quantity, 0),
+          status: processed.length === opts.items.length ? 'completed' : (processed.length > 0 ? 'partial' : 'failed'),
+        },
+      })
+      await prisma.auditLog.create({
+        data: {
+          userId: ctx.userId, enterpriseId,
+          action: 'non_returnable.group', entity: 'NonReturnableRecorder', entityId: recorder.id,
+          details: `Created group non-returnable decision ${recorder.recorderCode} for ${opts.personName || '(no person)'}: ${processed.length}/${opts.items.length} item(s) processed, total qty ${processed.reduce((s, r) => s + r.quantity, 0)}${lastError ? `. Stopped: ${lastError}` : ''}`,
+        },
+      })
+      return {
+        recorder: {
+          id: updated.id, enterpriseId: updated.enterpriseId, recorderCode: updated.recorderCode,
+          personName: updated.personName, personPhone: updated.personPhone, personEmail: updated.personEmail,
+          personAddress: updated.personAddress, notes: updated.notes, status: updated.status,
+          itemCount: updated.itemCount, totalQty: updated.totalQty,
+          createdAt: updated.createdAt.toISOString(), updatedAt: updated.updatedAt.toISOString(),
+        } as NonReturnableRecorder,
+        processed: processed.length,
+        lastError,
+      }
+    },
+
+    /** List all NonReturnableRecorder records for the user's accessible enterprise (newest first). */
+    findRecorders: async (ctx: AuthContext): Promise<NonReturnableRecorder[]> => {
+      const where: Prisma.NonReturnableRecorderWhereInput = {}
+      if (ctx.role !== 'super_admin' && ctx.enterpriseId) where.enterpriseId = ctx.enterpriseId
+      const rows = await prisma.nonReturnableRecorder.findMany({
+        where,
+        include: { nonReturnables: { include: { stockOutItem: { include: { product: true } } } } },
+        orderBy: { id: 'desc' },
+      })
+      return rows.map(r => ({
+        id: r.id, enterpriseId: r.enterpriseId, recorderCode: r.recorderCode,
+        personName: r.personName, personPhone: r.personPhone, personEmail: r.personEmail,
+        personAddress: r.personAddress, notes: r.notes, status: r.status,
+        itemCount: r.itemCount, totalQty: r.totalQty,
+        createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
+        nonReturnables: r.nonReturnables.map(nr => ({
+          id: nr.id, stockOutItemId: nr.stockOutItemId, nonReturnableRecorderId: nr.nonReturnableRecorderId,
+          quantity: nr.quantity, unit: nr.unit, reason: nr.reason, reasonDetail: nr.reasonDetail, notes: nr.notes,
+          decidedAt: nr.decidedAt.toISOString(), createdAt: nr.createdAt.toISOString(), updatedAt: nr.updatedAt.toISOString(),
+          stockOutItem: nr.stockOutItem ? {
+            id: nr.stockOutItem.id, productId: nr.stockOutItem.productId, warehouseId: nr.stockOutItem.warehouseId,
+            quantity: nr.stockOutItem.quantity, unit: nr.stockOutItem.unit,
+            product: nr.stockOutItem.product ? {
+              id: nr.stockOutItem.product.id, name: nr.stockOutItem.product.name, sku: nr.stockOutItem.product.sku, unit: nr.stockOutItem.product.unit,
+            } as any : undefined,
+          } as any : undefined,
+        })),
+      })) as NonReturnableRecorder[]
     },
   },
 }
