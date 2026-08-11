@@ -210,6 +210,145 @@ function FilterField({ label, children, width }: { label: string; children: Reac
   )
 }
 
+// ─── PaginatedCombobox: reusable Popover-based combobox with search + pagination.
+// Used to replace every large-data <Select> (warehouses, categories, products, suppliers,
+// enterprises, branches) so that the dropdown stays fast and usable when the list grows.
+// Style mirrors the Returns warehouse combobox (violet accent for selected).
+type ComboItem = { value: string; label: string; sublabel?: string; badge?: string }
+function PaginatedCombobox({
+  items,
+  value,
+  onChange,
+  placeholder = 'Select...',
+  allLabel,
+  allValue = '_all',
+  perPage = 10,
+  triggerClassName = '',
+  contentClassName = 'w-44',
+  disabled = false,
+  compact = false,
+}: {
+  items: ComboItem[]
+  value: string | undefined | ''
+  onChange: (value: string) => void
+  placeholder?: string
+  allLabel?: string
+  allValue?: string
+  perPage?: number
+  triggerClassName?: string
+  contentClassName?: string
+  disabled?: boolean
+  compact?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+
+  // Resolve the currently selected item's label for the trigger button.
+  const selectedLabel = (() => {
+    if (allLabel && (value === allValue || value === '' || value === undefined)) return allLabel
+    const it = items.find(i => i.value === value)
+    if (it) return it.label
+    return ''
+  })()
+
+  const filtered = useMemo(() => {
+    const s = search.trim().toLowerCase()
+    if (!s) return items
+    return items.filter(i =>
+      i.label.toLowerCase().includes(s)
+      || (i.sublabel || '').toLowerCase().includes(s)
+      || (i.badge || '').toLowerCase().includes(s)
+    )
+  }, [items, search])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage))
+  const safePage = Math.min(page, totalPages)
+  const paged = filtered.slice((safePage - 1) * perPage, safePage * perPage)
+
+  const handlePick = (v: string) => {
+    onChange(v)
+    setOpen(false)
+    setSearch('')
+    setPage(1)
+  }
+
+  const onOpenChange = (o: boolean) => {
+    setOpen(o)
+    if (!o) { setSearch(''); setPage(1) }
+  }
+
+  const sizeCls = compact ? 'h-7 text-[11px] px-2' : 'h-8 text-xs px-2'
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          disabled={disabled}
+          className={`${sizeCls} justify-between w-full font-normal ${triggerClassName}`}
+        >
+          <span className="truncate">{selectedLabel || placeholder}</span>
+          <ChevronDown className="w-3 h-3 opacity-50 shrink-0" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className={`${contentClassName} p-0`} align="start">
+        {/* Sticky search */}
+        <div className="p-1.5 border-b sticky top-0 bg-popover z-10">
+          <div className="relative">
+            <Search className="w-3 h-3 text-muted-foreground absolute left-1.5 top-1/2 -translate-y-1/2" />
+            <Input
+              placeholder="Search..."
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1) }}
+              className="h-7 text-xs pl-6"
+            />
+          </div>
+        </div>
+        {/* Scrollable list */}
+        <div className="max-h-56 overflow-y-auto">
+          {allLabel && (
+            <button
+              type="button"
+              onClick={() => handlePick(allValue)}
+              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-violet-50 dark:hover:bg-violet-500/10 ${(value === allValue || value === '' || value === undefined) ? 'bg-violet-50 dark:bg-violet-500/10 font-medium text-violet-700 dark:text-violet-400' : ''}`}
+            >
+              {allLabel}
+            </button>
+          )}
+          {paged.map(it => (
+            <button
+              key={it.value}
+              type="button"
+              onClick={() => handlePick(it.value)}
+              className={`w-full text-left px-2 py-1.5 text-xs hover:bg-violet-50 dark:hover:bg-violet-500/10 flex items-center justify-between gap-1.5 ${value === it.value ? 'bg-violet-50 dark:bg-violet-500/10 font-medium text-violet-700 dark:text-violet-400' : ''}`}
+            >
+              <span className="truncate">{it.label}</span>
+              {it.sublabel && <span className="text-[9px] text-muted-foreground font-mono shrink-0">{it.sublabel}</span>}
+              {it.badge && <span className="text-[9px] text-muted-foreground shrink-0">{it.badge}</span>}
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className="px-2 py-2 text-[11px] text-muted-foreground text-center">No matches.</div>
+          )}
+        </div>
+        {/* Pagination footer (only when more than 1 page) */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between gap-1 px-1.5 py-1 border-t bg-popover">
+            <span className="text-[10px] text-muted-foreground">{safePage}/{totalPages} · {filtered.length} items</span>
+            <div className="flex items-center gap-0.5">
+              <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="h-5 w-5 p-0"><ChevronLeft className="w-2.5 h-2.5" /></Button>
+              <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="h-5 w-5 p-0"><ChevronRight className="w-2.5 h-2.5" /></Button>
+            </div>
+          </div>
+        )}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 export default function IMSApp() {
   const auth = useAuthStore()
   const { theme, setTheme } = useTheme()
@@ -358,9 +497,6 @@ export default function IMSApp() {
   const [submittingRecorder, setSubmittingRecorder] = useState<number | null>(null)
   const [addingItem, setAddingItem] = useState(false)
   const [dlgSubmitting, setDlgSubmitting] = useState(false)
-  // Pick mode: pagination inside select dropdown
-  const [stockOutPickSelectPage, setStockOutPickSelectPage] = useState(1)
-  const STOCK_OUT_PICK_SELECT_PER_PAGE = 20
   // Stock Out recorder list filters & pagination
   const [stockOutRecPage, setStockOutRecPage] = useState(1)
   const STOCK_OUT_REC_PER_PAGE = 5
@@ -447,8 +583,6 @@ export default function IMSApp() {
   const [stockInProductPage, setStockInProductPage] = useState(1)
   const STOCK_IN_ITEMS_PER_PAGE = 10
   const STOCK_IN_PRODUCTS_PER_PAGE = 8
-  const [stockInPickSelectPage, setStockInPickSelectPage] = useState(1)
-  const STOCK_IN_PICK_SELECT_PER_PAGE = 20
   const [stockInRecPage, setStockInRecPage] = useState(1)
   const STOCK_IN_REC_PER_PAGE = 5
   const [stockInFilterDateFrom, setStockInFilterDateFrom] = useState('')
@@ -1040,10 +1174,13 @@ export default function IMSApp() {
                   <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Name or SKU..." value={productSearch} onChange={e => { setProductSearch(e.target.value); setProductPage(1) }} className="h-8 text-xs pl-7" /></div>
                 </FilterField>
                 <FilterField label="Category" width="w-44">
-                  <Select value={productCategoryFilter === '' ? '_all' : String(productCategoryFilter)} onValueChange={v => { setProductCategoryFilter(v === '_all' ? '' : parseInt(v)); setProductPage(1) }}>
-                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-                    <SelectContent><SelectItem value="_all">All Categories</SelectItem>{categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <PaginatedCombobox
+                    items={categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+                    value={productCategoryFilter === '' ? '_all' : String(productCategoryFilter)}
+                    onChange={v => { setProductCategoryFilter(v === '_all' ? '' : parseInt(v)); setProductPage(1) }}
+                    allLabel="All Categories"
+                    placeholder="All"
+                  />
                 </FilterField>
                 <FilterField label="Status" width="w-36">
                   <Select value={productStatusFilter || '_all'} onValueChange={v => { setProductStatusFilter(v === '_all' ? '' : v as 'active' | 'inactive'); setProductPage(1) }}>
@@ -1133,7 +1270,12 @@ export default function IMSApp() {
                 </div>
                 <div className="bg-emerald-50/50 dark:bg-emerald-500/5 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={WHIcon}>Destination Warehouse</SectionHeader>
-                  <Select value={registerWarehouseId ? String(registerWarehouseId) : undefined} onValueChange={v => setRegisterWarehouseId(parseInt(v))}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w => w.isActive).map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select>
+                  <PaginatedCombobox
+                    items={warehouses.filter(w => w.isActive).map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))}
+                    value={registerWarehouseId ? String(registerWarehouseId) : ''}
+                    onChange={v => setRegisterWarehouseId(parseInt(v))}
+                    placeholder="Select warehouse..."
+                  />
                 </div>
                 {/* Items: mobile stacked cards, desktop table */}
                 <div className="sm:hidden space-y-2">
@@ -1143,7 +1285,12 @@ export default function IMSApp() {
                       <div className="flex items-center justify-between"><span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Item {idx + 1}</span><Button size="sm" variant="ghost" onClick={() => setRegisterRows(registerRows.filter((_, i) => i !== idx))} className="text-red-500 h-6 w-6 p-0"><Trash2 className="w-3 h-3" /></Button></div>
                       <Input value={row.name} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], name: e.target.value }; setRegisterRows(n) }} placeholder="Product name" className="h-8 text-xs rounded-md" />
                       <Input value={row.sku} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], sku: e.target.value }; setRegisterRows(n) }} placeholder="SKU-001" className="h-8 text-xs rounded-md" />
-                      <Select value={row.categoryId ? String(row.categoryId) : undefined} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}><SelectTrigger className="h-8 text-xs rounded-md"><SelectValue placeholder="Category —" /></SelectTrigger><SelectContent>{categories.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent></Select>
+                      <PaginatedCombobox
+                        items={categories.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => ({ value: String(c.id), label: c.name }))}
+                        value={row.categoryId ? String(row.categoryId) : ''}
+                        onChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}
+                        placeholder="Category —"
+                      />
                       <div className="grid grid-cols-2 gap-2">
                         <Select value={row.unit} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], unit: v }; setRegisterRows(n) }}><SelectTrigger className="h-8 text-xs rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-40">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
                         <Input type="number" min="0" value={row.quantity || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], quantity: parseInt(e.target.value) || 0 }; setRegisterRows(n) }} placeholder="Init Qty" className="h-8 text-xs rounded-md text-right" />
@@ -1173,7 +1320,13 @@ export default function IMSApp() {
                       <TableRow key={idx}>
                         <TableCell className="py-1"><Input value={row.name} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], name: e.target.value }; setRegisterRows(n) }} placeholder="Product name" className="h-7 text-[11px] rounded-md" /></TableCell>
                         <TableCell className="py-1"><Input value={row.sku} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], sku: e.target.value }; setRegisterRows(n) }} placeholder="SKU-001" className="h-7 text-[11px] rounded-md" /></TableCell>
-                        <TableCell className="py-1"><Select value={row.categoryId ? String(row.categoryId) : undefined} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}><SelectTrigger className="h-7 text-[11px] rounded-md"><SelectValue placeholder="—" /></SelectTrigger><SelectContent>{categories.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent></Select></TableCell>
+                        <TableCell className="py-1"><PaginatedCombobox
+                          compact
+                          items={categories.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => ({ value: String(c.id), label: c.name }))}
+                          value={row.categoryId ? String(row.categoryId) : ''}
+                          onChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}
+                          placeholder="—"
+                        /></TableCell>
                         <TableCell className="py-1"><Select value={row.unit} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], unit: v }; setRegisterRows(n) }}><SelectTrigger className="h-7 text-[11px] rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-40">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
                         <TableCell className="py-1"><Input type="number" step="0.01" value={row.price || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], price: parseFloat(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
                         <TableCell className="py-1"><Input type="number" step="0.01" value={row.cost || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], cost: parseFloat(e.target.value) || 0 }; setRegisterRows(n) }} className="h-7 text-[11px] rounded-md text-right" /></TableCell>
@@ -1221,16 +1374,22 @@ export default function IMSApp() {
             <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Product, SKU, warehouse..." value={stockSearch} onChange={e => { setStockSearch(e.target.value); setStockPage(1) }} className="h-8 text-xs pl-7" /></div>
           </FilterField>
           <FilterField label="Category" width="w-44">
-            <Select value={stockCategoryFilter === '' ? '_all' : String(stockCategoryFilter)} onValueChange={v => { setStockCategoryFilter(v === '_all' ? '' : parseInt(v)); setStockPage(1) }}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-              <SelectContent><SelectItem value="_all">All Categories</SelectItem>{categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
-            </Select>
+            <PaginatedCombobox
+              items={categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+              value={stockCategoryFilter === '' ? '_all' : String(stockCategoryFilter)}
+              onChange={v => { setStockCategoryFilter(v === '_all' ? '' : parseInt(v)); setStockPage(1) }}
+              allLabel="All Categories"
+              placeholder="All"
+            />
           </FilterField>
           <FilterField label="Warehouse" width="w-44">
-            <Select value={stockWarehouseFilter === '' ? '_all' : String(stockWarehouseFilter)} onValueChange={v => { setStockWarehouseFilter(v === '_all' ? '' : parseInt(v)); setStockPage(1) }}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-              <SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent>
-            </Select>
+            <PaginatedCombobox
+              items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))}
+              value={stockWarehouseFilter === '' ? '_all' : String(stockWarehouseFilter)}
+              onChange={v => { setStockWarehouseFilter(v === '_all' ? '' : parseInt(v)); setStockPage(1) }}
+              allLabel="All Warehouses"
+              placeholder="All"
+            />
           </FilterField>
           <FilterField label="Stock Level" width="w-auto">
             <div className="flex items-center gap-1.5 h-8"><Switch checked={stockLowOnly} onCheckedChange={v => { setStockLowOnly(v); setStockPage(1) }} className="scale-90" /><span className="text-[11px] text-muted-foreground">Low stock only</span></div>
@@ -1302,10 +1461,13 @@ export default function IMSApp() {
             <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="ID or notes..." value={orderSearch} onChange={e => setOrderSearch(e.target.value)} className="h-8 text-xs pl-7" /></div>
           </FilterField>
           <FilterField label="Warehouse" width="w-44">
-            <Select value={orderWarehouseFilter === '' ? '_all' : String(orderWarehouseFilter)} onValueChange={v => setOrderWarehouseFilter(v === '_all' ? '' : parseInt(v))}>
-              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-              <SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent>
-            </Select>
+            <PaginatedCombobox
+              items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))}
+              value={orderWarehouseFilter === '' ? '_all' : String(orderWarehouseFilter)}
+              onChange={v => setOrderWarehouseFilter(v === '_all' ? '' : parseInt(v))}
+              allLabel="All Warehouses"
+              placeholder="All"
+            />
           </FilterField>
           <FilterField label="Status" width="w-36">
             <Select value={orderStatusFilter || '_all'} onValueChange={v => setOrderStatusFilter(v === '_all' ? '' : v)}>
@@ -1384,7 +1546,13 @@ export default function IMSApp() {
           </FilterField>
           <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={stockInFilterDateFrom} onChange={v => { setStockInFilterDateFrom(v); setStockInRecPage(1) }} /></FilterField>
           <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={stockInFilterDateTo} onChange={v => { setStockInFilterDateTo(v); setStockInRecPage(1) }} /></FilterField>
-          <FilterField label="Warehouse" width="w-44"><Select value={stockInFilterWarehouse === '' ? '_all' : String(stockInFilterWarehouse)} onValueChange={v => { setStockInFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockInRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></FilterField>
+          <FilterField label="Warehouse" width="w-44"><PaginatedCombobox
+            items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))}
+            value={stockInFilterWarehouse === '' ? '_all' : String(stockInFilterWarehouse)}
+            onChange={v => { setStockInFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockInRecPage(1) }}
+            allLabel="All Warehouses"
+            placeholder="All"
+          /></FilterField>
           <FilterField label="Status" width="w-32"><Select value={stockInFilterStatus || '_all'} onValueChange={v => { setStockInFilterStatus(v === '_all' ? '' : v); setStockInRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="submitted">Submitted</SelectItem></SelectContent></Select></FilterField>
           <FilterField label="Supplier" width="w-40"><Input value={stockInFilterPerson} onChange={e => { setStockInFilterPerson(e.target.value); setStockInRecPage(1) }} placeholder="Search name..." className="h-8 text-xs" /></FilterField>
         </FilterPanel>
@@ -1489,14 +1657,20 @@ export default function IMSApp() {
                     {stockInMode === 'pic' ? (
                       (() => {
                         const sel = (stockInPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) as { productId: number; qty: number; unit: string; costPerUnit: number; notes: string }
-                        const filteredProds = products.filter(p => !stockInSearch || p.name.toLowerCase().includes(stockInSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockInSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name))
-                        const selTotalPages = Math.ceil(filteredProds.length / STOCK_IN_PICK_SELECT_PER_PAGE)
-                        const selPaged = filteredProds.slice((stockInPickSelectPage - 1) * STOCK_IN_PICK_SELECT_PER_PAGE, stockInPickSelectPage * STOCK_IN_PICK_SELECT_PER_PAGE)
+                        const pickItems = products.filter(p => !stockInSearch || p.name.toLowerCase().includes(stockInSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockInSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name)).map(p => ({ value: String(p.id), label: p.name, sublabel: p.sku }))
                         return (<div className="space-y-1.5">
-                          <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockInSearch} onChange={e => { setStockInSearch(e.target.value); setStockInPickSelectPage(1) }} className="h-6 text-[11px] pl-7" /></div>
+                          <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockInSearch} onChange={e => setStockInSearch(e.target.value)} className="h-6 text-[11px] pl-7" /></div>
                           {/* Mobile: stacked form */}
                           <div className="sm:hidden rounded-md border border-dashed border-emerald-300 dark:border-emerald-600 p-2 space-y-1.5">
-                            <Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}><SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">{selPaged.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span></SelectItem>)}{selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}</SelectContent></Select>
+                            <PaginatedCombobox
+                              items={pickItems}
+                              value={sel.productId ? String(sel.productId) : ''}
+                              onChange={v => { setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}
+                              placeholder="Select product..."
+                              perPage={20}
+                              contentClassName="w-64"
+                              compact
+                            />
                             <div className="grid grid-cols-3 gap-1.5">
                               <Input type="number" min={1} value={sel.qty || 1} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } as any }))} placeholder="Qty" className="h-7 text-[11px] text-right" />
                               <Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
@@ -1508,16 +1682,22 @@ export default function IMSApp() {
                           <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
                             <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-emerald-300 dark:border-b-emerald-600">
-                            <TableCell className="py-0.5"><Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}><SelectTrigger className="h-5 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">
-                              {selPaged.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span></SelectItem>)}
-                              {selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}
-                            </SelectContent></Select></TableCell>
+                            <TableCell className="py-0.5">
+                              <PaginatedCombobox
+                                items={pickItems}
+                                value={sel.productId ? String(sel.productId) : ''}
+                                onChange={v => { setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}
+                                placeholder="Select product..."
+                                perPage={20}
+                                contentClassName="w-64"
+                                compact
+                              />
+                            </TableCell>
                             <TableCell className="py-0.5"><Input type="number" min={1} value={sel.qty || 1} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
                             <TableCell className="py-0.5"><Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
                             <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={sel.costPerUnit || ''} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], costPerUnit: parseFloat(e.target.value) || 0 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
                             <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '' }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
                           </TableRow></TableBody></Table></div>
-                          {selTotalPages > 1 && <div className="flex items-center justify-between pt-1"><span className="text-[10px] text-muted-foreground">Products page {stockInPickSelectPage}/{selTotalPages}</span><div className="flex gap-0.5"><Button size="sm" variant="outline" disabled={stockInPickSelectPage <= 1} onClick={() => setStockInPickSelectPage(p => p - 1)} className="h-5 w-5 p-0"><ChevronLeft className="w-2.5 h-2.5" /></Button><Button size="sm" variant="outline" disabled={stockInPickSelectPage >= selTotalPages} onClick={() => setStockInPickSelectPage(p => p + 1)} className="h-5 w-5 p-0"><ChevronRight className="w-2.5 h-2.5" /></Button></div></div>}
                         </div>)
                       })()
                     ) : (
@@ -1582,7 +1762,13 @@ export default function IMSApp() {
           </FilterField>
           <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={stockOutFilterDateFrom} onChange={v => { setStockOutFilterDateFrom(v); setStockOutRecPage(1) }} /></FilterField>
           <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={stockOutFilterDateTo} onChange={v => { setStockOutFilterDateTo(v); setStockOutRecPage(1) }} /></FilterField>
-          <FilterField label="Warehouse" width="w-44"><Select value={stockOutFilterWarehouse === '' ? '_all' : String(stockOutFilterWarehouse)} onValueChange={v => { setStockOutFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockOutRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></FilterField>
+          <FilterField label="Warehouse" width="w-44"><PaginatedCombobox
+            items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))}
+            value={stockOutFilterWarehouse === '' ? '_all' : String(stockOutFilterWarehouse)}
+            onChange={v => { setStockOutFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockOutRecPage(1) }}
+            allLabel="All Warehouses"
+            placeholder="All"
+          /></FilterField>
           <FilterField label="Status" width="w-32"><Select value={stockOutFilterStatus || '_all'} onValueChange={v => { setStockOutFilterStatus(v === '_all' ? '' : v); setStockOutRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="partial_return">Partial Return</SelectItem><SelectItem value="returned">Returned</SelectItem></SelectContent></Select></FilterField>
           <FilterField label="Person" width="w-40"><Input value={stockOutFilterPerson} onChange={e => { setStockOutFilterPerson(e.target.value); setStockOutRecPage(1) }} placeholder="Search name..." className="h-8 text-xs" /></FilterField>
         </FilterPanel>
@@ -1687,14 +1873,20 @@ export default function IMSApp() {
                     {stockOutMode === 'pic' ? (
                       (() => {
                         const sel = (stockOutPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }) as { productId: number; qty: number; unit: string; isReturnable: boolean; returnDeadline: string }
-                        const filteredProds = products.filter(p => !stockOutSearch || p.name.toLowerCase().includes(stockOutSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockOutSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name))
-                        const selTotalPages = Math.ceil(filteredProds.length / STOCK_OUT_PICK_SELECT_PER_PAGE)
-                        const selPaged = filteredProds.slice((stockOutPickSelectPage - 1) * STOCK_OUT_PICK_SELECT_PER_PAGE, stockOutPickSelectPage * STOCK_OUT_PICK_SELECT_PER_PAGE)
+                        const pickItems = products.filter(p => !stockOutSearch || p.name.toLowerCase().includes(stockOutSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockOutSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name)).map(p => ({ value: String(p.id), label: p.name, sublabel: p.sku, badge: `(${getAvailableStock(p.id, r.warehouseId)})` }))
                         return (<div className="space-y-1.5">
-                          <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockOutSearch} onChange={e => { setStockOutSearch(e.target.value); setStockOutPickSelectPage(1) }} className="h-6 text-[11px] pl-7" /></div>
+                          <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockOutSearch} onChange={e => setStockOutSearch(e.target.value)} className="h-6 text-[11px] pl-7" /></div>
                           {/* Mobile: stacked form */}
                           <div className="sm:hidden rounded-md border border-dashed border-blue-300 dark:border-blue-600 p-2 space-y-1.5">
-                            <Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}><SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">{selPaged.map(p => { const stk = getAvailableStock(p.id, r.warehouseId); return <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span> <span className={`ml-1 text-[10px] font-semibold ${stk > 0 ? 'text-emerald-600' : 'text-red-500'}`}>({stk})</span></SelectItem> })}{selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}</SelectContent></Select>
+                            <PaginatedCombobox
+                              items={pickItems}
+                              value={sel.productId ? String(sel.productId) : ''}
+                              onChange={v => { setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}
+                              placeholder="Select product..."
+                              perPage={20}
+                              contentClassName="w-64"
+                              compact
+                            />
                             <div className="grid grid-cols-3 gap-1.5">
                               <Input type="number" min={1} max={sel.productId ? getAvailableStock(sel.productId, r.warehouseId) : undefined} value={sel.qty || 1} onChange={e => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } }))} placeholder="Qty" className="h-7 text-[11px] text-right" />
                               <Select value={sel.unit || 'pcs'} onValueChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } }))}><SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
@@ -1707,10 +1899,17 @@ export default function IMSApp() {
                           <div className="hidden sm:block rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
                             <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-blue-300 dark:border-b-blue-600">
-                            <TableCell className="py-0.5"><Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}><SelectTrigger className="h-5 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">
-                              {selPaged.map(p => { const stk = getAvailableStock(p.id, r.warehouseId); return <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span> <span className={`ml-1 text-[10px] font-semibold ${stk > 0 ? 'text-emerald-600' : 'text-red-500'}`}>({stk})</span></SelectItem> })}
-                              {selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}
-                            </SelectContent></Select></TableCell>
+                            <TableCell className="py-0.5">
+                              <PaginatedCombobox
+                                items={pickItems}
+                                value={sel.productId ? String(sel.productId) : ''}
+                                onChange={v => { setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}
+                                placeholder="Select product..."
+                                perPage={20}
+                                contentClassName="w-64"
+                                compact
+                              />
+                            </TableCell>
                             <TableCell className="py-0.5 text-[11px] text-right font-mono">{sel.productId ? <span className={getAvailableStock(sel.productId, r.warehouseId) > 0 ? 'text-emerald-600' : 'text-red-500'}>{getAvailableStock(sel.productId, r.warehouseId)}</span> : '—'}</TableCell>
                             <TableCell className="py-0.5"><Input type="number" min={1} max={sel.productId ? getAvailableStock(sel.productId, r.warehouseId) : undefined} value={sel.qty || 1} onChange={e => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
                             <TableCell className="py-0.5"><Select value={sel.unit || 'pcs'} onValueChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } }))}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
@@ -1718,7 +1917,6 @@ export default function IMSApp() {
                             <TableCell className="py-0.5">{sel.isReturnable ? <CustomDatePicker value={sel.returnDeadline || ''} onChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], returnDeadline: v } }))} /> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
                             <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-blue-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; const avail = getAvailableStock(sel.productId, r.warehouseId); if (sel.qty > avail) { toast({ title: `Only ${avail} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', isReturnable: sel.isReturnable || false, returnDeadline: sel.returnDeadline || null, notes: '' }); setStockOutPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
                           </TableRow></TableBody></Table></div>
-                          {selTotalPages > 1 && <div className="flex items-center justify-between pt-1"><span className="text-[10px] text-muted-foreground">Products page {stockOutPickSelectPage}/{selTotalPages}</span><div className="flex gap-0.5"><Button size="sm" variant="outline" disabled={stockOutPickSelectPage <= 1} onClick={() => setStockOutPickSelectPage(p => p - 1)} className="h-5 w-5 p-0"><ChevronLeft className="w-2.5 h-2.5" /></Button><Button size="sm" variant="outline" disabled={stockOutPickSelectPage >= selTotalPages} onClick={() => setStockOutPickSelectPage(p => p + 1)} className="h-5 w-5 p-0"><ChevronRight className="w-2.5 h-2.5" /></Button></div></div>}
                         </div>)
                       })()
                     ) : (
@@ -1819,10 +2017,13 @@ export default function IMSApp() {
                 </Popover>
               </FilterField>
               <FilterField label="Category" width="w-44">
-                <Select value={returnsFilterCategory === '' ? '_all' : String(returnsFilterCategory)} onValueChange={v => { setReturnsFilterCategory(v === '_all' ? '' : parseInt(v)); setReturnsPage(1) }}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-                  <SelectContent><SelectItem value="_all">All Categories</SelectItem>{categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
-                </Select>
+                <PaginatedCombobox
+                  items={categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+                  value={returnsFilterCategory === '' ? '_all' : String(returnsFilterCategory)}
+                  onChange={v => { setReturnsFilterCategory(v === '_all' ? '' : parseInt(v)); setReturnsPage(1) }}
+                  allLabel="All Categories"
+                  placeholder="All"
+                />
               </FilterField>
               <FilterField label="Person / Supplier" width="w-44">
                 <Input value={returnsFilterPerson} onChange={e => { setReturnsFilterPerson(e.target.value); setReturnsPage(1) }} placeholder="Name contains..." className="h-8 text-xs" />
@@ -2207,7 +2408,7 @@ export default function IMSApp() {
               {dlgType === 'branch' && <>
                 {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Building2}>Organization</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><Select value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : undefined} onValueChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{enterprises.map(e=><SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><PaginatedCombobox items={enterprises.map(e=>({value:String(e.id),label:e.name}))} value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : ''} onChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})} placeholder="Select..." perPage={10} /></div>
                 </div>}
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Tag}>Details</SectionHeader>
@@ -2224,11 +2425,11 @@ export default function IMSApp() {
               {dlgType === 'warehouse' && <>
                 {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Building2}>Organization</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><Select value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : undefined} onValueChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{enterprises.map(e=><SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><PaginatedCombobox items={enterprises.map(e=>({value:String(e.id),label:e.name}))} value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : ''} onChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})} placeholder="Select..." perPage={10} /></div>
                 </div>}
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={GitBranch}>Branch</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={GitBranch}>Branch</IconLabel><Select value={dlgData.branchId ? String(dlgData.branchId) : undefined} onValueChange={v=>setDlgData({...dlgData,branchId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{branches.filter(b=>!dlgData.enterpriseId||b.enterpriseId===dlgData.enterpriseId).map(b=><SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={GitBranch}>Branch</IconLabel><PaginatedCombobox items={branches.filter(b=>!dlgData.enterpriseId||b.enterpriseId===dlgData.enterpriseId).map(b=>({value:String(b.id),label:b.name}))} value={dlgData.branchId ? String(dlgData.branchId) : ''} onChange={v=>setDlgData({...dlgData,branchId:parseInt(v)})} placeholder="Select..." perPage={10} /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Tag}>Details</SectionHeader>
@@ -2247,11 +2448,11 @@ export default function IMSApp() {
               {dlgType === 'user' && <>
                 {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Building2}>Organization</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><Select value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : undefined} onValueChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{enterprises.map(e=><SelectItem key={e.id} value={String(e.id)}>{e.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><PaginatedCombobox items={enterprises.map(e=>({value:String(e.id),label:e.name}))} value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : ''} onChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})} placeholder="Select..." perPage={10} /></div>
                 </div>}
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={GitBranch}>Assignment</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={GitBranch}>Branch</IconLabel><Select value={dlgData.branchId ? String(dlgData.branchId) : '0'} onValueChange={v=>setDlgData({...dlgData,branchId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="None" /></SelectTrigger><SelectContent><SelectItem value="0">None</SelectItem>{branches.filter(b=>!dlgData.enterpriseId||b.enterpriseId===dlgData.enterpriseId).map(b=><SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={GitBranch}>Branch</IconLabel><PaginatedCombobox items={branches.filter(b=>!dlgData.enterpriseId||b.enterpriseId===dlgData.enterpriseId).map(b=>({value:String(b.id),label:b.name}))} value={dlgData.branchId ? String(dlgData.branchId) : '0'} onChange={v=>setDlgData({...dlgData,branchId:parseInt(v)})} allLabel="None" allValue="0" placeholder="None" perPage={10} /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Shield}>Role</SectionHeader>
@@ -2303,7 +2504,7 @@ export default function IMSApp() {
                     <div className="space-y-1"><IconLabel icon={Hash}>SKU</IconLabel><Input value={dlgData.sku||''} onChange={e=>setDlgData({...dlgData,sku:e.target.value})} placeholder="e.g. ITEM-001" className="h-8 text-sm rounded-md" /></div>
                     <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
                   </div>
-                  <div className="space-y-1"><IconLabel icon={Tag}>Category</IconLabel><Select value={dlgData.categoryId ? String(dlgData.categoryId) : undefined} onValueChange={v=>setDlgData({...dlgData,categoryId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select category..." /></SelectTrigger><SelectContent>{categories.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=><SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={Tag}>Category</IconLabel><PaginatedCombobox items={categories.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={dlgData.categoryId ? String(dlgData.categoryId) : ''} onChange={v=>setDlgData({...dlgData,categoryId:parseInt(v)})} placeholder="Select category..." /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={TrendingUp}>Pricing</SectionHeader>
@@ -2315,7 +2516,7 @@ export default function IMSApp() {
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={WHIcon}>Stock Registration</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w=>w.isActive).map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><PaginatedCombobox items={warehouses.filter(w=>w.isActive).map(w=>({value:String(w.id),label:w.name,sublabel:w.code}))} value={dlgData.warehouseId ? String(dlgData.warehouseId) : ''} onChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})} placeholder="Select warehouse..." /></div>
                   <div className="space-y-1"><IconLabel icon={ArrowUpFromLine}>Initial Quantity</IconLabel><Input type="number" min="0" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} placeholder="Enter quantity..." className="h-8 text-sm rounded-md" /></div>
                 </div>
               </>}
@@ -2342,12 +2543,12 @@ export default function IMSApp() {
                   <SectionHeader icon={Package}>Product</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel>
                     {dlgEdit ? <Input value={products.find(p=>p.id===dlgEdit.productId)?.name||products.find(p=>p.id===dlgData.productId)?.name||''} disabled className="h-9 rounded-lg bg-muted" />
-                    : <Select value={dlgData.productId ? String(dlgData.productId) : undefined} onValueChange={v=>setDlgData({...dlgData,productId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-60">{products.filter(p=>p.isActive).sort((a,b)=>a.name.localeCompare(b.name)).map(p=><SelectItem key={p.id} value={String(p.id)}>{p.name} ({p.sku})</SelectItem>)}</SelectContent></Select>}
+                    : <PaginatedCombobox items={products.filter(p=>p.isActive).sort((a,b)=>a.name.localeCompare(b.name)).map(p=>({value:String(p.id),label:p.name,sublabel:p.sku}))} value={dlgData.productId ? String(dlgData.productId) : ''} onChange={v=>setDlgData({...dlgData,productId:parseInt(v)})} placeholder="Select product..." perPage={10} />}
                   </div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={WHIcon}>Warehouse</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w=>w.isActive).map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><PaginatedCombobox items={warehouses.filter(w=>w.isActive).map(w=>({value:String(w.id),label:w.name,sublabel:w.code}))} value={dlgData.warehouseId ? String(dlgData.warehouseId) : ''} onChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})} placeholder="Select warehouse..." /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={ArrowUpFromLine}>Quantity In</SectionHeader>
@@ -2364,7 +2565,7 @@ export default function IMSApp() {
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={WHIcon}>Destination</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{warehouses.map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><PaginatedCombobox items={warehouses.map(w=>({value:String(w.id),label:w.name,sublabel:w.code}))} value={dlgData.warehouseId ? String(dlgData.warehouseId) : ''} onChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})} placeholder="Select..." /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
@@ -2376,7 +2577,7 @@ export default function IMSApp() {
               {dlgType === 'stockOut' && <>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={WHIcon}>Warehouse</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{warehouses.map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><PaginatedCombobox items={warehouses.map(w=>({value:String(w.id),label:w.name,sublabel:w.code}))} value={dlgData.warehouseId ? String(dlgData.warehouseId) : ''} onChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})} placeholder="Select..." /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Users}>Person</SectionHeader>
@@ -2403,7 +2604,7 @@ export default function IMSApp() {
               {dlgType === 'stockOutItem' && <>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Package}>Product</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel><Select value={dlgData.productId ? String(dlgData.productId) : undefined} onValueChange={v=>setDlgData({...dlgData,productId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select..." /></SelectTrigger><SelectContent>{products.map(p=><SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={Package}>Product</IconLabel><PaginatedCombobox items={products.map(p=>({value:String(p.id),label:p.name}))} value={dlgData.productId ? String(dlgData.productId) : ''} onChange={v=>setDlgData({...dlgData,productId:parseInt(v)})} placeholder="Select..." perPage={10} /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Hash}>Quantity</SectionHeader>
@@ -2455,7 +2656,7 @@ export default function IMSApp() {
               {dlgType === 'stockInRecorder' && <>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={WHIcon}>Warehouse</SectionHeader>
-                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><Select value={dlgData.warehouseId ? String(dlgData.warehouseId) : undefined} onValueChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue placeholder="Select warehouse..." /></SelectTrigger><SelectContent>{warehouses.filter(w=>w.isActive).map(w=><SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></div>
+                  <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><PaginatedCombobox items={warehouses.filter(w=>w.isActive).map(w=>({value:String(w.id),label:w.name,sublabel:w.code}))} value={dlgData.warehouseId ? String(dlgData.warehouseId) : ''} onChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})} placeholder="Select warehouse..." /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Truck}>Supplier</SectionHeader>
@@ -2793,13 +2994,13 @@ export default function IMSApp() {
                           </Popover>
                         </FilterField>
                         <FilterField label="Category" width="w-40">
-                          <Select value={groupReturnDlg.filterCategory === '' ? '_all' : String(groupReturnDlg.filterCategory)} onValueChange={v => setGroupReturnDlg(s => ({ ...s, filterCategory: v === '_all' ? '' : Number(v), availPage: 1 }))}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All Categories" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="_all">All Categories</SelectItem>
-                              {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
+                          <PaginatedCombobox
+                            items={categories.map(c => ({ value: String(c.id), label: c.name }))}
+                            value={groupReturnDlg.filterCategory === '' ? '_all' : String(groupReturnDlg.filterCategory)}
+                            onChange={v => setGroupReturnDlg(s => ({ ...s, filterCategory: v === '_all' ? '' : Number(v), availPage: 1 }))}
+                            allLabel="All Categories"
+                            placeholder="All Categories"
+                          />
                         </FilterField>
                         <FilterField label="Person / Supplier" width="w-44">
                           <Input value={groupReturnDlg.filterPerson} onChange={e => setGroupReturnDlg(s => ({ ...s, filterPerson: e.target.value, availPage: 1 }))} placeholder="Name contains..." className="h-8 text-xs" />

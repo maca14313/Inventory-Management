@@ -592,3 +592,39 @@ Stage Summary:
 - Sidebar is now grouped into 4 clear sections (Dashboard / Organization / Inventory / More) instead of a flat 15-item list, making navigation much easier especially for Super Admin who sees all items.
 - Grouping is permission-aware: when a role can't see certain items (e.g. Warehouse Admin can't see Users/Audit Log), those items are simply omitted from their group but the group headers and remaining items still render correctly.
 - Lint clean, dev server clean, browser-verified for both Super Admin and Warehouse Admin roles.
+
+---
+Task ID: 11
+Agent: general-purpose (pagination-everywhere)
+Task: Add pagination everywhere data can grow, including inside Select dropdowns — by building a reusable PaginatedCombobox and replacing all large-data Selects.
+
+Work Log:
+- Read worklog (Tasks 0–10) + read page.tsx (~2996 lines) in chunks to map every <Select> usage and the existing Returns warehouse Popover combobox style (~line 1800) used as the visual reference.
+- Built `PaginatedCombobox` reusable component (defined OUTSIDE IMSApp, right after FilterField ~line 212): Popover-based, with sticky search input, scrollable list (max-h-56), perPage pagination (default 10), Prev/Next footer (hidden when 1 page), "No matches." empty state, optional "All" option at top (allLabel/allValue), violet highlight for selected item, ChevronDown on trigger, compact prop for h-7 text-[11px]. Uses internal useState for open/search/page that reset on close. Default contentClassName w-44 (matches existing warehouse comboboxes), overridable.
+- Replaced all large-data Selects with PaginatedCombobox:
+  • Products filter Category (allLabel="All Categories") + registerWarehouseId + register row categoryId (pic h-8 + table compact h-7) — 4 selects.
+  • Stock filter Category + Warehouse (allLabel variants) — 2 selects.
+  • Orders filter Warehouse (allLabel="All Warehouses") — 1 select.
+  • Stock In filter Warehouse + Stock Out filter Warehouse — 2 selects.
+  • Returns filter Category — 1 select.
+  • Group Return modal filter Category — 1 select.
+  • Dialog forms (registerItem/stockIn/stockOut/stockOutItem/stockInRecorder/order/branch/warehouse/user): enterprise (×3), branch (×2 incl. "None" with allValue="0"), category, product (×2), warehouse (×5 with `w.isActive` filter or full list) — 13 selects.
+  • Stock In Pick Mode product Select (mobile + desktop): replaced with PaginatedCombobox (perPage=20, contentClassName=w-64, compact, items = filtered+sorted products mapped to {value,label,sublabel:sku}). Removed the now-unused external pagination footer + stockInPickSelectPage state + STOCK_IN_PICK_SELECT_PER_PAGE constant.
+  • Stock Out Pick Mode product Select (mobile + desktop): same pattern; items include `badge: '(<stock>)'` so users still see the available-quantity hint inside the dropdown. Removed stockOutPickSelectPage state + STOCK_OUT_PICK_SELECT_PER_PAGE constant.
+- Preserved every existing value/onChange contract (parseInt where needed, allLabel/allValue="_all" for filter selects with "All X" options, allValue="0" for the user-dialog Branch "None" option).
+- Did NOT touch small/fixed selects: CustomDatePicker year/month, status/type/unit-measurement/role/progress/flagged-status selects — all left as native <Select>.
+- Ran `bun run lint` → exit 0 (no errors). `npx tsc --noEmit` → 0 errors in src/app/page.tsx (only pre-existing errors in examples/ + skills/ demo files).
+- Browser-verified via agent-browser (logged in as superadmin):
+  • Stock page Advanced Filters → Warehouse combobox: opens with sticky search + "All Warehouses" + 7 warehouses with codes; typed "beta" → list filtered to 3 Beta warehouses; clicked "Beta Main WH 1" → trigger label updated + active-count badge changed to "1" + table filtered.
+  • Stock page Category combobox: opened → showed "All Categories" + 10 of 15 categories on page 1; clicked Next → showed remaining 5 categories on page 2; Next button became disabled on last page. Pagination footer present.
+  • Orders page Advanced Filters → Warehouse combobox rendered; Status/Type selects still native (correct).
+  • Orders dialog (New Order) → Warehouse combobox opens with searchable warehouse list including codes; works.
+  • Stock In Pick Mode (expanded a receipt) → product combobox opens with searchable alphabetically-sorted product list (SKU as sublabel); selection updates the cell.
+  • Stock Out Pick Mode → product combobox opens with each product showing SKU sublabel + "(<stock>)" badge; clicked "Laptop Pro 15\""" → trigger updated + "In Stock" cell showed 30; previously-existing "Only N in stock" toast logic still fires correctly.
+- dev.log shows only 200 responses + "✓ Compiled" lines (no runtime/compile errors).
+
+Stage Summary:
+- Built reusable PaginatedCombobox (Popover + sticky search + perPage pagination + optional "All" option + violet-selected style) — ~138 lines added near FilterField.
+- Replaced 23 large-data <Select> dropdowns (warehouses / categories / products / enterprises / branches) with PaginatedCombobox across all 6 list-page filter panels, the multi-item product registration form, the Stock In/Out Pick-mode product pickers, and the 7 create/edit dialogs (product, registerItem, stockIn, stockOut, stockOutItem, order, branch, warehouse, user, stockInRecorder). Cleaned up two now-unused `*PickSelectPage`/`*_PER_PAGE` state+constant pairs.
+- Lint clean (exit 0), TypeScript clean for src/, dev server compiling cleanly, browser-verified end-to-end: search + pagination + selection all work in Stock filter Warehouse+Category, Orders dialog Warehouse, Stock In Pick product, Stock Out Pick product (with stock badge).
+- Small/fixed selects (year/month, status, type, unit/measurement, role, progress, flagged-status) intentionally left as native <Select>.
