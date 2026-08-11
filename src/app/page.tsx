@@ -13,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -276,11 +277,21 @@ export default function IMSApp() {
   })
 
   // ─── Returns page state ─────────────────────────────────────────
-  const [returnsTab, setReturnsTab] = useState<'flagged' | 'not_flagged'>('flagged')
+  // 'records' = the 3rd top-level tab showing created group-return (ReturnRecorder) records
+  const [returnsTab, setReturnsTab] = useState<'flagged' | 'not_flagged' | 'records'>('flagged')
   const [returnsData, setReturnsData] = useState<ReturnableItem[]>([])
   const [returnsLoading, setReturnsLoading] = useState(false)
   const [returnsPage, setReturnsPage] = useState(1)
   const RETURNS_PER_PAGE = 8
+  // Pagination for the "Group Return by Person" person-button bar
+  const [returnsGroupPage, setReturnsGroupPage] = useState(1)
+  const RETURNS_GROUP_PER_PAGE = 8
+  // Pagination for the Return Records (3rd tab) list
+  const [returnRecordsPage, setReturnRecordsPage] = useState(1)
+  const RETURN_RECORDS_PER_PAGE = 6
+  // Searchable warehouse combobox state (Returns filter) — handles many warehouses
+  const [returnsWhComboOpen, setReturnsWhComboOpen] = useState(false)
+  const [returnsWhComboSearch, setReturnsWhComboSearch] = useState('')
   const [returnsSearch, setReturnsSearch] = useState('')
   const [returnsWarehouseFilter, setReturnsWarehouseFilter] = useState<number | ''>('')
   const [returnsFilterDateFrom, setReturnsFilterDateFrom] = useState('')
@@ -300,12 +311,12 @@ export default function IMSApp() {
     warehouseId: number | null;
     items: { item: ReturnableItem; qty: number; selected: boolean }[];
     availableItems: ReturnableItem[]; itemSearch: string; loadingAvailable: boolean;
-  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false })
+    availPage: number; itemsPage: number;
+  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1 })
   // Return Recorder records (created by group returns — mirrors Stock-In recorders list)
   const [groupReturnRecords, setGroupReturnRecords] = useState<ReturnRecorder[]>([])
   const [groupReturnRecordsLoading, setGroupReturnRecordsLoading] = useState(false)
   const [expandedReturnRec, setExpandedReturnRec] = useState<number | null>(null)
-  const [returnRecordsOpen, setReturnRecordsOpen] = useState(false)
 
   const [dlgOpen, setDlgOpen] = useState(false)
   const [dlgType, setDlgType] = useState('')
@@ -522,7 +533,10 @@ export default function IMSApp() {
   }
 
   // ─── Returns: fetch list of returnable items for active tab ────────
-  const loadReturns = useCallback(async (tab: 'flagged' | 'not_flagged') => {
+  // 'records' tab is handled separately (shows ReturnRecorder records), so this fetch
+  // is only called for 'flagged' / 'not_flagged'. The union type keeps the call-site happy.
+  const loadReturns = useCallback(async (tab: 'flagged' | 'not_flagged' | 'records') => {
+    if (tab === 'records') return
     setReturnsLoading(true)
     try {
       const params = new URLSearchParams({ tab })
@@ -550,8 +564,17 @@ export default function IMSApp() {
     setGroupReturnRecordsLoading(false)
   }, [auth])
 
-  // Fetch returns whenever the Returns page is opened or the tab changes
-  useEffect(() => { if (auth.isLoggedIn && page === 'returns') { setReturnsPage(1); loadReturns(returnsTab); loadGroupReturnRecords() } }, [auth.isLoggedIn, page, returnsTab, loadReturns, loadGroupReturnRecords])
+  // Fetch returns whenever the Returns page is opened or the tab changes.
+  // 'records' tab shows ReturnRecorder records (loaded via loadGroupReturnRecords),
+  // so we skip the per-item returns fetch when that tab is active.
+  useEffect(() => {
+    if (!auth.isLoggedIn || page !== 'returns') return
+    setReturnsPage(1)
+    setReturnsGroupPage(1)
+    setReturnRecordsPage(1)
+    if (returnsTab !== 'records') loadReturns(returnsTab)
+    loadGroupReturnRecords()
+  }, [auth.isLoggedIn, page, returnsTab, loadReturns, loadGroupReturnRecords])
 
   // ─── Returns: open single-item return dialog (qty defaults to full remaining) ────
   const openReturnDlg = (item: ReturnableItem) => {
@@ -604,6 +627,7 @@ export default function IMSApp() {
       warehouseId: first?.warehouseId ?? null,
       items: items.map(it => ({ item: it, qty: it.remainingQty, selected: true })),
       availableItems: [], itemSearch: '', loadingAvailable: false,
+      availPage: 1, itemsPage: 1,
     })
   }
   // ─── Returns: open a NEW group-return record from scratch (new mode) ────
@@ -611,7 +635,7 @@ export default function IMSApp() {
   // returnable stock-out items (both tabs) so the user can build a brand-new group return
   // combining items from different suppliers/persons/recorders.
   const openNewGroupReturnDlg = async () => {
-    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true })
+    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1 })
     try {
       const h = { ...auth.getAuthHeaders() }
       const [flagged, notFlagged] = await Promise.all([
@@ -627,10 +651,10 @@ export default function IMSApp() {
   }
   // Add an available item to the new group return (defaults qty = full remaining)
   const addReturnItemToGroup = (it: ReturnableItem) => {
-    setGroupReturnDlg(s => s.items.some(x => x.item.id === it.id) ? s : ({ ...s, items: [...s.items, { item: it, qty: it.remainingQty, selected: true }] }))
+    setGroupReturnDlg(s => s.items.some(x => x.item.id === it.id) ? s : ({ ...s, items: [...s.items, { item: it, qty: it.remainingQty, selected: true }], itemsPage: 1 }))
   }
   const removeReturnItemFromGroup = (id: number) => {
-    setGroupReturnDlg(s => ({ ...s, items: s.items.filter(x => x.item.id !== id) }))
+    setGroupReturnDlg(s => ({ ...s, items: s.items.filter(x => x.item.id !== id), itemsPage: 1 }))
   }
   // ─── Returns: submit group return (creates a NEW ReturnRecorder record) ────
   // Sends the person header + items to /api/returns/group which creates a ReturnRecorder
@@ -1710,13 +1734,16 @@ export default function IMSApp() {
           <Button size="sm" onClick={openNewGroupReturnDlg} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Group Return</Button>
         </div>
 
-        <Tabs value={returnsTab} onValueChange={v => setReturnsTab(v as 'flagged' | 'not_flagged')}>
-          <TabsList className="grid grid-cols-2 w-full max-w-md h-9">
+        <Tabs value={returnsTab} onValueChange={v => setReturnsTab(v as 'flagged' | 'not_flagged' | 'records')}>
+          <TabsList className="grid grid-cols-3 w-full max-w-2xl h-9">
             <TabsTrigger value="flagged" className="text-xs gap-1"><RotateCcw className="w-3 h-3" />Flagged for Return</TabsTrigger>
             <TabsTrigger value="not_flagged" className="text-xs gap-1"><Package className="w-3 h-3" />Other Stock-Outs</TabsTrigger>
+            <TabsTrigger value="records" className="text-xs gap-1"><Layers className="w-3 h-3" />Return Records</TabsTrigger>
           </TabsList>
 
-          <TabsContent value={returnsTab} className="mt-3 space-y-3">
+          {/* Items view — rendered for both 'flagged' and 'not_flagged' tabs */}
+          {returnsTab !== 'records' && (
+          <div className="mt-3 space-y-3">
             {/* Advanced Filters */}
             <FilterPanel
               activeCount={(returnsSearch ? 1 : 0) + (returnsWarehouseFilter !== '' ? 1 : 0) + (returnsFilterDateFrom ? 1 : 0) + (returnsFilterDateTo ? 1 : 0) + (returnsFilterRecorder ? 1 : 0) + (returnsFilterProgress ? 1 : 0)}
@@ -1727,10 +1754,26 @@ export default function IMSApp() {
                 <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Product, SKU, person, code..." value={returnsSearch} onChange={e => { setReturnsSearch(e.target.value); setReturnsPage(1) }} className="h-8 text-xs pl-7" /></div>
               </FilterField>
               <FilterField label="Warehouse" width="w-44">
-                <Select value={returnsWarehouseFilter === '' ? '_all' : String(returnsWarehouseFilter)} onValueChange={v => { setReturnsWarehouseFilter(v === '_all' ? '' : parseInt(v)); setReturnsPage(1) }}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
-                  <SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent>
-                </Select>
+                <Popover open={returnsWhComboOpen} onOpenChange={o => { setReturnsWhComboOpen(o); if (!o) setReturnsWhComboSearch('') }}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" className="h-8 text-xs justify-between w-full font-normal px-2">
+                      <span className="truncate">{returnsWarehouseFilter === '' ? 'All Warehouses' : (warehouses.find(w => w.id === returnsWarehouseFilter)?.name || `#${returnsWarehouseFilter}`)}</span>
+                      <ChevronDown className="w-3 h-3 opacity-50 shrink-0" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-44 p-0" align="start">
+                    <div className="p-1.5 border-b sticky top-0 bg-popover">
+                      <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-1.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search warehouse..." value={returnsWhComboSearch} onChange={e => setReturnsWhComboSearch(e.target.value)} className="h-7 text-xs pl-6" /></div>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto">
+                      <button onClick={() => { setReturnsWarehouseFilter(''); setReturnsPage(1); setReturnsWhComboOpen(false) }} className={`w-full text-left px-2 py-1.5 text-xs hover:bg-violet-50 dark:hover:bg-violet-500/10 ${returnsWarehouseFilter === '' ? 'bg-violet-50 dark:bg-violet-500/10 font-medium text-violet-700 dark:text-violet-400' : ''}`}>All Warehouses</button>
+                      {warehouses.filter(w => { const s = returnsWhComboSearch.toLowerCase(); return !s || w.name.toLowerCase().includes(s) || (w.code || '').toLowerCase().includes(s) }).map(w => (
+                        <button key={w.id} onClick={() => { setReturnsWarehouseFilter(w.id); setReturnsPage(1); setReturnsWhComboOpen(false) }} className={`w-full text-left px-2 py-1.5 text-xs hover:bg-violet-50 dark:hover:bg-violet-500/10 ${returnsWarehouseFilter === w.id ? 'bg-violet-50 dark:bg-violet-500/10 font-medium text-violet-700 dark:text-violet-400' : ''}`}>{w.name} <span className="text-[9px] text-muted-foreground font-mono">{w.code}</span></button>
+                      ))}
+                      {warehouses.filter(w => { const s = returnsWhComboSearch.toLowerCase(); return !s || w.name.toLowerCase().includes(s) || (w.code || '').toLowerCase().includes(s) }).length === 0 && <div className="px-2 py-2 text-[11px] text-muted-foreground text-center">No warehouse matches.</div>}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </FilterField>
               <FilterField label="Out Date From" width="w-32"><CustomDatePicker compact value={returnsFilterDateFrom} onChange={v => { setReturnsFilterDateFrom(v); setReturnsPage(1) }} /></FilterField>
               <FilterField label="Out Date To" width="w-32"><CustomDatePicker compact value={returnsFilterDateTo} onChange={v => { setReturnsFilterDateTo(v); setReturnsPage(1) }} /></FilterField>
@@ -1781,12 +1824,19 @@ export default function IMSApp() {
               if (filtered.length === 0) return <div className="text-center text-sm text-muted-foreground py-10">No items to return in this tab.</div>
 
               return (<>
-                {/* Group return bar */}
-                {groupEntries.length > 0 && (
+                {/* Group return bar — paginated person buttons */}
+                {groupEntries.length > 0 && (() => {
+                  const grpTotalPages = Math.ceil(groupEntries.length / RETURNS_GROUP_PER_PAGE) || 1
+                  const grpSafePage = Math.min(returnsGroupPage, grpTotalPages)
+                  const grpPaged = groupEntries.slice((grpSafePage - 1) * RETURNS_GROUP_PER_PAGE, grpSafePage * RETURNS_GROUP_PER_PAGE)
+                  return (
                   <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2">
-                    <div className="flex items-center gap-1.5 mb-1.5"><Users className="w-3 h-3 text-violet-600" /><span className="text-[10px] font-semibold text-violet-700 dark:text-violet-400 uppercase tracking-wider">Group Return by Person</span></div>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <div className="flex items-center gap-1.5"><Users className="w-3 h-3 text-violet-600" /><span className="text-[10px] font-semibold text-violet-700 dark:text-violet-400 uppercase tracking-wider">Group Return by Person</span><Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px] h-4">{groupEntries.length}</Badge></div>
+                      <span className="text-[10px] text-muted-foreground">{grpSafePage}/{grpTotalPages}</span>
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {groupEntries.map(([person, items]) => (
+                      {grpPaged.map(([person, items]) => (
                         <button key={person} onClick={() => openGroupReturnDlg(person, items)} className="text-[11px] px-2 py-1 rounded-md bg-white dark:bg-slate-800 border border-violet-200 dark:border-violet-500/30 hover:bg-violet-100 dark:hover:bg-violet-500/20 transition flex items-center gap-1">
                           <Users className="w-3 h-3 text-violet-500" />
                           <span className="font-medium">{person}</span>
@@ -1794,8 +1844,15 @@ export default function IMSApp() {
                         </button>
                       ))}
                     </div>
+                    {grpTotalPages > 1 && (
+                      <div className="flex items-center justify-end gap-1 mt-1.5 pt-1.5 border-t border-violet-200 dark:border-violet-500/20">
+                        <Button size="sm" variant="outline" disabled={grpSafePage <= 1} onClick={() => setReturnsGroupPage(grpSafePage - 1)} className="h-6 w-6 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+                        <Button size="sm" variant="outline" disabled={grpSafePage >= grpTotalPages} onClick={() => setReturnsGroupPage(grpSafePage + 1)} className="h-6 w-6 p-0"><ChevronRight className="w-3 h-3" /></Button>
+                      </div>
+                    )}
                   </div>
-                )}
+                  )
+                })()}
 
                 {/* Mobile: stacked cards */}
                 <div className="sm:hidden space-y-2">
@@ -1865,32 +1922,36 @@ export default function IMSApp() {
                 <Pager page={safePage} totalPages={totalPages} onPageChange={setReturnsPage} />
               </>)
             })()}
-          </TabsContent>
-        </Tabs>
+          </div>
+          )}
 
-        {/* ── Return Records (group returns — mirrors Stock-In recorders list) ── */}
-        <Collapsible open={returnRecordsOpen} onOpenChange={setReturnRecordsOpen}>
-          <div className="rounded-md border border-violet-200 dark:border-violet-500/20 bg-violet-50/40 dark:bg-violet-500/5">
-            <CollapsibleTrigger className="flex items-center justify-between w-full p-2.5 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition">
+          {/* ── Return Records tab (3rd tab) — paginated list of created group-return records ── */}
+          {returnsTab === 'records' && (
+          <div className="mt-3 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-1.5">
-                <ChevronRight className={`w-3.5 h-3.5 text-violet-500 transition-transform ${returnRecordsOpen ? 'rotate-90' : ''}`} />
                 <Layers className="w-3.5 h-3.5 text-violet-500" />
                 <span className="text-xs font-semibold">Return Records</span>
                 <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px] h-4">{groupReturnRecords.length}</Badge>
-                <span className="text-[10px] text-muted-foreground hidden sm:inline">· group-return records created via "New Group Return" (each restocks inventory & creates a Lot)</span>
+                <span className="text-[10px] text-muted-foreground hidden sm:inline">· group-return records created via "New Group Return" (each restocks inventory &amp; creates a Lot)</span>
               </div>
               {groupReturnRecordsLoading && <Loader2 className="w-3 h-3 animate-spin text-violet-500" />}
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="px-2.5 pb-2.5 space-y-1.5">
-                {groupReturnRecords.length === 0 && !groupReturnRecordsLoading ? (
-                  <div className="text-center text-xs text-muted-foreground py-4">No group-return records yet. Click <span className="font-semibold text-violet-600">New Group Return</span> to create one.</div>
-                ) : (
-                  groupReturnRecords.map(r => {
+            </div>
+            {groupReturnRecordsLoading ? (
+              <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-violet-500" /><span className="ml-2 text-sm text-muted-foreground">Loading return records...</span></div>
+            ) : groupReturnRecords.length === 0 ? (
+              <div className="text-center text-sm text-muted-foreground py-10">No group-return records yet. Click <span className="font-semibold text-violet-600">New Group Return</span> to create one.</div>
+            ) : (() => {
+              const recTotalPages = Math.ceil(groupReturnRecords.length / RETURN_RECORDS_PER_PAGE) || 1
+              const recSafePage = Math.min(returnRecordsPage, recTotalPages)
+              const recPaged = groupReturnRecords.slice((recSafePage - 1) * RETURN_RECORDS_PER_PAGE, recSafePage * RETURN_RECORDS_PER_PAGE)
+              return (<>
+                <div className="space-y-1.5">
+                  {recPaged.map(r => {
                     const isExp = expandedReturnRec === r.id
                     return (<Card key={r.id} className="shadow-sm border-violet-100 dark:border-violet-500/20"><CardContent className="p-2.5">
                       <div className="flex items-center justify-between cursor-pointer" onClick={() => setExpandedReturnRec(isExp ? null : r.id)}>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <ChevronRight className={`w-3.5 h-3.5 text-violet-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />
                           <span className="text-xs font-mono font-semibold">{r.recorderCode}</span>
                           <Badge className={`${r.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' : r.status === 'partial' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'} border-0 text-[9px] h-4`}>{r.status}</Badge>
@@ -1932,12 +1993,14 @@ export default function IMSApp() {
                         ) : <div className="text-xs text-muted-foreground">No items in this record.</div>}
                       </div>)}
                     </CardContent></Card>)
-                  })
-                )}
-              </div>
-            </CollapsibleContent>
+                  })}
+                </div>
+                <Pager page={recSafePage} totalPages={recTotalPages} onPageChange={setReturnRecordsPage} />
+              </>)
+            })()}
           </div>
-        </Collapsible>
+          )}
+        </Tabs>
       </div>
     )
 
@@ -2600,8 +2663,8 @@ export default function IMSApp() {
                     <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Search className="w-3 h-3" />Add Items to Return</span>
                     {groupReturnDlg.loadingAvailable && <Loader2 className="w-3 h-3 animate-spin text-violet-500" />}
                   </div>
-                  <Input value={groupReturnDlg.itemSearch} onChange={e => setGroupReturnDlg(s => ({ ...s, itemSearch: e.target.value }))} placeholder="Search by product, SKU, person, or recorder code..." className="h-8 text-xs" />
-                  <div className="max-h-40 overflow-y-auto rounded-md border bg-background">
+                  <Input value={groupReturnDlg.itemSearch} onChange={e => setGroupReturnDlg(s => ({ ...s, itemSearch: e.target.value, availPage: 1 }))} placeholder="Search by product, SKU, person, or recorder code..." className="h-8 text-xs" />
+                  <div className="max-h-56 overflow-y-auto rounded-md border bg-background">
                     {(() => {
                       const q = groupReturnDlg.itemSearch.toLowerCase().trim()
                       const addedIds = new Set(groupReturnDlg.items.map(x => x.item.id))
@@ -2610,15 +2673,29 @@ export default function IMSApp() {
                         .filter(it => !q || (it.product?.name || '').toLowerCase().includes(q) || (it.product?.sku || '').toLowerCase().includes(q) || (it.recorder?.personName || '').toLowerCase().includes(q) || (it.recorder?.recorderCode || '').toLowerCase().includes(q))
                       if (groupReturnDlg.loadingAvailable) return <div className="text-center text-[11px] text-muted-foreground py-3">Loading returnable items...</div>
                       if (avail.length === 0) return <div className="text-center text-[11px] text-muted-foreground py-3">{addedIds.size === groupReturnDlg.availableItems.length ? 'All returnable items added.' : 'No items match your search.'}</div>
-                      return <div className="divide-y">
-                        {avail.slice(0, 30).map(it => { const wh = warehouses.find(w => w.id === it.warehouseId)
-                          return (<div key={it.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-violet-50/50 dark:hover:bg-violet-500/5">
-                            <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span></div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
-                            <Button size="sm" variant="outline" onClick={() => addReturnItemToGroup(it)} className="h-6 text-[10px] px-2 shrink-0 border-violet-300 text-violet-700 dark:border-violet-500/40 dark:text-violet-400"><Plus className="w-2.5 h-2.5 mr-0.5" />Add</Button>
-                          </div>)
-                        })}
-                        {avail.length > 30 && <div className="text-center text-[10px] text-muted-foreground py-1">{avail.length - 30} more — refine your search to see them.</div>}
-                      </div>
+                      const perPage = 8
+                      const totalPages = Math.ceil(avail.length / perPage) || 1
+                      const safePage = Math.min(groupReturnDlg.availPage, totalPages)
+                      const paged = avail.slice((safePage - 1) * perPage, safePage * perPage)
+                      return (<>
+                        <div className="divide-y">
+                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId)
+                            return (<div key={it.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-violet-50/50 dark:hover:bg-violet-500/5">
+                              <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span></div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
+                              <Button size="sm" variant="outline" onClick={() => addReturnItemToGroup(it)} className="h-6 text-[10px] px-2 shrink-0 border-violet-300 text-violet-700 dark:border-violet-500/40 dark:text-violet-400"><Plus className="w-2.5 h-2.5 mr-0.5" />Add</Button>
+                            </div>)
+                          })}
+                        </div>
+                        {totalPages > 1 && (
+                          <div className="flex items-center justify-between gap-1 p-1 border-t bg-muted/30">
+                            <span className="text-[10px] text-muted-foreground px-1">{safePage}/{totalPages} · {avail.length} available</span>
+                            <div className="flex items-center gap-1">
+                              <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setGroupReturnDlg(s => ({ ...s, availPage: safePage - 1 }))} className="h-6 w-6 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+                              <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setGroupReturnDlg(s => ({ ...s, availPage: safePage + 1 }))} className="h-6 w-6 p-0"><ChevronRight className="w-3 h-3" /></Button>
+                            </div>
+                          </div>
+                        )}
+                      </>)
                     })()}
                   </div>
                 </div>
@@ -2634,14 +2711,20 @@ export default function IMSApp() {
                   </div>}
                 </div>
                 {groupReturnDlg.items.length === 0 ? <div className="text-center text-sm text-muted-foreground py-4">{groupReturnDlg.mode === 'new' ? 'No items added yet — search and add items above.' : 'No items in this group.'}</div> : (
+                  (() => {
+                    const perPage = 6
+                    const totalPages = Math.ceil(groupReturnDlg.items.length / perPage) || 1
+                    const safePage = Math.min(groupReturnDlg.itemsPage, totalPages)
+                    const paged = groupReturnDlg.items.slice((safePage - 1) * perPage, safePage * perPage)
+                    return (<>
                   <div className="space-y-1.5">
-                    {groupReturnDlg.items.map((entry, idx) => {
+                    {paged.map(entry => {
                       const it = entry.item; const wh = warehouses.find(w => w.id === it.warehouseId)
                       return (<div key={it.id} className={`rounded-md border p-2 ${entry.selected ? 'bg-violet-50/40 dark:bg-violet-500/5 border-violet-200 dark:border-violet-500/30' : 'bg-muted/20'}`}>
                         <div className="flex items-center justify-between gap-2 mb-1">
                           <div className="flex items-center gap-1.5 min-w-0">
                             {groupReturnDlg.mode === 'prefilled' ? (
-                              <Switch checked={entry.selected} onCheckedChange={v => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, selected: v } : x) }))} className="scale-75" />
+                              <Switch checked={entry.selected} onCheckedChange={v => setGroupReturnDlg(s => ({ ...s, items: s.items.map(x => x.item.id === it.id ? { ...x, selected: v } : x) }))} className="scale-75" />
                             ) : (
                               <Button size="sm" variant="ghost" onClick={() => removeReturnItemFromGroup(it.id)} className="h-5 w-5 p-0 text-red-500 shrink-0" title="Remove"><X className="w-3 h-3" /></Button>
                             )}
@@ -2654,13 +2737,24 @@ export default function IMSApp() {
                         </div>
                         <div className="flex items-center gap-1.5 pl-6">
                           <Label className="text-[10px] text-muted-foreground whitespace-nowrap">Qty to return:</Label>
-                          <Input type="number" min={1} max={it.remainingQty} value={entry.qty} onChange={e => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: parseInt(e.target.value) || 0 } : x) }))} className="h-6 text-[11px] w-20" />
-                          <Button size="sm" variant="outline" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map((x, i) => i === idx ? { ...x, qty: it.remainingQty } : x) }))} className="h-6 text-[10px] px-1.5">Full</Button>
+                          <Input type="number" min={1} max={it.remainingQty} value={entry.qty} onChange={e => setGroupReturnDlg(s => ({ ...s, items: s.items.map(x => x.item.id === it.id ? { ...x, qty: parseInt(e.target.value) || 0 } : x) }))} className="h-6 text-[11px] w-20" />
+                          <Button size="sm" variant="outline" onClick={() => setGroupReturnDlg(s => ({ ...s, items: s.items.map(x => x.item.id === it.id ? { ...x, qty: it.remainingQty } : x) }))} className="h-6 text-[10px] px-1.5">Full</Button>
                         </div>
                       </div>)
                     })}
                   </div>
-                )}
+                      {totalPages > 1 && (
+                        <div className="flex items-center justify-between gap-1 pt-1">
+                          <span className="text-[10px] text-muted-foreground">Page {safePage} of {totalPages} · {groupReturnDlg.items.length} item(s)</span>
+                          <div className="flex items-center gap-1">
+                            <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setGroupReturnDlg(s => ({ ...s, itemsPage: safePage - 1 }))} className="h-6 w-6 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+                            <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setGroupReturnDlg(s => ({ ...s, itemsPage: safePage + 1 }))} className="h-6 w-6 p-0"><ChevronRight className="w-3 h-3" /></Button>
+                          </div>
+                        </div>
+                      )}
+                    </>)
+                    })()
+                  )}
               </div>
 
               {/* ── Notes (mirrors Stock-In recorder notes) ── */}

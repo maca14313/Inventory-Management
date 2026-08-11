@@ -475,3 +475,38 @@ Stage Summary:
 - Schema: +ReturnRecorder model, +returnRecorderId FK on Return, +returnRecorders relation on Enterprise
 - API: /api/returns/group now creates a ReturnRecorder; /api/returns?recorders=1 lists them
 - Frontend: New Group Return button + item picker dialog + Return Records section
+
+---
+Task ID: returns-3rd-tab-pagination
+Agent: main
+Task: (1) Move Return Records up as a 3rd top-level tab alongside Flagged/Other Stock-Outs; (2) add pagination to the Group Return by Person person-buttons, the available-items picker, the items-to-return list, and the warehouses list (searchable combobox); (3) paginate the Return Records list itself.
+
+Work Log:
+- src/app/page.tsx state changes:
+  - `returnsTab` type widened to `'flagged' | 'not_flagged' | 'records'`
+  - Added `returnsGroupPage` + `RETURNS_GROUP_PER_PAGE = 8` (person-button pagination)
+  - Added `returnRecordsPage` + `RETURN_RECORDS_PER_PAGE = 6` (records-list pagination)
+  - Added `returnsWhComboOpen` + `returnsWhComboSearch` (searchable warehouse combobox)
+  - Added `availPage` + `itemsPage` fields to `groupReturnDlg` state (pagination inside the dialog)
+  - Removed now-unused `returnRecordsOpen` state (Return Records is a tab, not a collapsible)
+- Updated `loadReturns` to accept the 'records' union (early-returns when tab === 'records')
+- Updated the Returns useEffect to skip the per-item fetch on the 'records' tab and reset all 3 pagination cursors on tab/page change
+- `openGroupReturnDlg`/`openNewGroupReturnDlg`/`addReturnItemToGroup`/`removeReturnItemFromGroup` now reset availPage/itemsPage to 1 on open/mutation
+- Added `Popover`/`PopoverTrigger`/`PopoverContent` imports (for the searchable warehouse combobox)
+- Returns page render restructure:
+  - TabsList: grid-cols-2 → grid-cols-3, added a 3rd "Return Records" TabsTrigger (Layers icon)
+  - The items view (filter + group bar + items table + pager) is now wrapped in `{returnsTab !== 'records' && (<div>...</div>)}`
+  - The Warehouse FilterField is now a Popover combobox: button shows the selected warehouse name, popover has a search input + scrollable list of warehouses + "All Warehouses" option — handles many warehouses gracefully
+  - "Group Return by Person" violet bar: person buttons are now paginated (8 per page) with a count badge + prev/next pager
+  - The old Collapsible Return Records section is removed; replaced with a `{returnsTab === 'records' && (<div>...</div>)}` block containing a paginated (6 per page) list of ReturnRecorder cards with the same expand/collapse detail + the standard Pager component
+- Group Return dialog changes:
+  - Available-items picker (NEW mode): replaced `avail.slice(0, 30)` + "N more" message with proper pagination (8 per page) + page count + prev/next pager; availPage resets to 1 when the search query changes
+  - Items-to-return list: added pagination (6 per page) with page count + prev/next pager; switched per-row updates from index-based (`i === idx`) to id-based (`x.item.id === it.id`) so pagination doesn't break qty/selected/remove matching
+- Fixed a stray extra `)}` closing brace introduced during the items-list IIFE refactor
+- Lint: clean. `npx tsc --noEmit`: 0 errors in src/ (only pre-existing errors in examples/ and skills/ demo files)
+
+Stage Summary:
+- Returns page now has 3 top-level tabs: Flagged for Return · Other Stock-Outs · Return Records (each with its own content; the records tab has its own paginated list)
+- Every list in the Returns/Group-Return area that could grow large is now paginated: (a) person buttons in the violet bar (8/page), (b) available-items picker in the New Group Return dialog (8/page), (c) items-to-return list in the Group Return dialog (6/page), (d) Return Records in the 3rd tab (6/page)
+- Warehouse filter is now a searchable combobox (Popover + search input + scrollable list) so enterprises with many warehouses can find/select warehouses without a long dropdown
+- All updates are client-side; no backend changes were needed (the returns API already returns full lists)
