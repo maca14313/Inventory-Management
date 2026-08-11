@@ -543,3 +543,52 @@ Stage Summary:
 - Flagged items are visually tagged with an amber "flagged" badge in the picker.
 - All filters reset when modal is reopened (initialized in both openGroupReturnDlg and openNewGroupReturnDlg).
 - Lint clean, dev server clean, browser-verified end-to-end.
+
+---
+Task ID: 10
+Agent: main
+Task: 1) Make all advanced filter panels consistent (add Category and other missing filter methods to every page). 2) Reorganize the sidebar: group Enterprises+Branches+Warehouses+Users into one "Organization" group; move Categories+Orders+Suppliers+Audit Log+Features to the bottom under a "More" group.
+
+Work Log:
+- Audited all 6 FilterPanel instances across the app to identify missing filter methods:
+  • Products (line 1026): Search, Category, Status, Low stock — FULL ✓
+  • Stock (line 1207): Search, Warehouse, Low stock — MISSING Category
+  • Orders (line 1282): Search, Status, Type — MISSING Warehouse
+  • Stock In (line 1357): Date range, Warehouse, Status, Supplier — MISSING Search
+  • Stock Out (line 1551): Date range, Warehouse, Status, Person — MISSING Search
+  • Returns (line 1763): Search, Warehouse, Date range, Recorder Code, Progress — MISSING Category + Person
+- Added new filter state variables:
+  • `stockCategoryFilter` for Stock page
+  • `orderWarehouseFilter` for Orders page
+  • `stockInFilterSearch` for Stock In page (search by recorderCode/personName/notes)
+  • `stockOutFilterSearch` for Stock Out page (search by recorderCode/personName/notes)
+  • `returnsFilterCategory` and `returnsFilterPerson` for Returns page
+- Updated filter logic chains:
+  • Stock: added category filter (checks product.categoryId)
+  • Orders: added warehouse filter (checks o.warehouseId)
+  • Stock In: added search filter (matches recorderCode/personName/notes)
+  • Stock Out: added search filter (matches recorderCode/personName/notes)
+  • Returns: added category filter (checks it.product.categoryId) + person filter (checks it.recorder.personName)
+- Updated all FilterPanel UIs to include the new filter fields, updated activeCount formulas, and updated onClear handlers to reset the new state.
+- Reorganized the sidebar nav from a flat list into 4 visual sections:
+  • Top (no header): Dashboard
+  • ORGANIZATION group: Enterprises, Branches, Warehouses, Users
+  • INVENTORY group: Products, Stock, Stock In, Stock Out, Returns
+  • MORE group (bottom): Categories, Orders, Suppliers, Audit Log, Features
+- Implemented the grouping inside the existing `<nav>` using a self-invoking IIFE that partitions navItems (which is already permission-filtered) into the 4 buckets and renders each group with a small uppercase header label. Items not in any known bucket are rendered defensively between Inventory and More.
+- Verified lint passes cleanly (`bun run lint` — no errors).
+- Verified via Agent Browser:
+  • Super Admin login: sidebar shows Dashboard → ORGANIZATION (Enterprises, Branches, Warehouses, Users) → INVENTORY (Products, Stock, Stock In, Stock Out, Returns) → MORE (Categories, Orders, Suppliers, Audit Log, Features) ✓
+  • Warehouse Admin login: same grouping, with permission-filtered items (Users, Audit Log) correctly hidden — group headers still render correctly ✓
+  • Stock page Advanced Filters: now shows Search + Category + Warehouse + Low stock ✓
+  • Orders page Advanced Filters: now shows Search + Warehouse + Status + Type ✓
+  • Stock In page Advanced Filters: now shows Search (Code, supplier, notes) + Date range + Warehouse + Status + Supplier ✓
+  • Stock Out page Advanced Filters: now shows Search (Code, person, notes) + Date range + Warehouse + Status + Person ✓
+  • Returns page Advanced Filters: now shows Search + Warehouse + Category + Person/Supplier + Out Date range + Recorder Code + Return Progress ✓
+- All dev.log API calls return 200, no runtime errors.
+
+Stage Summary:
+- All 6 advanced filter panels across the app are now consistent — each has Search (where applicable), Category (where items have a category), Warehouse, Date range, Status/Progress, and Person/Supplier filters as appropriate to the data type.
+- Sidebar is now grouped into 4 clear sections (Dashboard / Organization / Inventory / More) instead of a flat 15-item list, making navigation much easier especially for Super Admin who sees all items.
+- Grouping is permission-aware: when a role can't see certain items (e.g. Warehouse Admin can't see Users/Audit Log), those items are simply omitted from their group but the group headers and remaining items still render correctly.
+- Lint clean, dev server clean, browser-verified for both Super Admin and Warehouse Admin roles.

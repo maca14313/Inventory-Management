@@ -241,10 +241,12 @@ export default function IMSApp() {
   // Stock advanced filters
   const [stockWarehouseFilter, setStockWarehouseFilter] = useState<number | ''>('')
   const [stockLowOnly, setStockLowOnly] = useState(false)
+  const [stockCategoryFilter, setStockCategoryFilter] = useState<number | ''>('')
   // Orders advanced filters
   const [orderSearch, setOrderSearch] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState('')
   const [orderTypeFilter, setOrderTypeFilter] = useState<'' | 'purchase' | 'sales'>('')
+  const [orderWarehouseFilter, setOrderWarehouseFilter] = useState<number | ''>('')
   const [orders, setOrders] = useState<Order[]>([])
   const [auditData, setAuditData] = useState<AuditEntry[]>([])
   const [features, setFeatures] = useState<Feature[]>([])
@@ -298,6 +300,8 @@ export default function IMSApp() {
   const [returnsFilterDateTo, setReturnsFilterDateTo] = useState('')
   const [returnsFilterRecorder, setReturnsFilterRecorder] = useState('')
   const [returnsFilterProgress, setReturnsFilterProgress] = useState<'' | 'none' | 'partial' | 'full'>('')
+  const [returnsFilterCategory, setReturnsFilterCategory] = useState<number | ''>('')
+  const [returnsFilterPerson, setReturnsFilterPerson] = useState('')
   // Single-item return dialog
   const [returnDlg, setReturnDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; notes: string; submitting: boolean }>({ open: false, item: null, qty: 0, notes: '', submitting: false })
   // Source-record dialog (shows the StockOutRecorder that this item belongs to + return history)
@@ -365,6 +369,7 @@ export default function IMSApp() {
   const [stockOutFilterStatus, setStockOutFilterStatus] = useState('')
   const [stockOutFilterPerson, setStockOutFilterPerson] = useState('')
   const [stockOutFilterWarehouse, setStockOutFilterWarehouse] = useState<number | ''>('')
+  const [stockOutFilterSearch, setStockOutFilterSearch] = useState('')
   // Pending items per recorder (local array before API submission)
   const [pendingStockOutItems, setPendingStockOutItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string }[]>>({})
   let _pendingTempId = 0
@@ -451,6 +456,7 @@ export default function IMSApp() {
   const [stockInFilterStatus, setStockInFilterStatus] = useState('')
   const [stockInFilterPerson, setStockInFilterPerson] = useState('')
   const [stockInFilterWarehouse, setStockInFilterWarehouse] = useState<number | ''>('')
+  const [stockInFilterSearch, setStockInFilterSearch] = useState('')
   const [pendingStockInItems, setPendingStockInItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }[]>>({})
   const getPendingInItems = (recorderId: number) => pendingStockInItems[recorderId] || []
   const addPendingInItem = (recorderId: number, item: { productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }) => {
@@ -854,6 +860,7 @@ export default function IMSApp() {
       const prod = products.find(p => p.id === s.productId); const wh = warehouses.find(w => w.id === s.warehouseId)
       if (stockSearch) { const q = stockSearch.toLowerCase(); if (!(prod?.name || '').toLowerCase().includes(q) && !(wh?.name || '').toLowerCase().includes(q) && !(prod?.sku || '').toLowerCase().includes(q)) return false }
       if (stockWarehouseFilter !== '' && s.warehouseId !== stockWarehouseFilter) return false
+      if (stockCategoryFilter !== '' && (!prod || prod.categoryId !== stockCategoryFilter)) return false
       if (stockLowOnly) { const isLow = prod ? s.quantity <= prod.reorderLevel : false; if (!isLow) return false }
       return true
     })
@@ -865,6 +872,7 @@ export default function IMSApp() {
       if (orderSearch) { const q = orderSearch.toLowerCase(); if (!String(o.id).includes(q) && !(o.notes || '').toLowerCase().includes(q)) return false }
       if (orderStatusFilter && o.status !== orderStatusFilter) return false
       if (orderTypeFilter && o.type !== orderTypeFilter) return false
+      if (orderWarehouseFilter !== '' && o.warehouseId !== orderWarehouseFilter) return false
       return true
     })
 
@@ -1205,12 +1213,18 @@ export default function IMSApp() {
           <p className="text-xs text-muted-foreground mt-1">View current stock levels and lots per product. To receive new inventory, open the <span className="font-semibold text-emerald-600 dark:text-emerald-400">Stock In</span> page in the sidebar.</p></div>
         </div>
         <FilterPanel
-          activeCount={(stockSearch ? 1 : 0) + (stockWarehouseFilter !== '' ? 1 : 0) + (stockLowOnly ? 1 : 0)}
-          onClear={() => { setStockSearch(''); setStockWarehouseFilter(''); setStockLowOnly(false); setStockPage(1) }}
+          activeCount={(stockSearch ? 1 : 0) + (stockWarehouseFilter !== '' ? 1 : 0) + (stockLowOnly ? 1 : 0) + (stockCategoryFilter !== '' ? 1 : 0)}
+          onClear={() => { setStockSearch(''); setStockWarehouseFilter(''); setStockLowOnly(false); setStockCategoryFilter(''); setStockPage(1) }}
           resultLabel={`${filteredStock.length} records`}
         >
           <FilterField label="Search" width="w-56">
             <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Product, SKU, warehouse..." value={stockSearch} onChange={e => { setStockSearch(e.target.value); setStockPage(1) }} className="h-8 text-xs pl-7" /></div>
+          </FilterField>
+          <FilterField label="Category" width="w-44">
+            <Select value={stockCategoryFilter === '' ? '_all' : String(stockCategoryFilter)} onValueChange={v => { setStockCategoryFilter(v === '_all' ? '' : parseInt(v)); setStockPage(1) }}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+              <SelectContent><SelectItem value="_all">All Categories</SelectItem>{categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
+            </Select>
           </FilterField>
           <FilterField label="Warehouse" width="w-44">
             <Select value={stockWarehouseFilter === '' ? '_all' : String(stockWarehouseFilter)} onValueChange={v => { setStockWarehouseFilter(v === '_all' ? '' : parseInt(v)); setStockPage(1) }}>
@@ -1280,12 +1294,18 @@ export default function IMSApp() {
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navOrders')}</h1>
           {hasPermission(role!, 'orders:create') && <Button onClick={() => openCreate('order')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newOrder')}</Button>}</div>
         <FilterPanel
-          activeCount={(orderSearch ? 1 : 0) + (orderStatusFilter ? 1 : 0) + (orderTypeFilter ? 1 : 0)}
-          onClear={() => { setOrderSearch(''); setOrderStatusFilter(''); setOrderTypeFilter('') }}
+          activeCount={(orderSearch ? 1 : 0) + (orderStatusFilter ? 1 : 0) + (orderTypeFilter ? 1 : 0) + (orderWarehouseFilter !== '' ? 1 : 0)}
+          onClear={() => { setOrderSearch(''); setOrderStatusFilter(''); setOrderTypeFilter(''); setOrderWarehouseFilter('') }}
           resultLabel={`${filteredOrders.length} orders`}
         >
           <FilterField label="Search" width="w-48">
             <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="ID or notes..." value={orderSearch} onChange={e => setOrderSearch(e.target.value)} className="h-8 text-xs pl-7" /></div>
+          </FilterField>
+          <FilterField label="Warehouse" width="w-44">
+            <Select value={orderWarehouseFilter === '' ? '_all' : String(orderWarehouseFilter)} onValueChange={v => setOrderWarehouseFilter(v === '_all' ? '' : parseInt(v))}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+              <SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent>
+            </Select>
           </FilterField>
           <FilterField label="Status" width="w-36">
             <Select value={orderStatusFilter || '_all'} onValueChange={v => setOrderStatusFilter(v === '_all' ? '' : v)}>
@@ -1355,10 +1375,13 @@ export default function IMSApp() {
 
         {/* ── Filters ── */}
         <FilterPanel
-          activeCount={(stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0)}
-          onClear={() => { setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInRecPage(1) }}
+          activeCount={(stockInFilterSearch ? 1 : 0) + (stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0)}
+          onClear={() => { setStockInFilterSearch(''); setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInRecPage(1) }}
           resultLabel={`${stockInData.length} recorders`}
         >
+          <FilterField label="Search" width="w-48">
+            <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Code, supplier, notes..." value={stockInFilterSearch} onChange={e => { setStockInFilterSearch(e.target.value); setStockInRecPage(1) }} className="h-8 text-xs pl-7" /></div>
+          </FilterField>
           <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={stockInFilterDateFrom} onChange={v => { setStockInFilterDateFrom(v); setStockInRecPage(1) }} /></FilterField>
           <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={stockInFilterDateTo} onChange={v => { setStockInFilterDateTo(v); setStockInRecPage(1) }} /></FilterField>
           <FilterField label="Warehouse" width="w-44"><Select value={stockInFilterWarehouse === '' ? '_all' : String(stockInFilterWarehouse)} onValueChange={v => { setStockInFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockInRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></FilterField>
@@ -1373,6 +1396,7 @@ export default function IMSApp() {
           if (stockInFilterStatus) filtered = filtered.filter(r => r.status === stockInFilterStatus)
           if (stockInFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockInFilterPerson.toLowerCase()))
           if (stockInFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockInFilterWarehouse)
+          if (stockInFilterSearch) { const q = stockInFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
           const recPaged = filtered.slice((stockInRecPage - 1) * STOCK_IN_REC_PER_PAGE, stockInRecPage * STOCK_IN_REC_PER_PAGE)
@@ -1549,10 +1573,13 @@ export default function IMSApp() {
 
         {/* ── Filters ── */}
         <FilterPanel
-          activeCount={(stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0)}
-          onClear={() => { setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutRecPage(1) }}
+          activeCount={(stockOutFilterSearch ? 1 : 0) + (stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0)}
+          onClear={() => { setStockOutFilterSearch(''); setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutRecPage(1) }}
           resultLabel={`${stockOutData.length} recorders`}
         >
+          <FilterField label="Search" width="w-48">
+            <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Code, person, notes..." value={stockOutFilterSearch} onChange={e => { setStockOutFilterSearch(e.target.value); setStockOutRecPage(1) }} className="h-8 text-xs pl-7" /></div>
+          </FilterField>
           <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={stockOutFilterDateFrom} onChange={v => { setStockOutFilterDateFrom(v); setStockOutRecPage(1) }} /></FilterField>
           <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={stockOutFilterDateTo} onChange={v => { setStockOutFilterDateTo(v); setStockOutRecPage(1) }} /></FilterField>
           <FilterField label="Warehouse" width="w-44"><Select value={stockOutFilterWarehouse === '' ? '_all' : String(stockOutFilterWarehouse)} onValueChange={v => { setStockOutFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockOutRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Warehouses</SelectItem>{warehouses.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.name}</SelectItem>)}</SelectContent></Select></FilterField>
@@ -1568,6 +1595,7 @@ export default function IMSApp() {
           if (stockOutFilterStatus) filtered = filtered.filter(r => r.status === stockOutFilterStatus)
           if (stockOutFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockOutFilterPerson.toLowerCase()))
           if (stockOutFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockOutFilterWarehouse)
+          if (stockOutFilterSearch) { const q = stockOutFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_OUT_REC_PER_PAGE)
           const recPaged = filtered.slice((stockOutRecPage - 1) * STOCK_OUT_REC_PER_PAGE, stockOutRecPage * STOCK_OUT_REC_PER_PAGE)
@@ -1761,8 +1789,8 @@ export default function IMSApp() {
           <div className="mt-3 space-y-3">
             {/* Advanced Filters */}
             <FilterPanel
-              activeCount={(returnsSearch ? 1 : 0) + (returnsWarehouseFilter !== '' ? 1 : 0) + (returnsFilterDateFrom ? 1 : 0) + (returnsFilterDateTo ? 1 : 0) + (returnsFilterRecorder ? 1 : 0) + (returnsFilterProgress ? 1 : 0)}
-              onClear={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsFilterDateFrom(''); setReturnsFilterDateTo(''); setReturnsFilterRecorder(''); setReturnsFilterProgress(''); setReturnsPage(1) }}
+              activeCount={(returnsSearch ? 1 : 0) + (returnsWarehouseFilter !== '' ? 1 : 0) + (returnsFilterDateFrom ? 1 : 0) + (returnsFilterDateTo ? 1 : 0) + (returnsFilterRecorder ? 1 : 0) + (returnsFilterProgress ? 1 : 0) + (returnsFilterCategory !== '' ? 1 : 0) + (returnsFilterPerson.trim() ? 1 : 0)}
+              onClear={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsFilterDateFrom(''); setReturnsFilterDateTo(''); setReturnsFilterRecorder(''); setReturnsFilterProgress(''); setReturnsFilterCategory(''); setReturnsFilterPerson(''); setReturnsPage(1) }}
               resultLabel={`${returnsData.length} item(s)`}
             >
               <FilterField label="Search" width="w-56">
@@ -1790,6 +1818,15 @@ export default function IMSApp() {
                   </PopoverContent>
                 </Popover>
               </FilterField>
+              <FilterField label="Category" width="w-44">
+                <Select value={returnsFilterCategory === '' ? '_all' : String(returnsFilterCategory)} onValueChange={v => { setReturnsFilterCategory(v === '_all' ? '' : parseInt(v)); setReturnsPage(1) }}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                  <SelectContent><SelectItem value="_all">All Categories</SelectItem>{categories.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </FilterField>
+              <FilterField label="Person / Supplier" width="w-44">
+                <Input value={returnsFilterPerson} onChange={e => { setReturnsFilterPerson(e.target.value); setReturnsPage(1) }} placeholder="Name contains..." className="h-8 text-xs" />
+              </FilterField>
               <FilterField label="Out Date From" width="w-32"><CustomDatePicker compact value={returnsFilterDateFrom} onChange={v => { setReturnsFilterDateFrom(v); setReturnsPage(1) }} /></FilterField>
               <FilterField label="Out Date To" width="w-32"><CustomDatePicker compact value={returnsFilterDateTo} onChange={v => { setReturnsFilterDateTo(v); setReturnsPage(1) }} /></FilterField>
               <FilterField label="Recorder Code" width="w-40"><Input value={returnsFilterRecorder} onChange={e => { setReturnsFilterRecorder(e.target.value); setReturnsPage(1) }} placeholder="SOUT-..." className="h-8 text-xs" /></FilterField>
@@ -1807,8 +1844,11 @@ export default function IMSApp() {
               // Apply search + advanced filters
               const q = returnsSearch.toLowerCase()
               const recQ = returnsFilterRecorder.toLowerCase()
+              const personQ = returnsFilterPerson.toLowerCase().trim()
               const filtered = returnsData.filter(it => {
                 if (returnsWarehouseFilter !== '' && it.warehouseId !== returnsWarehouseFilter) return false
+                if (returnsFilterCategory !== '' && it.product?.categoryId !== returnsFilterCategory) return false
+                if (personQ && !(it.recorder?.personName || '').toLowerCase().includes(personQ)) return false
                 if (returnsFilterDateFrom && new Date(it.createdAt) < new Date(returnsFilterDateFrom + 'T00:00:00')) return false
                 if (returnsFilterDateTo && new Date(it.createdAt) > new Date(returnsFilterDateTo + 'T23:59:59')) return false
                 if (recQ && !(it.recorder?.recorderCode || '').toLowerCase().includes(recQ)) return false
@@ -2070,11 +2110,44 @@ export default function IMSApp() {
             <div className="text-xs text-muted-foreground truncate">{auth.fullName}</div>
             {eid && <div className="text-[10px] text-muted-foreground/70 mt-0.5">E#{eid}{auth.branchId ? ` B#${auth.branchId}` : ''}{auth.warehouseId ? ` W#${auth.warehouseId}` : ''}</div>}</div>
 
-          <nav className="flex-1 overflow-y-auto p-3 space-y-1">
-            {navItems.map(item => { const Icon = ICONS[item.icon] || Box; const active = page === item.key
-              return (<button key={item.key} onClick={() => { setPage(item.key); setSidebarOpen(false) }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all ${active ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}>
-                <Icon className="w-4 h-4" /><span>{item.label}</span></button>)})}
+          <nav className="flex-1 overflow-y-auto p-3 space-y-3">
+            {(() => {
+              // Sidebar grouping:
+              // - Top (no header): dashboard
+              // - "Organization" group: enterprises, branches, warehouses, users
+              // - "Inventory" group: products, stock, stockIn, stockOut, returns
+              // - Bottom "More" group: categories, orders, suppliers, audit, features
+              const ORG_KEYS = new Set(['enterprises', 'branches', 'warehouses', 'users'])
+              const INV_KEYS = new Set(['products', 'stock', 'stockIn', 'stockOut', 'returns'])
+              const MORE_KEYS = new Set(['categories', 'orders', 'suppliers', 'audit', 'features'])
+              const present = new Set(navItems.map(n => n.key))
+              const top = navItems.filter(n => n.key === 'dashboard')
+              const org = navItems.filter(n => ORG_KEYS.has(n.key))
+              const inv = navItems.filter(n => INV_KEYS.has(n.key))
+              const more = navItems.filter(n => MORE_KEYS.has(n.key))
+              const renderBtn = (item: typeof navItems[number]) => { const Icon = ICONS[item.icon] || Box; const active = page === item.key
+                return (<button key={item.key} onClick={() => { setPage(item.key); setSidebarOpen(false) }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all ${active ? 'bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}`}>
+                  <Icon className="w-4 h-4" /><span>{item.label}</span></button>) }
+              const renderGroup = (label: string, items: typeof navItems) => items.length === 0 ? null : (
+                <div className="space-y-0.5">
+                  <div className="px-3 pt-1.5 pb-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">{label}</div>
+                  {items.map(renderBtn)}
+                </div>
+              )
+              // any items not in known groups → render at the end (defensive)
+              const knownKeys = new Set([...ORG_KEYS, ...INV_KEYS, ...MORE_KEYS, 'dashboard'])
+              const others = navItems.filter(n => !knownKeys.has(n.key))
+              return (<>
+                {top.length > 0 && <div className="space-y-0.5">{top.map(renderBtn)}</div>}
+                {renderGroup('Organization', org)}
+                {renderGroup('Inventory', inv)}
+                {others.length > 0 && <div className="space-y-0.5">{others.map(renderBtn)}</div>}
+                {renderGroup('More', more)}
+              </>)
+              // 'present' kept for future per-item visibility checks; reference to avoid unused warning
+              void present
+            })()}
           </nav>
 
           <div className="p-3 border-t space-y-2">
