@@ -312,7 +312,18 @@ export default function IMSApp() {
     items: { item: ReturnableItem; qty: number; selected: boolean }[];
     availableItems: ReturnableItem[]; itemSearch: string; loadingAvailable: boolean;
     availPage: number; itemsPage: number;
-  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1 })
+    // Advanced filters for the item picker (NEW mode) — lets the user find what they want
+    filterWarehouse: number | '';
+    filterCategory: number | '';
+    filterPerson: string;
+    filterDateFrom: string;
+    filterDateTo: string;
+    filterProgress: '' | 'none' | 'partial' | 'full';
+    filterFlagged: '' | 'flagged' | 'not_flagged';
+    whComboOpen: boolean;
+    whComboSearch: string;
+    availableFlaggedIds: number[]; // ids among availableItems that came from the 'flagged' tab
+  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
   // Return Recorder records (created by group returns — mirrors Stock-In recorders list)
   const [groupReturnRecords, setGroupReturnRecords] = useState<ReturnRecorder[]>([])
   const [groupReturnRecordsLoading, setGroupReturnRecordsLoading] = useState(false)
@@ -628,6 +639,7 @@ export default function IMSApp() {
       items: items.map(it => ({ item: it, qty: it.remainingQty, selected: true })),
       availableItems: [], itemSearch: '', loadingAvailable: false,
       availPage: 1, itemsPage: 1,
+      filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [],
     })
   }
   // ─── Returns: open a NEW group-return record from scratch (new mode) ────
@@ -635,15 +647,18 @@ export default function IMSApp() {
   // returnable stock-out items (both tabs) so the user can build a brand-new group return
   // combining items from different suppliers/persons/recorders.
   const openNewGroupReturnDlg = async () => {
-    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1 })
+    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
     try {
       const h = { ...auth.getAuthHeaders() }
       const [flagged, notFlagged] = await Promise.all([
         fetch(`${BASE}/api/returns?tab=flagged`, { headers: h }).then(r => r.json()).catch(() => []),
         fetch(`${BASE}/api/returns?tab=not_flagged`, { headers: h }).then(r => r.json()).catch(() => []),
       ])
-      const all = [...(Array.isArray(flagged) ? flagged : []), ...(Array.isArray(notFlagged) ? notFlagged : [])]
-      setGroupReturnDlg(s => ({ ...s, availableItems: all, loadingAvailable: false }))
+      const flaggedArr: ReturnableItem[] = Array.isArray(flagged) ? flagged : []
+      const notFlaggedArr: ReturnableItem[] = Array.isArray(notFlagged) ? notFlagged : []
+      const all = [...flaggedArr, ...notFlaggedArr]
+      const flaggedIds = flaggedArr.map(it => it.id)
+      setGroupReturnDlg(s => ({ ...s, availableItems: all, availableFlaggedIds: flaggedIds, loadingAvailable: false }))
     } catch (e: any) {
       console.error('openNewGroupReturnDlg error:', e)
       setGroupReturnDlg(s => ({ ...s, availableItems: returnsData, loadingAvailable: false }))
@@ -2656,7 +2671,7 @@ export default function IMSApp() {
                 </div>
               )}
 
-              {/* ── Item picker (NEW mode only) — search & add items from ALL returnable stock-outs ── */}
+              {/* ── Item picker (NEW mode only) — search + ADVANCED collapsible filters + add items from ALL returnable stock-outs ── */}
               {groupReturnDlg.mode === 'new' && (
                 <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
                   <div className="flex items-center justify-between">
@@ -2664,24 +2679,123 @@ export default function IMSApp() {
                     {groupReturnDlg.loadingAvailable && <Loader2 className="w-3 h-3 animate-spin text-violet-500" />}
                   </div>
                   <Input value={groupReturnDlg.itemSearch} onChange={e => setGroupReturnDlg(s => ({ ...s, itemSearch: e.target.value, availPage: 1 }))} placeholder="Search by product, SKU, person, or recorder code..." className="h-8 text-xs" />
+                  {(() => {
+                    // active count for the advanced filter panel
+                    const advActive = (groupReturnDlg.filterWarehouse !== '' ? 1 : 0)
+                      + (groupReturnDlg.filterCategory !== '' ? 1 : 0)
+                      + (groupReturnDlg.filterPerson.trim() ? 1 : 0)
+                      + (groupReturnDlg.filterDateFrom ? 1 : 0)
+                      + (groupReturnDlg.filterDateTo ? 1 : 0)
+                      + (groupReturnDlg.filterProgress ? 1 : 0)
+                      + (groupReturnDlg.filterFlagged ? 1 : 0)
+                    const clearAdv = () => setGroupReturnDlg(s => ({ ...s, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', availPage: 1 }))
+                    return (
+                      <FilterPanel
+                        activeCount={advActive}
+                        onClear={clearAdv}
+                        title="Advanced Filters"
+                        defaultOpen={false}
+                        resultLabel={`${groupReturnDlg.availableItems.length} returnable item(s)`}
+                      >
+                        <FilterField label="Warehouse" width="w-44">
+                          <Popover open={groupReturnDlg.whComboOpen} onOpenChange={o => setGroupReturnDlg(s => ({ ...s, whComboOpen: o, whComboSearch: o ? s.whComboSearch : '' }))}>
+                            <PopoverTrigger asChild>
+                              <Button variant="outline" role="combobox" className="h-8 text-xs justify-between w-full font-normal px-2">
+                                <span className="truncate">{groupReturnDlg.filterWarehouse === '' ? 'All Warehouses' : (warehouses.find(w => w.id === groupReturnDlg.filterWarehouse)?.name || `#${groupReturnDlg.filterWarehouse}`)}</span>
+                                <ChevronDown className="w-3 h-3 opacity-50 shrink-0" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-44 p-0" align="start">
+                              <div className="p-1.5 border-b sticky top-0 bg-popover">
+                                <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-1.5 top-1/2 -translate-y-1/2" /><Input placeholder="Search warehouse..." value={groupReturnDlg.whComboSearch} onChange={e => setGroupReturnDlg(s => ({ ...s, whComboSearch: e.target.value }))} className="h-7 text-xs pl-6" /></div>
+                              </div>
+                              <div className="max-h-40 overflow-y-auto">
+                                <button onClick={() => { setGroupReturnDlg(s => ({ ...s, filterWarehouse: '', availPage: 1, whComboOpen: false })); }} className={`w-full text-left px-2 py-1.5 text-xs hover:bg-violet-50 dark:hover:bg-violet-500/10 ${groupReturnDlg.filterWarehouse === '' ? 'bg-violet-50 dark:bg-violet-500/10 font-medium text-violet-700 dark:text-violet-400' : ''}`}>All Warehouses</button>
+                                {warehouses.filter(w => { const s = groupReturnDlg.whComboSearch.toLowerCase(); return !s || w.name.toLowerCase().includes(s) || (w.code || '').toLowerCase().includes(s) }).map(w => (
+                                  <button key={w.id} onClick={() => { setGroupReturnDlg(s => ({ ...s, filterWarehouse: w.id, availPage: 1, whComboOpen: false })); }} className={`w-full text-left px-2 py-1.5 text-xs hover:bg-violet-50 dark:hover:bg-violet-500/10 ${groupReturnDlg.filterWarehouse === w.id ? 'bg-violet-50 dark:bg-violet-500/10 font-medium text-violet-700 dark:text-violet-400' : ''}`}>{w.name} <span className="text-[9px] text-muted-foreground font-mono">{w.code}</span></button>
+                                ))}
+                                {warehouses.filter(w => { const s = groupReturnDlg.whComboSearch.toLowerCase(); return !s || w.name.toLowerCase().includes(s) || (w.code || '').toLowerCase().includes(s) }).length === 0 && <div className="px-2 py-2 text-[11px] text-muted-foreground text-center">No warehouse matches.</div>}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </FilterField>
+                        <FilterField label="Category" width="w-40">
+                          <Select value={groupReturnDlg.filterCategory === '' ? '_all' : String(groupReturnDlg.filterCategory)} onValueChange={v => setGroupReturnDlg(s => ({ ...s, filterCategory: v === '_all' ? '' : Number(v), availPage: 1 }))}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All Categories" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="_all">All Categories</SelectItem>
+                              {categories.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </FilterField>
+                        <FilterField label="Person / Supplier" width="w-44">
+                          <Input value={groupReturnDlg.filterPerson} onChange={e => setGroupReturnDlg(s => ({ ...s, filterPerson: e.target.value, availPage: 1 }))} placeholder="Name contains..." className="h-8 text-xs" />
+                        </FilterField>
+                        <FilterField label="Stock-Out From" width="w-40">
+                          <Input type="date" value={groupReturnDlg.filterDateFrom} onChange={e => setGroupReturnDlg(s => ({ ...s, filterDateFrom: e.target.value, availPage: 1 }))} className="h-8 text-xs" />
+                        </FilterField>
+                        <FilterField label="Stock-Out To" width="w-40">
+                          <Input type="date" value={groupReturnDlg.filterDateTo} onChange={e => setGroupReturnDlg(s => ({ ...s, filterDateTo: e.target.value, availPage: 1 }))} className="h-8 text-xs" />
+                        </FilterField>
+                        <FilterField label="Return Progress" width="w-40">
+                          <Select value={groupReturnDlg.filterProgress || '_all'} onValueChange={v => setGroupReturnDlg(s => ({ ...s, filterProgress: v === '_all' ? '' : v as 'none' | 'partial' | 'full', availPage: 1 }))}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                            <SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="none">Not started</SelectItem><SelectItem value="partial">Partial</SelectItem><SelectItem value="full">Fully returned</SelectItem></SelectContent>
+                          </Select>
+                        </FilterField>
+                        <FilterField label="Flagged Status" width="w-44">
+                          <Select value={groupReturnDlg.filterFlagged || '_all'} onValueChange={v => setGroupReturnDlg(s => ({ ...s, filterFlagged: v === '_all' ? '' : v as 'flagged' | 'not_flagged', availPage: 1 }))}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                            <SelectContent><SelectItem value="_all">All (both tabs)</SelectItem><SelectItem value="flagged">Should be returned</SelectItem><SelectItem value="not_flagged">Other stock-outs</SelectItem></SelectContent>
+                          </Select>
+                        </FilterField>
+                      </FilterPanel>
+                    )
+                  })()}
                   <div className="max-h-56 overflow-y-auto rounded-md border bg-background">
                     {(() => {
                       const q = groupReturnDlg.itemSearch.toLowerCase().trim()
+                      const personQ = groupReturnDlg.filterPerson.toLowerCase().trim()
                       const addedIds = new Set(groupReturnDlg.items.map(x => x.item.id))
+                      const flaggedSet = new Set(groupReturnDlg.availableFlaggedIds)
                       const avail = groupReturnDlg.availableItems
                         .filter(it => !addedIds.has(it.id))
+                        // search
                         .filter(it => !q || (it.product?.name || '').toLowerCase().includes(q) || (it.product?.sku || '').toLowerCase().includes(q) || (it.recorder?.personName || '').toLowerCase().includes(q) || (it.recorder?.recorderCode || '').toLowerCase().includes(q))
+                        // warehouse
+                        .filter(it => groupReturnDlg.filterWarehouse === '' || it.warehouseId === groupReturnDlg.filterWarehouse)
+                        // category
+                        .filter(it => groupReturnDlg.filterCategory === '' || it.product?.categoryId === groupReturnDlg.filterCategory)
+                        // person
+                        .filter(it => !personQ || (it.recorder?.personName || '').toLowerCase().includes(personQ))
+                        // date range (based on stock-out item createdAt)
+                        .filter(it => !groupReturnDlg.filterDateFrom || new Date(it.createdAt || it.recorder?.createdAt || '') >= new Date(groupReturnDlg.filterDateFrom + 'T00:00:00'))
+                        .filter(it => !groupReturnDlg.filterDateTo || new Date(it.createdAt || it.recorder?.createdAt || '') <= new Date(groupReturnDlg.filterDateTo + 'T23:59:59'))
+                        // return progress
+                        .filter(it => {
+                          if (!groupReturnDlg.filterProgress) return true
+                          if (groupReturnDlg.filterProgress === 'none') return it.returnedQty <= 0
+                          if (groupReturnDlg.filterProgress === 'partial') return it.returnedQty > 0 && it.remainingQty > 0
+                          if (groupReturnDlg.filterProgress === 'full') return it.remainingQty <= 0
+                          return true
+                        })
+                        // flagged status
+                        .filter(it => {
+                          if (!groupReturnDlg.filterFlagged) return true
+                          const isFlagged = flaggedSet.has(it.id)
+                          return groupReturnDlg.filterFlagged === 'flagged' ? isFlagged : !isFlagged
+                        })
                       if (groupReturnDlg.loadingAvailable) return <div className="text-center text-[11px] text-muted-foreground py-3">Loading returnable items...</div>
-                      if (avail.length === 0) return <div className="text-center text-[11px] text-muted-foreground py-3">{addedIds.size === groupReturnDlg.availableItems.length ? 'All returnable items added.' : 'No items match your search.'}</div>
+                      if (avail.length === 0) return <div className="text-center text-[11px] text-muted-foreground py-3">{addedIds.size === groupReturnDlg.availableItems.length ? 'All returnable items added.' : 'No items match your filters.'}</div>
                       const perPage = 8
                       const totalPages = Math.ceil(avail.length / perPage) || 1
                       const safePage = Math.min(groupReturnDlg.availPage, totalPages)
                       const paged = avail.slice((safePage - 1) * perPage, safePage * perPage)
                       return (<>
                         <div className="divide-y">
-                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId)
+                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId); const isFlagged = flaggedSet.has(it.id)
                             return (<div key={it.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-violet-50/50 dark:hover:bg-violet-500/5">
-                              <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span></div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
+                              <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span>{isFlagged && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[8px] h-3.5 px-1">flagged</Badge>}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
                               <Button size="sm" variant="outline" onClick={() => addReturnItemToGroup(it)} className="h-6 text-[10px] px-2 shrink-0 border-violet-300 text-violet-700 dark:border-violet-500/40 dark:text-violet-400"><Plus className="w-2.5 h-2.5 mr-0.5" />Add</Button>
                             </div>)
                           })}

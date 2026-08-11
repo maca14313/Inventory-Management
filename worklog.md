@@ -510,3 +510,36 @@ Stage Summary:
 - Every list in the Returns/Group-Return area that could grow large is now paginated: (a) person buttons in the violet bar (8/page), (b) available-items picker in the New Group Return dialog (8/page), (c) items-to-return list in the Group Return dialog (6/page), (d) Return Records in the 3rd tab (6/page)
 - Warehouse filter is now a searchable combobox (Popover + search input + scrollable list) so enterprises with many warehouses can find/select warehouses without a long dropdown
 - All updates are client-side; no backend changes were needed (the returns API already returns full lists)
+
+---
+Task ID: 9
+Agent: main
+Task: Add advanced collapsible filters inside the "+ New Group Return" modal on the Returns page so users can find what they want in that modal.
+
+Work Log:
+- Read current page.tsx (2824 lines) to inspect the Group Return dialog implementation — found item picker only had a basic text search Input.
+- Read the existing FilterPanel + FilterField reusable components (defined earlier in page.tsx) and the page-level Returns advanced filter as the template.
+- Extended the `groupReturnDlg` state type with 10 new fields: filterWarehouse, filterCategory, filterPerson, filterDateFrom, filterDateTo, filterProgress, filterFlagged, whComboOpen, whComboSearch, availableFlaggedIds.
+- Updated `openGroupReturnDlg` (prefilled mode) to initialize the new filter fields to defaults.
+- Updated `openNewGroupReturnDlg` (new mode) to initialize the new filter fields AND record which item ids came from the 'flagged' tab (availableFlaggedIds) so the Flagged Status filter can differentiate flagged vs not-flagged items.
+- Replaced the basic search Input section with: header + always-visible search Input + a collapsible `FilterPanel` containing 7 advanced filters:
+  1. Warehouse (searchable combobox via Popover — handles many warehouses)
+  2. Category (Select dropdown from `categories` state)
+  3. Person / Supplier (text "Name contains...")
+  4. Stock-Out From (date input — filters by stock-out item createdAt)
+  5. Stock-Out To (date input)
+  6. Return Progress (Select: All / Not started / Partial / Fully returned)
+  7. Flagged Status (Select: All (both tabs) / Should be returned / Other stock-outs)
+- Added a "flagged" amber badge next to flagged items in the available items list so users can visually tell which items came from the "Should be returned" tab.
+- Applied all advanced filters in the available-items filter chain (in addition to the existing search and already-added filters).
+- Wired the FilterPanel's activeCount + onClear (Clear button resets all 7 filters and resets availPage to 1).
+- Verified lint passes cleanly (`bun run lint` — no errors).
+- Verified via Agent Browser: opened the Returns page → clicked "New Group Return" → modal opened → "Advanced Filters" button present and collapsible → expanded it → all 7 filter fields visible → tested Warehouse combobox (searchable, shows all warehouses) → selected Acme HQ Main WH → active count badge updated to "1", items list narrowed correctly → tested Flagged Status combobox → selected "Other stock-outs" → active count updated to "2", items list narrowed from 3 to 2 → clicked Clear button → all filters reset, active count badge disappeared, items list returned to 3. All dev.log API calls return 200.
+
+Stage Summary:
+- Group Return "+ New Group Return" modal now has a collapsible Advanced Filters panel matching the rest of the app's filter UX.
+- 7 advanced filters available: Warehouse (searchable), Category, Person/Supplier, Stock-Out From/To date range, Return Progress, Flagged Status.
+- Active count badge + Clear button work correctly.
+- Flagged items are visually tagged with an amber "flagged" badge in the picker.
+- All filters reset when modal is reopened (initialized in both openGroupReturnDlg and openNewGroupReturnDlg).
+- Lint clean, dev server clean, browser-verified end-to-end.
