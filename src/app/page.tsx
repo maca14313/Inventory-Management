@@ -596,9 +596,11 @@ export default function IMSApp() {
     filterDateFrom: string;
     filterDateTo: string;
     filterProgress: '' | 'none' | 'partial' | 'full';
+    filterFlagged: '' | 'flagged' | 'not_flagged';
     whComboOpen: boolean;
     whComboSearch: string;
-  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', whComboOpen: false, whComboSearch: '' })
+    availableFlaggedIds: number[];
+  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
   // Non-Returnable Recorder records (NR- records created by group non-returnable)
   const [groupNonRetRecords, setGroupNonRetRecords] = useState<NonReturnableRecorder[]>([])
   const [groupNonRetRecordsLoading, setGroupNonRetRecordsLoading] = useState(false)
@@ -984,10 +986,17 @@ export default function IMSApp() {
     if (tab === 'records') return // records tab is handled by loadGroupNonRetRecords
     setNonRetLoading(true)
     try {
-      const params = new URLSearchParams({ tab: 'flagged' })
-      const res = await fetch(`${BASE}/api/non-returnables?${params.toString()}`, { headers: { ...auth.getAuthHeaders() } })
-      const data = await res.json()
-      setNonRetData(Array.isArray(data) ? data : [])
+      // Fetch BOTH flagged (isReturnable=true) AND not-flagged (isReturnable=false) stock-out
+      // items, just like openNewGroupReturnDlg does — any stock-out item with remaining qty
+      // can be marked non-returnable, regardless of its return flag.
+      const h = { ...auth.getAuthHeaders() }
+      const [flagged, notFlagged] = await Promise.all([
+        fetch(`${BASE}/api/returns?tab=flagged`, { headers: h }).then(r => r.json()).catch(() => []),
+        fetch(`${BASE}/api/returns?tab=not_flagged`, { headers: h }).then(r => r.json()).catch(() => []),
+      ])
+      const flaggedArr: ReturnableItem[] = Array.isArray(flagged) ? flagged : []
+      const notFlaggedArr: ReturnableItem[] = Array.isArray(notFlagged) ? notFlagged : []
+      setNonRetData([...flaggedArr, ...notFlaggedArr])
     } catch (e) {
       console.error('loadNonReturnables error:', e)
       setNonRetData([])
@@ -1065,18 +1074,27 @@ export default function IMSApp() {
       items: items.map(it => ({ item: it, qty: it.remainingQty, reason: '', reasonDetail: '', selected: true })),
       availableItems: [], itemSearch: '', loadingAvailable: false,
       availPage: 1, itemsPage: 1,
-      filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '',
-      whComboOpen: false, whComboSearch: '',
+      filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '',
+      whComboOpen: false, whComboSearch: '', availableFlaggedIds: [],
     })
   }
   // ─── Non-Returnables: open a NEW group-non-returnable record from scratch (new mode) ──
   const openNewGroupNonRetDlg = async () => {
-    setGroupNonRetDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', whComboOpen: false, whComboSearch: '' })
+    setGroupNonRetDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
     try {
-      const h = auth.getAuthHeaders()
-      const res = await fetch(`${BASE}/api/non-returnables?tab=flagged`, { headers: h })
-      const arr: ReturnableItem[] = await res.json().catch(() => [])
-      setGroupNonRetDlg(s => ({ ...s, availableItems: Array.isArray(arr) ? arr : [], loadingAvailable: false }))
+      // Fetch BOTH flagged (isReturnable=true) AND not-flagged (isReturnable=false) stock-out
+      // items — mirrors openNewGroupReturnDlg exactly. Any stock-out item with remaining qty
+      // can be marked non-returnable, so the picker must show the full pool, not just flagged.
+      const h = { ...auth.getAuthHeaders() }
+      const [flagged, notFlagged] = await Promise.all([
+        fetch(`${BASE}/api/returns?tab=flagged`, { headers: h }).then(r => r.json()).catch(() => []),
+        fetch(`${BASE}/api/returns?tab=not_flagged`, { headers: h }).then(r => r.json()).catch(() => []),
+      ])
+      const flaggedArr: ReturnableItem[] = Array.isArray(flagged) ? flagged : []
+      const notFlaggedArr: ReturnableItem[] = Array.isArray(notFlagged) ? notFlagged : []
+      const all = [...flaggedArr, ...notFlaggedArr]
+      const flaggedIds = flaggedArr.map(it => it.id)
+      setGroupNonRetDlg(s => ({ ...s, availableItems: all, availableFlaggedIds: flaggedIds, loadingAvailable: false }))
     } catch (e) {
       console.error('openNewGroupNonRetDlg error:', e)
       setGroupNonRetDlg(s => ({ ...s, availableItems: nonRetData, loadingAvailable: false }))
@@ -3845,7 +3863,7 @@ export default function IMSApp() {
               {groupNonRetDlg.mode === 'new' && (
                 <div className="bg-muted/30 rounded-lg p-2 space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Search className="w-3 h-3" />Add Flagged Items to Mark</span>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Search className="w-3 h-3" />Add Items to Mark</span>
                     {groupNonRetDlg.loadingAvailable && <Loader2 className="w-3 h-3 animate-spin text-rose-500" />}
                   </div>
                   <Input value={groupNonRetDlg.itemSearch} onChange={e => setGroupNonRetDlg(s => ({ ...s, itemSearch: e.target.value, availPage: 1 }))} placeholder="Search by product, SKU, person, or recorder code..." className="h-8 text-xs" />
@@ -3856,14 +3874,15 @@ export default function IMSApp() {
                       + (groupNonRetDlg.filterDateFrom ? 1 : 0)
                       + (groupNonRetDlg.filterDateTo ? 1 : 0)
                       + (groupNonRetDlg.filterProgress ? 1 : 0)
-                    const clearAdv = () => setGroupNonRetDlg(s => ({ ...s, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', availPage: 1 }))
+                      + (groupNonRetDlg.filterFlagged ? 1 : 0)
+                    const clearAdv = () => setGroupNonRetDlg(s => ({ ...s, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', availPage: 1 }))
                     return (
                       <FilterPanel
                         activeCount={advActive}
                         onClear={clearAdv}
                         title="Advanced Filters"
                         defaultOpen={false}
-                        resultLabel={`${groupNonRetDlg.availableItems.length} flagged item(s)`}
+                        resultLabel={`${groupNonRetDlg.availableItems.length} item(s)`}
                       >
                         <FilterField label="Warehouse" width="w-44">
                           <Popover open={groupNonRetDlg.whComboOpen} onOpenChange={o => setGroupNonRetDlg(s => ({ ...s, whComboOpen: o, whComboSearch: o ? s.whComboSearch : '' }))}>
@@ -3911,6 +3930,12 @@ export default function IMSApp() {
                             <SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="none">Not started</SelectItem><SelectItem value="partial">Partial</SelectItem><SelectItem value="full">Fully resolved</SelectItem></SelectContent>
                           </Select>
                         </FilterField>
+                        <FilterField label="Flagged Status" width="w-40">
+                          <Select value={groupNonRetDlg.filterFlagged || '_all'} onValueChange={v => setGroupNonRetDlg(s => ({ ...s, filterFlagged: v === '_all' ? '' : v as 'flagged' | 'not_flagged', availPage: 1 }))}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger>
+                            <SelectContent><SelectItem value="_all">All (both tabs)</SelectItem><SelectItem value="flagged">Should be returned</SelectItem><SelectItem value="not_flagged">Other stock-outs</SelectItem></SelectContent>
+                          </Select>
+                        </FilterField>
                       </FilterPanel>
                     )
                   })()}
@@ -3919,6 +3944,7 @@ export default function IMSApp() {
                       const q = groupNonRetDlg.itemSearch.toLowerCase().trim()
                       const personQ = groupNonRetDlg.filterPerson.toLowerCase().trim()
                       const addedIds = new Set(groupNonRetDlg.items.map(x => x.item.id))
+                      const flaggedSet = new Set(groupNonRetDlg.availableFlaggedIds)
                       const avail = groupNonRetDlg.availableItems
                         .filter(it => !addedIds.has(it.id))
                         .filter(it => !q || (it.product?.name || '').toLowerCase().includes(q) || (it.product?.sku || '').toLowerCase().includes(q) || (it.recorder?.personName || '').toLowerCase().includes(q) || (it.recorder?.recorderCode || '').toLowerCase().includes(q))
@@ -3934,17 +3960,22 @@ export default function IMSApp() {
                           if (groupNonRetDlg.filterProgress === 'full') return it.remainingQty <= 0
                           return true
                         })
-                      if (groupNonRetDlg.loadingAvailable) return <div className="text-center text-[11px] text-muted-foreground py-3">Loading flagged items...</div>
-                      if (avail.length === 0) return <div className="text-center text-[11px] text-muted-foreground py-3">{addedIds.size === groupNonRetDlg.availableItems.length ? 'All flagged items added.' : 'No items match your filters.'}</div>
+                        .filter(it => {
+                          if (!groupNonRetDlg.filterFlagged) return true
+                          const isFlagged = flaggedSet.has(it.id)
+                          return groupNonRetDlg.filterFlagged === 'flagged' ? isFlagged : !isFlagged
+                        })
+                      if (groupNonRetDlg.loadingAvailable) return <div className="text-center text-[11px] text-muted-foreground py-3">Loading items...</div>
+                      if (avail.length === 0) return <div className="text-center text-[11px] text-muted-foreground py-3">{addedIds.size === groupNonRetDlg.availableItems.length ? 'All items added.' : 'No items match your filters.'}</div>
                       const perPage = 8
                       const totalPages = Math.ceil(avail.length / perPage) || 1
                       const safePage = Math.min(groupNonRetDlg.availPage, totalPages)
                       const paged = avail.slice((safePage - 1) * perPage, safePage * perPage)
                       return (<>
                         <div className="divide-y">
-                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId)
+                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId); const isFlagged = flaggedSet.has(it.id)
                             return (<div key={it.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-rose-50/50 dark:hover:bg-rose-500/5">
-                              <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span></div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
+                              <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span>{isFlagged && <span className="text-[8px] px-1 py-px rounded bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 font-medium">flagged</span>}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
                               <Button size="sm" variant="outline" onClick={() => addNonRetItemToGroup(it)} className="h-6 text-[10px] px-2 shrink-0 border-rose-300 text-rose-700 dark:border-rose-500/40 dark:text-rose-400"><Plus className="w-2.5 h-2.5 mr-0.5" />Add</Button>
                             </div>)
                           })}

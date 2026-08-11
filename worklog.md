@@ -702,3 +702,37 @@ Stage Summary:
 - New API: /api/non-returnables (GET+POST), /api/non-returnables/group (POST), /api/non-returnables/[id] (GET).
 - Frontend: 4th "Non-Returnable" tab on Returns page; "Mark Non-Returnable" buttons on Flagged-tab items + source-record dialog; "New Group Non-Returnable" button; single + group dialogs with per-item reason dropdown; Non-Returnable Records section; "Non-Returnable History" section in source-record dialog; "Non-Ret" column on Flagged-tab table; Reason filter in the Non-Returnable tab's advanced filters.
 - Lint clean, TypeScript clean, browser-verified end-to-end.
+
+---
+Task ID: 13
+Agent: main
+Task: Fix "0 item(s) ready / can't see any item to make Non-Returnable" bug in the New Group Non-Returnable Record modal — items showed in other modals (Group Return) but not in the Non-Returnable group modal.
+
+Work Log:
+- Investigated root cause: `openNewGroupNonRetDlg` (and `loadNonReturnables`) only fetched the `flagged` tab (`isReturnable=true` items) via `/api/non-returnables?tab=flagged`, while `openNewGroupReturnDlg` fetches BOTH `flagged` AND `not_flagged` tabs from `/api/returns`. When there were no flagged items (or all flagged items were fully resolved), the Non-Returnable modal showed 0 items while Group Return showed items (from the not_flagged pool).
+- Fixed `loadNonReturnables` (src/app/page.tsx ~line 983): now fetches BOTH `/api/returns?tab=flagged` and `/api/returns?tab=not_flagged` in parallel and combines them — mirrors `openNewGroupReturnDlg` exactly. This also fixes the main Non-Returnable tab list which had the same issue.
+- Fixed `openNewGroupNonRetDlg` (src/app/page.tsx ~line 1082): now fetches BOTH tabs from `/api/returns` and combines, instead of only fetching `?tab=flagged` from `/api/non-returnables`. Records `availableFlaggedIds` (the IDs that came from the flagged tab) so the Flagged Status filter can differentiate.
+- Added "Flagged Status" filter to the New Group Non-Returnable modal's Advanced Filters (mirroring Group Return's 7th filter): Select with options "All (both tabs)" / "Should be returned" / "Other stock-outs". Required adding `filterFlagged` + `availableFlaggedIds` to the `groupNonRetDlg` state type, default value, and both open functions (`openGroupNonRetDlg` prefilled mode + `openNewGroupNonRetDlg` new mode).
+- Applied the Flagged Status filter in the available-items filter chain (filters by membership in `availableFlaggedIds` set).
+- Added an amber "flagged" badge next to flagged items in the picker list (same as Group Return).
+- Updated labels: "Add Flagged Items to Mark" → "Add Items to Mark"; "Loading flagged items..." → "Loading items..."; "All flagged items added." → "All items added."; result label "N flagged item(s)" → "N item(s)".
+- Updated `advActive` count and `clearAdv` handler to include the new `filterFlagged` field.
+
+Verification:
+- `bun run lint` → 0 errors
+- `npx tsc --noEmit` → 0 errors in src/
+- Browser-verified (agent-browser, superadmin):
+  - Opened Returns page → clicked "New Group Non-Returnable" → modal now shows "2 item(s)" in the available items picker (previously 0)
+  - Both items visible: "StartupXYZ · SOUT-2026-0002 · Remaining: 1" and "Client Corp Ltd · SOUT-2026-0001 · Remaining: 20"
+  - Expanded Advanced Filters → "Flagged Status" filter present with "All (both tabs)" option
+  - Selected "Should be returned" → "No items match your filters." (confirms no flagged items exist, explaining the old 0-item bug)
+  - Selected "Other stock-outs" → both items appear
+  - Added an item → "Items to Mark" section populated with Qty + Reason fields
+  - Selected "Damaged" reason → summary updated to "1 item(s) ready · Total qty to mark: 20"
+  - All dev.log API calls return 200 (both /api/returns?tab=flagged and ?tab=not_flagged now called), no runtime/compile errors
+
+Stage Summary:
+- Root cause: Non-Returnable modal only fetched flagged (isReturnable=true) stock-out items, while Group Return fetched both flagged + not-flagged. With no flagged items in the DB, the Non-Returnable picker was empty.
+- Fix: Both `loadNonReturnables` and `openNewGroupNonRetDlg` now fetch BOTH tabs from `/api/returns` and combine — mirroring `openNewGroupReturnDlg` exactly. Any stock-out item with remaining quantity can now be marked non-returnable.
+- Enhancement: Added "Flagged Status" filter (7th filter) to the Non-Returnable modal to fully mirror the Group Return modal's filter set. Flagged items show an amber "flagged" badge in the picker.
+- Lint clean, TypeScript clean, browser-verified end-to-end.
