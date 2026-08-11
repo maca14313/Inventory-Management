@@ -28,11 +28,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Validation: body required' }, { status: 400 })
     }
     if (body.action === 'stockIn') {
-      const { productId, warehouseId, quantity, unit, costPerUnit, supplierName, notes } = body
+      const { productId, warehouseId, quantity, unit, costPerUnit, supplierName, notes, conditionId } = body
       if (typeof productId !== 'number' || typeof warehouseId !== 'number' || typeof quantity !== 'number') {
         return NextResponse.json({ error: 'Validation: productId, warehouseId, quantity are required numbers' }, { status: 400 })
       }
-      const data = await db.stock.stockIn(ctx, { productId, warehouseId, quantity, unit, costPerUnit, supplierName, notes })
+      const data = await db.stock.stockIn(ctx, { productId, warehouseId, quantity, unit, costPerUnit, supplierName, notes, conditionId: typeof conditionId === 'number' ? conditionId : null })
       return NextResponse.json(data)
     }
     if (body.action === 'adjust') {

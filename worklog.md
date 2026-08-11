@@ -736,3 +736,66 @@ Stage Summary:
 - Fix: Both `loadNonReturnables` and `openNewGroupNonRetDlg` now fetch BOTH tabs from `/api/returns` and combine — mirroring `openNewGroupReturnDlg` exactly. Any stock-out item with remaining quantity can now be marked non-returnable.
 - Enhancement: Added "Flagged Status" filter (7th filter) to the Non-Returnable modal to fully mirror the Group Return modal's filter set. Flagged items show an amber "flagged" badge in the picker.
 - Lint clean, TypeScript clean, browser-verified end-to-end.
+
+---
+Task ID: 14
+Agent: main (with partial subagent completion)
+Task: Add a "Condition" feature to items — a managed list of inventory conditions (New, Used, Refurbished, Damaged, etc.) that can be assigned to stock-in items, stock-out items, and lots. Conditions must be CRUD-managed (like Categories), selectable in all item forms, displayed in lists/dialogs, and filterable in all advanced filter panels.
+
+Work Log:
+- prisma/schema.prisma:
+  - Added `Condition` model (mirrors `Category`): id, enterpriseId, name, description, timestamps, relations to StockInItem[]/StockOutItem[]/Lot[]
+  - Added `conditions Condition[]` relation on `Enterprise`
+  - Added `conditionId Int?` + `condition Condition? @relation(...)` to `StockInItem`, `StockOutItem`, and `Lot` (each with `@@index([conditionId])` and `onDelete: SetNull`)
+  - `bun run db:push` → schema applied, Prisma client regenerated
+- src/lib/db.ts:
+  - Added `Condition` interface + `db.conditions` domain (findMany/findById/create/update/remove — mirrors `db.categories` with same auth checks: warehouse_admin forbidden from CUD; branch_admin forbidden from U/D)
+  - Extended `StockInItem`, `StockOutItem`, `Lot` interfaces with `conditionId?: number | null` + `condition?: { id, name, description } | null`
+  - Extended `createLot` (and `CreateLotParams`) to accept + persist `conditionId`
+  - `db.stockIn.addItem`: passes `conditionId` to both `stockInItem.create` and `createLot`
+  - `db.stockOut.addItem`: passes `conditionId` to `stockOutItem.create`
+  - `registerItem` + `registerItems`: accept per-item `conditionId`, pass to `createLot`
+  - `findReturnable` + `findItemById`: include `condition: true` in Prisma include, map into `ReturnableItem`
+  - All list functions (stock-in recorders, stock-out recorders, lots, returns/non-returnables source items) include `condition: true`
+  - `processReturn` Lot creation carries the source item's `conditionId`
+- API routes:
+  - `/api/conditions/route.ts` (GET + POST) — mirrors `/api/categories`
+  - `/api/conditions/[id]/route.ts` (GET + PUT + DELETE) — Next.js 16 async params
+  - Existing `/api/stock-in/[id]/item` and `/api/stock-out/[id]/item` routes pass the full body through to `db.stockIn.addItem` / `db.stockOut.addItem`, so `conditionId` flows automatically
+- src/app/page.tsx:
+  - Added `Condition` interface (frontend) + `conditions` state
+  - Added `/api/conditions` to `loadData` Promise.all (`fArr('/conditions')`)
+  - Extended `ReturnableItem` interface with `conditionId?` + `condition?`
+  - Added `conditionId` to `registerRows` row type, `stockInPickInputs`/`stockOutPickInputs` `_selected` + row input types, `pendingStockOutItems` type
+  - Added "Conditions" to sidebar (in MORE group, right after Categories) via `src/lib/rbac.ts` nav items
+  - Added Conditions management page (teal theme): grid of condition cards with New/Edit/Delete, mirrors Categories page
+  - Added `dlgType === 'condition'` dialog form (Name + Description, with Enterprise picker for super_admin)
+  - Added Enterprise picker to both `dlgType === 'category'` AND `dlgType === 'condition'` dialogs (shown only when `role==='super_admin'`) — fixes FORBIDDEN error when super_admin creates a condition without enterpriseId
+  - Added `if (dlgType==='category'&&!sd.enterpriseId) sd.enterpriseId=eid` + same for `condition` to the submit handler (fixes FORBIDDEN for non-super_admin roles)
+  - Added Condition `PaginatedCombobox` picker to: registerItem dialog, multi-item register rows (mobile card + desktop table), stockIn dialog, stockIn Pick mode (mobile + desktop, pick + table), stockOut Pick mode (mobile + desktop, pick + table), stockOutItem dialog
+  - Added Condition filter (`PaginatedCombobox` with `allLabel="All Conditions"`) to advanced filter panels on: Products, Stock In, Stock Out, Returns, Non-Returnable tab, Group Return modal, Group Non-Returnable modal
+  - Added "Condition" column/badge to item displays: Stock In expanded items table, Stock Out expanded items table, Returns tab items, Non-Returnable tab items, source-record dialogs
+- Bug fix during verification: super_admin creating a condition got 500 (enterpriseId null). Root cause: `openCreate` sets empty `dlgData{}`, and the submit handler didn't set `enterpriseId` for `condition`/`category` types. Fixed by (a) adding enterpriseId setter lines for both types, and (b) adding an Enterprise picker to both dialogs for super_admin.
+
+Verification:
+- `bun run db:push` → schema in sync, client regenerated
+- `bun run lint` → 0 errors
+- `npx tsc --noEmit` → 0 errors in src/
+- Browser-verified (agent-browser, superadmin):
+  - Sidebar shows "Conditions" in MORE group (between Categories and Orders)
+  - Conditions page: empty state → created 3 conditions (New, Used, Damaged) via the dialog with Enterprise picker → all 3 show as cards
+  - Stock Out page: expanded a recorder → Pick mode has a "Condition" column → selected a product → condition combobox opens showing New/Used/Damaged → selected "Damaged" → combobox shows "Damaged"
+  - Stock Out advanced filters: expanded → "Condition" filter present with "All Conditions" option
+  - Stock In page: advanced filters show "Condition" filter with "All Conditions"; expanded a receipt → Pick mode has "Condition" column
+  - Returns page: "Condition" column in items table; advanced filters have "Condition" filter
+  - All dev.log API calls return 200 (no 500/FORBIDDEN after the fix)
+
+Stage Summary:
+- New "Condition" feature fully implemented end-to-end, mirroring the Category pattern.
+- Condition is a managed, enterprise-scoped list (CRUD page in sidebar under MORE group, teal accent).
+- `conditionId` is optional (Int?) on StockInItem, StockOutItem, and Lot — so existing data is unaffected (null condition).
+- Condition is selectable in every item-creation form: registerItem dialog, multi-item register rows, stockIn dialog + Pick/Table modes, stockOut Pick/Table modes, stockOutItem dialog. It flows through the API → db layer → Prisma → Lot creation.
+- Condition is filterable in every relevant advanced filter panel: Products, Stock In, Stock Out, Returns, Non-Returnable, Group Return modal, Group Non-Returnable modal (all via PaginatedCombobox with "All Conditions" option).
+- Condition is displayed as a column/badge in: Stock In items, Stock Out items, Returns items, Non-Returnable items, source-record dialogs.
+- Bonus fix: Category dialog also got the Enterprise picker for super_admin (same bug existed but was never hit because super_admin rarely creates categories directly).
+- Lint clean, TypeScript clean, browser-verified end-to-end.

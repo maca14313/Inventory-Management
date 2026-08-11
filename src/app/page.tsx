@@ -24,7 +24,7 @@ import {
   Key, Lock, ToggleLeft, ToggleRight, Menu, X, ChevronDown, ChevronRight,
   ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw, Calendar, Check, Eye, LayoutGrid, List,
   Sun, Moon, Phone, Mail, MapPin, FileText, Hash, ChevronLeft, Sparkles, ChevronRight as ChevronRightIcon, SkipBack, SkipForward, Printer, Filter, CalendarDays,
-  MessageSquare, Send, Ban,
+  MessageSquare, Send, Ban, ClipboardCheck,
 } from 'lucide-react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -47,7 +47,7 @@ const BASE = process.env.NEXT_PUBLIC_BASE_PATH || ''
 const SORTED_MEASUREMENTS = [...MEASUREMENTS].sort((a, b) => a.localeCompare(b))
 
 const ICONS: Record<string, React.ComponentType<any>> = {
-  LayoutDashboard, Package, Warehouse: WHIcon, Users, ShoppingCart, Tag,
+  LayoutDashboard, Package, Warehouse: WHIcon, Users, ShoppingCart, Tag, ClipboardCheck,
   Box, Truck, Building2, GitBranch, Shield, Globe, ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw,
 }
 
@@ -58,16 +58,17 @@ interface Branch { id: number; enterpriseId: number; name: string; code: string;
 interface Warehouse { id: number; enterpriseId: number; branchId: number; name: string; code: string; location: string; capacity: number; managerName: string; isActive: boolean }
 interface User { id: number; enterpriseId: number | null; branchId: number | null; warehouseId: number | null; username: string; email: string; fullName: string; role: RoleLevel; isActive: boolean }
 interface Category { id: number; enterpriseId: number; name: string; description: string }
+interface Condition { id: number; enterpriseId: number; name: string; description: string }
 interface Supplier { id: number; enterpriseId: number; name: string; contactPerson: string; email: string; phone: string; address: string }
 interface Product { id: number; enterpriseId: number; name: string; sku: string; description: string; categoryId: number | null; price: number; cost: number; unit: string; reorderLevel: number; isActive: boolean }
 interface StockItem { id: number; productId: number; warehouseId: number; quantity: number }
 interface Order { id: number; enterpriseId: number; type: 'purchase' | 'sales'; supplierId: number | null; warehouseId: number | null; status: string; totalAmount: number; notes: string; createdBy: number | null }
 interface AuditEntry { id: number; userId: number | null; enterpriseId: number | null; action: string; entity: string; entityId: number | null; details: string; createdAt: string }
 interface Feature { id: number; enterpriseId: number; feature: string; enabled: boolean }
-interface Lot { id: number; lotNumber: string; productId: number; warehouseId: number; quantity: number; remainingQty: number; unit: string; costPerUnit: number; supplierName: string | null; source: string; sourceRef: string | null; notes: string | null; receivedDate: string; closedAt: string | null; status: string; createdAt: string }
-interface StockInItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; createdAt: string }
+interface Lot { id: number; lotNumber: string; productId: number; warehouseId: number; quantity: number; remainingQty: number; unit: string; costPerUnit: number; supplierName: string | null; source: string; sourceRef: string | null; notes: string | null; receivedDate: string; closedAt: string | null; status: string; createdAt: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
+interface StockInItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; createdAt: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
 interface StockInRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockInItem[]; createdAt: string }
-interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string; createdAt?: string; updatedAt?: string }
+interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string; createdAt?: string; updatedAt?: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
 interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[]; createdAt: string }
 interface ReturnRecord { id: number; stockOutItemId: number; returnRecorderId: number | null; quantity: number; unit: string; notes: string; returnedAt: string; createdAt: string }
 interface ReturnRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; returns?: (ReturnRecord & { stockOutItem?: { product: Product } })[] }
@@ -443,11 +444,13 @@ export default function IMSApp() {
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [allUsers, setAllUsers] = useState<User[]>([])
   const [categories, setCategories] = useState<Category[]>([])
+  const [conditions, setConditions] = useState<Condition[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [products, setProducts] = useState<Product[]>([])
   // Task 5: Products + Stock table pagination & search state
   const [productSearch, setProductSearch] = useState('')
   const [productCategoryFilter, setProductCategoryFilter] = useState<number | ''>('')
+  const [productConditionFilter, setProductConditionFilter] = useState<number | ''>('')
   const [productStatusFilter, setProductStatusFilter] = useState<'' | 'active' | 'inactive'>('')
   const [productLowOnly, setProductLowOnly] = useState(false)
   const [productPage, setProductPage] = useState(1)
@@ -481,7 +484,7 @@ export default function IMSApp() {
   const LOTS_PER_PAGE = 8
 
   // Products Tab 2: multi-item register rows
-  const [registerRows, setRegisterRows] = useState<{ name: string; sku: string; categoryId: number | null; unit: string; price: number; cost: number; reorderLevel: number; quantity: number; costPerUnit: number; supplierName: string; notes: string }[]>([])
+  const [registerRows, setRegisterRows] = useState<{ name: string; sku: string; categoryId: number | null; conditionId: number | null; unit: string; price: number; cost: number; reorderLevel: number; quantity: number; costPerUnit: number; supplierName: string; notes: string }[]>([])
   const [registerWarehouseId, setRegisterWarehouseId] = useState<number | null>(null)
   const [registerSubmitting, setRegisterSubmitting] = useState(false)
   // Top-level supplier/person info for the whole registration batch (mirrors Stock In/Out recorder header)
@@ -518,6 +521,7 @@ export default function IMSApp() {
   const [returnsFilterRecorder, setReturnsFilterRecorder] = useState('')
   const [returnsFilterProgress, setReturnsFilterProgress] = useState<'' | 'none' | 'partial' | 'full'>('')
   const [returnsFilterCategory, setReturnsFilterCategory] = useState<number | ''>('')
+  const [returnsFilterCondition, setReturnsFilterCondition] = useState<number | ''>('')
   const [returnsFilterPerson, setReturnsFilterPerson] = useState('')
   // Single-item return dialog
   const [returnDlg, setReturnDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; notes: string; submitting: boolean }>({ open: false, item: null, qty: 0, notes: '', submitting: false })
@@ -536,6 +540,7 @@ export default function IMSApp() {
     // Advanced filters for the item picker (NEW mode) — lets the user find what they want
     filterWarehouse: number | '';
     filterCategory: number | '';
+    filterCondition: number | '';
     filterPerson: string;
     filterDateFrom: string;
     filterDateTo: string;
@@ -544,7 +549,7 @@ export default function IMSApp() {
     whComboOpen: boolean;
     whComboSearch: string;
     availableFlaggedIds: number[]; // ids among availableItems that came from the 'flagged' tab
-  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
+  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
   // Return Recorder records (created by group returns — mirrors Stock-In recorders list)
   const [groupReturnRecords, setGroupReturnRecords] = useState<ReturnRecorder[]>([])
   const [groupReturnRecordsLoading, setGroupReturnRecordsLoading] = useState(false)
@@ -575,6 +580,7 @@ export default function IMSApp() {
   const [nonRetFilterRecorder, setNonRetFilterRecorder] = useState('')
   const [nonRetFilterProgress, setNonRetFilterProgress] = useState<'' | 'none' | 'partial' | 'full'>('')
   const [nonRetFilterCategory, setNonRetFilterCategory] = useState<number | ''>('')
+  const [nonRetFilterCondition, setNonRetFilterCondition] = useState<number | ''>('')
   const [nonRetFilterPerson, setNonRetFilterPerson] = useState('')
   const [nonRetFilterReason, setNonRetFilterReason] = useState<string>('')
   // Single-item "mark as non-returnable" dialog (mirrors returnDlg)
@@ -592,6 +598,7 @@ export default function IMSApp() {
     // Advanced filters for the item picker (NEW mode)
     filterWarehouse: number | '';
     filterCategory: number | '';
+    filterCondition: number | '';
     filterPerson: string;
     filterDateFrom: string;
     filterDateTo: string;
@@ -600,7 +607,7 @@ export default function IMSApp() {
     whComboOpen: boolean;
     whComboSearch: string;
     availableFlaggedIds: number[];
-  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
+  }>({ open: false, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: false, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
   // Non-Returnable Recorder records (NR- records created by group non-returnable)
   const [groupNonRetRecords, setGroupNonRetRecords] = useState<NonReturnableRecorder[]>([])
   const [groupNonRetRecordsLoading, setGroupNonRetRecordsLoading] = useState(false)
@@ -619,9 +626,9 @@ export default function IMSApp() {
 
   // Stock Out Pick mode: search + per-product inputs
   const [stockOutSearch, setStockOutSearch] = useState('')
-  const [stockOutPickInputs, setStockOutPickInputs] = useState<Record<string, { qty: number; unit: string; isReturnable: boolean; returnDeadline: string }>>({})
+  const [stockOutPickInputs, setStockOutPickInputs] = useState<Record<string, { qty: number; unit: string; isReturnable: boolean; returnDeadline: string; conditionId: number | null }>>({})
   // Stock Out Table mode: per-product row inputs (keyed by productId)
-  const [stockOutTableRowInputs, setStockOutTableRowInputs] = useState<Record<string, { qty: number; unit: string; isReturnable: boolean; returnDeadline: string }>>({})
+  const [stockOutTableRowInputs, setStockOutTableRowInputs] = useState<Record<string, { qty: number; unit: string; isReturnable: boolean; returnDeadline: string; conditionId: number | null }>>({})
   // Pagination
   const [stockOutItemPage, setStockOutItemPage] = useState(1)
   const [stockOutProductPage, setStockOutProductPage] = useState(1)
@@ -639,9 +646,10 @@ export default function IMSApp() {
   const [stockOutFilterStatus, setStockOutFilterStatus] = useState('')
   const [stockOutFilterPerson, setStockOutFilterPerson] = useState('')
   const [stockOutFilterWarehouse, setStockOutFilterWarehouse] = useState<number | ''>('')
+  const [stockOutFilterCondition, setStockOutFilterCondition] = useState<number | ''>('')
   const [stockOutFilterSearch, setStockOutFilterSearch] = useState('')
   // Pending items per recorder (local array before API submission)
-  const [pendingStockOutItems, setPendingStockOutItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string }[]>>({})
+  const [pendingStockOutItems, setPendingStockOutItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string; conditionId: number | null }[]>>({})
   let _pendingTempId = 0
   const getNextTempId = () => --_pendingTempId
   const getPendingItems = (recorderId: number) => pendingStockOutItems[recorderId] || []
@@ -679,7 +687,7 @@ export default function IMSApp() {
         try {
           await apiFetch(`/stock-out/${recorderId}/item`, {
             method: 'POST',
-            body: JSON.stringify({ productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, unit: item.unit, isReturnable: item.isReturnable, returnDeadline: item.returnDeadline || null, notes: item.notes || '', enterpriseId })
+            body: JSON.stringify({ productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, unit: item.unit, isReturnable: item.isReturnable, returnDeadline: item.returnDeadline || null, notes: item.notes || '', conditionId: item.conditionId ?? null, enterpriseId })
           })
           submittedCount++
         } catch (e: any) {
@@ -698,9 +706,9 @@ export default function IMSApp() {
     setSubmittingRecorder(null)
   }
   // Table mode: get/set per-product row input
-  const getRowInput = (productId: number) => stockOutTableRowInputs[String(productId)] || { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }
-  const updateRowInput = (productId: number, updates: Partial<{ qty: number; unit: string; isReturnable: boolean; returnDeadline: string }>) => {
-    setStockOutTableRowInputs(prev => ({ ...prev, [String(productId)]: { ...((prev[String(productId)]) || { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }), ...updates } }))
+  const getRowInput = (productId: number) => stockOutTableRowInputs[String(productId)] || { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '', conditionId: null }
+  const updateRowInput = (productId: number, updates: Partial<{ qty: number; unit: string; isReturnable: boolean; returnDeadline: string; conditionId: number | null }>) => {
+    setStockOutTableRowInputs(prev => ({ ...prev, [String(productId)]: { ...((prev[String(productId)]) || { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '', conditionId: null }), ...updates } }))
   }
   // Helper: get available stock for a product in a warehouse
   const getAvailableStock = (productId: number, warehouseId: number): number => {
@@ -711,8 +719,8 @@ export default function IMSApp() {
   // ─── Stock In state (mirrors Stock Out, emerald theme) ─────────────
   const [stockInSearch, setStockInSearch] = useState('')
   const [stockSearch, setStockSearch] = useState('')
-  const [stockInPickInputs, setStockInPickInputs] = useState<Record<string, { productId: number; qty: number; unit: string; costPerUnit: number; notes: string }>>({})
-  const [stockInTableRowInputs, setStockInTableRowInputs] = useState<Record<string, { qty: number; unit: string; costPerUnit: number; notes: string }>>({})
+  const [stockInPickInputs, setStockInPickInputs] = useState<Record<string, { productId: number; qty: number; unit: string; costPerUnit: number; notes: string; conditionId: number | null }>>({})
+  const [stockInTableRowInputs, setStockInTableRowInputs] = useState<Record<string, { qty: number; unit: string; costPerUnit: number; notes: string; conditionId: number | null }>>({})
   const [stockInItemPage, setStockInItemPage] = useState(1)
   const [stockInProductPage, setStockInProductPage] = useState(1)
   const STOCK_IN_ITEMS_PER_PAGE = 10
@@ -724,10 +732,11 @@ export default function IMSApp() {
   const [stockInFilterStatus, setStockInFilterStatus] = useState('')
   const [stockInFilterPerson, setStockInFilterPerson] = useState('')
   const [stockInFilterWarehouse, setStockInFilterWarehouse] = useState<number | ''>('')
+  const [stockInFilterCondition, setStockInFilterCondition] = useState<number | ''>('')
   const [stockInFilterSearch, setStockInFilterSearch] = useState('')
-  const [pendingStockInItems, setPendingStockInItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }[]>>({})
+  const [pendingStockInItems, setPendingStockInItems] = useState<Record<number, { tempId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; conditionId: number | null }[]>>({})
   const getPendingInItems = (recorderId: number) => pendingStockInItems[recorderId] || []
-  const addPendingInItem = (recorderId: number, item: { productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string }) => {
+  const addPendingInItem = (recorderId: number, item: { productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; conditionId: number | null }) => {
     setPendingStockInItems(prev => {
       const existing = (prev[recorderId] || [])
       const dupIdx = existing.findIndex(i => i.productId === item.productId && i.unit === item.unit && i.warehouseId === item.warehouseId)
@@ -759,7 +768,7 @@ export default function IMSApp() {
         try {
           await apiFetch(`/stock-in/${recorderId}/item`, {
             method: 'POST',
-            body: JSON.stringify({ productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, unit: item.unit, costPerUnit: item.costPerUnit, notes: item.notes || '', enterpriseId })
+            body: JSON.stringify({ productId: item.productId, warehouseId: item.warehouseId, quantity: item.quantity, unit: item.unit, costPerUnit: item.costPerUnit, notes: item.notes || '', conditionId: item.conditionId ?? null, enterpriseId })
           })
           submittedCount++
         } catch (e: any) {
@@ -777,9 +786,9 @@ export default function IMSApp() {
     } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData(false) }
     setSubmittingRecorder(null)
   }
-  const getInRowInput = (productId: number) => stockInTableRowInputs[String(productId)] || { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }
-  const updateInRowInput = (productId: number, updates: Partial<{ qty: number; unit: string; costPerUnit: number; notes: string }>) => {
-    setStockInTableRowInputs(prev => ({ ...prev, [String(productId)]: { ...((prev[String(productId)]) || { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }), ...updates } }))
+  const getInRowInput = (productId: number) => stockInTableRowInputs[String(productId)] || { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '', conditionId: null }
+  const updateInRowInput = (productId: number, updates: Partial<{ qty: number; unit: string; costPerUnit: number; notes: string; conditionId: number | null }>) => {
+    setStockInTableRowInputs(prev => ({ ...prev, [String(productId)]: { ...((prev[String(productId)]) || { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '', conditionId: null }), ...updates } }))
   }
 
   // ─── Lots dialog (Change 2) ─────────────────────────────────────────
@@ -914,7 +923,7 @@ export default function IMSApp() {
       items: items.map(it => ({ item: it, qty: it.remainingQty, selected: true })),
       availableItems: [], itemSearch: '', loadingAvailable: false,
       availPage: 1, itemsPage: 1,
-      filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [],
+      filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [],
     })
   }
   // ─── Returns: open a NEW group-return record from scratch (new mode) ────
@@ -922,7 +931,7 @@ export default function IMSApp() {
   // returnable stock-out items (both tabs) so the user can build a brand-new group return
   // combining items from different suppliers/persons/recorders.
   const openNewGroupReturnDlg = async () => {
-    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
+    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
     try {
       const h = { ...auth.getAuthHeaders() }
       const [flagged, notFlagged] = await Promise.all([
@@ -1074,13 +1083,13 @@ export default function IMSApp() {
       items: items.map(it => ({ item: it, qty: it.remainingQty, reason: '', reasonDetail: '', selected: true })),
       availableItems: [], itemSearch: '', loadingAvailable: false,
       availPage: 1, itemsPage: 1,
-      filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '',
+      filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '',
       whComboOpen: false, whComboSearch: '', availableFlaggedIds: [],
     })
   }
   // ─── Non-Returnables: open a NEW group-non-returnable record from scratch (new mode) ──
   const openNewGroupNonRetDlg = async () => {
-    setGroupNonRetDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
+    setGroupNonRetDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
     try {
       // Fetch BOTH flagged (isReturnable=true) AND not-flagged (isReturnable=false) stock-out
       // items — mirrors openNewGroupReturnDlg exactly. Any stock-out item with remaining qty
@@ -1162,16 +1171,16 @@ export default function IMSApp() {
       const fObj = (url: string, fallback: any = null) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err); return fallback } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return fallback })
       const defaultStats: DashboardStats = { enterpriseCount: 0, branchCount: 0, warehouseCount: 0, userCount: 0, productCount: 0, orderCount: 0, pendingOrderCount: 0, totalStockValue: 0, lowStockProducts: [], totalLots: 0, openLots: 0, stockInCount: 0, stockOutCount: 0 }
       const defaultAnalytics: AnalyticsData = { stockByWarehouse: [], stockByCategory: [], topProducts: [], recentActivity: [] }
-      const [s, e, b, w, u, c, sup, p, st, o, a, feat, so, si, an] = await Promise.all([
+      const [s, e, b, w, u, c, cond, sup, p, st, o, a, feat, so, si, an] = await Promise.all([
         fObj('/dashboard', defaultStats), fArr('/enterprises'), fArr('/branches'), fArr('/warehouses'), fArr('/users'),
-        fArr('/categories'), fArr('/suppliers'), fArr('/products'), fArr('/stock'), fArr('/orders'),
+        fArr('/categories'), fArr('/conditions'), fArr('/suppliers'), fArr('/products'), fArr('/stock'), fArr('/orders'),
         fArr('/audit'), fArr('/features'), fArr('/stock-out'), fArr('/stock-in'), fObj('/analytics', defaultAnalytics),
       ])
       // Ensure stats is always a proper object with all required fields
       const safeStats: DashboardStats = s && typeof s === 'object' && !Array.isArray(s) ? { ...defaultStats, ...s } : defaultStats
       const safeAnalytics: AnalyticsData = an && typeof an === 'object' && !Array.isArray(an) ? { ...defaultAnalytics, ...an } : defaultAnalytics
       setStats(safeStats); setEnterprises(Array.isArray(e) ? e : []); setBranches(Array.isArray(b) ? b : []); setWarehouses(Array.isArray(w) ? w : [])
-      setAllUsers(Array.isArray(u) ? u : []); setCategories(Array.isArray(c) ? c : []); setSuppliers(Array.isArray(sup) ? sup : []); setProducts(Array.isArray(p) ? p : [])
+      setAllUsers(Array.isArray(u) ? u : []); setCategories(Array.isArray(c) ? c : []); setConditions(Array.isArray(cond) ? cond : []); setSuppliers(Array.isArray(sup) ? sup : []); setProducts(Array.isArray(p) ? p : [])
       setStockData(Array.isArray(st) ? st : []); setOrders(Array.isArray(o) ? o : []); setAuditData(Array.isArray(a) ? a : []); setFeatures(Array.isArray(feat) ? feat : [])
       setStockOutData(Array.isArray(so) ? so : []); setStockInData(Array.isArray(si) ? si : []); setAnalyticsData(safeAnalytics)
     } catch (e: any) { console.error('loadData error:', e) }
@@ -1274,6 +1283,11 @@ export default function IMSApp() {
       if (productCategoryFilter !== '' && p.categoryId !== productCategoryFilter) return false
       if (productStatusFilter === 'active' && !p.isActive) return false
       if (productStatusFilter === 'inactive' && p.isActive) return false
+      if (productConditionFilter !== '') {
+        // Filter products that have at least one stock-in or stock-out item with the chosen condition
+        const hasCond = (recorders: any[]) => recorders.some(r => (r.items || []).some((it: any) => it.conditionId === productConditionFilter))
+        if (!hasCond(stockInData) && !hasCond(stockOutData)) return false
+      }
       if (productLowOnly) {
         const totalQty = stockData.filter(s => s.productId === p.id).reduce((sum, s) => sum + s.quantity, 0)
         if (totalQty > p.reorderLevel) return false
@@ -1459,8 +1473,8 @@ export default function IMSApp() {
           <TabsContent value="list" className="mt-4">
             <div className="mb-3">
               <FilterPanel
-                activeCount={(productSearch ? 1 : 0) + (productCategoryFilter !== '' ? 1 : 0) + (productStatusFilter !== '' ? 1 : 0) + (productLowOnly ? 1 : 0)}
-                onClear={() => { setProductSearch(''); setProductCategoryFilter(''); setProductStatusFilter(''); setProductLowOnly(false); setProductPage(1) }}
+                activeCount={(productSearch ? 1 : 0) + (productCategoryFilter !== '' ? 1 : 0) + (productStatusFilter !== '' ? 1 : 0) + (productLowOnly ? 1 : 0) + (productConditionFilter !== '' ? 1 : 0)}
+                onClear={() => { setProductSearch(''); setProductCategoryFilter(''); setProductStatusFilter(''); setProductLowOnly(false); setProductConditionFilter(''); setProductPage(1) }}
                 resultLabel={`${filteredProducts.length} records`}
               >
                 <FilterField label="Search" width="w-56">
@@ -1472,6 +1486,15 @@ export default function IMSApp() {
                     value={productCategoryFilter === '' ? '_all' : String(productCategoryFilter)}
                     onChange={v => { setProductCategoryFilter(v === '_all' ? '' : parseInt(v)); setProductPage(1) }}
                     allLabel="All Categories"
+                    placeholder="All"
+                  />
+                </FilterField>
+                <FilterField label="Condition" width="w-44">
+                  <PaginatedCombobox
+                    items={conditions.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+                    value={productConditionFilter === '' ? '_all' : String(productConditionFilter)}
+                    onChange={v => { setProductConditionFilter(v === '_all' ? '' : parseInt(v)); setProductPage(1) }}
+                    allLabel="All Conditions"
                     placeholder="All"
                   />
                 </FilterField>
@@ -1584,6 +1607,12 @@ export default function IMSApp() {
                         onChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}
                         placeholder="Category —"
                       />
+                      <PaginatedCombobox
+                        items={conditions.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => ({ value: String(c.id), label: c.name }))}
+                        value={row.conditionId ? String(row.conditionId) : ''}
+                        onChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], conditionId: parseInt(v) }; setRegisterRows(n) }}
+                        placeholder="Condition —"
+                      />
                       <div className="grid grid-cols-2 gap-2">
                         <Select value={row.unit} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], unit: v }; setRegisterRows(n) }}><SelectTrigger className="h-8 text-xs rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-40">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
                         <Input type="number" min="0" value={row.quantity || ''} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], quantity: parseInt(e.target.value) || 0 }; setRegisterRows(n) }} placeholder="Init Qty" className="h-8 text-xs rounded-md text-right" />
@@ -1600,6 +1629,7 @@ export default function IMSApp() {
                     <TableHead className="h-7 text-[10px]">Name</TableHead>
                     <TableHead className="h-7 text-[10px]">SKU</TableHead>
                     <TableHead className="h-7 text-[10px]">Category</TableHead>
+                    <TableHead className="h-7 text-[10px]">Condition</TableHead>
                     <TableHead className="h-7 text-[10px]">Unit</TableHead>
                     <TableHead className="h-7 text-[10px] text-right">Price</TableHead>
                     <TableHead className="h-7 text-[10px] text-right">Cost</TableHead>
@@ -1608,7 +1638,7 @@ export default function IMSApp() {
                     <TableHead className="h-7 w-10"></TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {registerRows.length === 0 && <TableRow><TableCell colSpan={9} className="text-center text-xs text-muted-foreground py-4">No rows. Click "Add Row" to begin.</TableCell></TableRow>}
+                    {registerRows.length === 0 && <TableRow><TableCell colSpan={10} className="text-center text-xs text-muted-foreground py-4">No rows. Click "Add Row" to begin.</TableCell></TableRow>}
                     {registerRows.map((row, idx) => (
                       <TableRow key={idx}>
                         <TableCell className="py-1"><Input value={row.name} onChange={e => { const n = [...registerRows]; n[idx] = { ...n[idx], name: e.target.value }; setRegisterRows(n) }} placeholder="Product name" className="h-7 text-[11px] rounded-md" /></TableCell>
@@ -1618,6 +1648,13 @@ export default function IMSApp() {
                           items={categories.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => ({ value: String(c.id), label: c.name }))}
                           value={row.categoryId ? String(row.categoryId) : ''}
                           onChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], categoryId: parseInt(v) }; setRegisterRows(n) }}
+                          placeholder="—"
+                        /></TableCell>
+                        <TableCell className="py-1"><PaginatedCombobox
+                          compact
+                          items={conditions.filter(c => c.enterpriseId === eid || role === 'super_admin').map(c => ({ value: String(c.id), label: c.name }))}
+                          value={row.conditionId ? String(row.conditionId) : ''}
+                          onChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], conditionId: parseInt(v) }; setRegisterRows(n) }}
                           placeholder="—"
                         /></TableCell>
                         <TableCell className="py-1"><Select value={row.unit} onValueChange={v => { const n = [...registerRows]; n[idx] = { ...n[idx], unit: v }; setRegisterRows(n) }}><SelectTrigger className="h-7 text-[11px] rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-40">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
@@ -1630,14 +1667,14 @@ export default function IMSApp() {
                   </TableBody>
                 </Table></div>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <Button size="sm" variant="outline" onClick={() => setRegisterRows([...registerRows, { name: '', sku: '', categoryId: null, unit: 'piece', price: 0, cost: 0, reorderLevel: 0, quantity: 0, costPerUnit: 0, supplierName: '', notes: '' }])} className="text-emerald-600 border-emerald-200 hover:bg-emerald-50"><Plus className="w-3.5 h-3.5 mr-1.5" />Add Row</Button>
+                  <Button size="sm" variant="outline" onClick={() => setRegisterRows([...registerRows, { name: '', sku: '', categoryId: null, conditionId: null, unit: 'piece', price: 0, cost: 0, reorderLevel: 0, quantity: 0, costPerUnit: 0, supplierName: '', notes: '' }])} className="text-emerald-600 border-emerald-200 hover:bg-emerald-50"><Plus className="w-3.5 h-3.5 mr-1.5" />Add Row</Button>
                   <Button size="sm" disabled={registerSubmitting || !registerWarehouseId || registerRows.filter(r => r.name && r.sku).length === 0} onClick={async () => {
                     if (!registerWarehouseId) { toast({ title: 'Select a warehouse', variant: 'destructive' }); return }
                     const valid = registerRows.filter(r => r.name && r.sku)
                     if (valid.length === 0) { toast({ title: 'Add at least one row with name+SKU', variant: 'destructive' }); return }
                     setRegisterSubmitting(true)
                     try {
-                      const res = await apiFetch<{ products: any[]; lotsCreated: number }>('/products/register', { method: 'POST', body: JSON.stringify({ warehouseId: registerWarehouseId, items: valid.map(r => ({ name: r.name.trim(), sku: r.sku.trim(), categoryId: r.categoryId || null, price: r.price, cost: r.cost, unit: r.unit, reorderLevel: r.reorderLevel, quantity: r.quantity, costPerUnit: r.cost, notes: r.notes || null })), supplierInfo: { personName: registerSupplier.personName.trim() || null, personPhone: registerSupplier.personPhone.trim() || null, personEmail: registerSupplier.personEmail.trim() || null, personAddress: registerSupplier.personAddress.trim() || null, notes: registerSupplier.notes.trim() || null } }) })
+                      const res = await apiFetch<{ products: any[]; lotsCreated: number }>('/products/register', { method: 'POST', body: JSON.stringify({ warehouseId: registerWarehouseId, items: valid.map(r => ({ name: r.name.trim(), sku: r.sku.trim(), categoryId: r.categoryId || null, conditionId: r.conditionId || null, price: r.price, cost: r.cost, unit: r.unit, reorderLevel: r.reorderLevel, quantity: r.quantity, costPerUnit: r.cost, notes: r.notes || null })), supplierInfo: { personName: registerSupplier.personName.trim() || null, personPhone: registerSupplier.personPhone.trim() || null, personEmail: registerSupplier.personEmail.trim() || null, personAddress: registerSupplier.personAddress.trim() || null, notes: registerSupplier.notes.trim() || null } }) })
                       toast({ title: `Registered ${res.products?.length || valid.length} product(s)${res.lotsCreated ? `, ${res.lotsCreated} lot(s) created` : ''}` })
                       setRegisterRows([]); setRegisterSupplier({ personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '' })
                       await loadData()
@@ -1819,6 +1856,27 @@ export default function IMSApp() {
       </div>
     )
 
+    // ─── CONDITIONS (mirrors Categories — managed list of inventory conditions)
+    if (page === 'conditions' && hasPermission(role!, 'categories:view')) return (
+      <div className="space-y-5">
+        <div className="flex items-center justify-between"><h1 className="text-2xl font-bold flex items-center gap-2"><ClipboardCheck className="w-6 h-6 text-teal-500" />Conditions</h1>
+          {hasPermission(role!, 'categories:create') && <Button onClick={() => openCreate('condition')} className="bg-gradient-to-r from-teal-600 to-cyan-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />New Condition</Button>}</div>
+        <p className="text-xs text-muted-foreground -mt-3">Manage the catalogue of inventory conditions (e.g. New, Used, Refurbished, Damaged). Conditions are assigned per stock-in / stock-out / lot — not per product.</p>
+        {conditions.length === 0 ? (
+          <Card className="shadow-sm border-dashed"><CardContent className="p-8 text-center text-sm text-muted-foreground">No conditions yet. Click <span className="font-semibold text-teal-600">New Condition</span> to create one.</CardContent></Card>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">{conditions.map(c => (
+            <Card key={c.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-1"><ClipboardCheck className="w-4 h-4 text-teal-500" /><div className="font-semibold text-sm">{c.name}</div></div>
+              <div className="text-xs text-muted-foreground line-clamp-2">{c.description}</div>
+              <div className="flex gap-2 mt-2">{hasPermission(role!, 'categories:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('condition', c)} className="h-6 w-6 p-0"><Pencil className="w-3 h-3" /></Button>}
+                {hasPermission(role!, 'categories:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/conditions/${c.id}`)} disabled={isCrudLoading('remove', `/conditions/${c.id}`)} className="text-red-500 h-6 w-6 p-0">{isCrudLoading('remove', `/conditions/${c.id}`) ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}</Button>}</div>
+            </CardContent></Card>))}
+          </div>
+        )}
+      </div>
+    )
+
     // ─── STOCK OUT RECORDER
     // ─── STOCK IN (Task 1-b + Task 6: mirrors Stock Out, emerald theme)
     if (page === 'stockIn') return (
@@ -1830,8 +1888,8 @@ export default function IMSApp() {
 
         {/* ── Filters ── */}
         <FilterPanel
-          activeCount={(stockInFilterSearch ? 1 : 0) + (stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0)}
-          onClear={() => { setStockInFilterSearch(''); setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInRecPage(1) }}
+          activeCount={(stockInFilterSearch ? 1 : 0) + (stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0) + (stockInFilterCondition !== '' ? 1 : 0)}
+          onClear={() => { setStockInFilterSearch(''); setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInFilterCondition(''); setStockInRecPage(1) }}
           resultLabel={`${stockInData.length} recorders`}
         >
           <FilterField label="Search" width="w-48">
@@ -1848,6 +1906,15 @@ export default function IMSApp() {
           /></FilterField>
           <FilterField label="Status" width="w-32"><Select value={stockInFilterStatus || '_all'} onValueChange={v => { setStockInFilterStatus(v === '_all' ? '' : v); setStockInRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="submitted">Submitted</SelectItem></SelectContent></Select></FilterField>
           <FilterField label="Supplier" width="w-40"><Input value={stockInFilterPerson} onChange={e => { setStockInFilterPerson(e.target.value); setStockInRecPage(1) }} placeholder="Search name..." className="h-8 text-xs" /></FilterField>
+          <FilterField label="Condition" width="w-44">
+            <PaginatedCombobox
+              items={conditions.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+              value={stockInFilterCondition === '' ? '_all' : String(stockInFilterCondition)}
+              onChange={v => { setStockInFilterCondition(v === '_all' ? '' : parseInt(v)); setStockInRecPage(1) }}
+              allLabel="All Conditions"
+              placeholder="All"
+            />
+          </FilterField>
         </FilterPanel>
 
         {(() => {
@@ -1857,6 +1924,7 @@ export default function IMSApp() {
           if (stockInFilterStatus) filtered = filtered.filter(r => r.status === stockInFilterStatus)
           if (stockInFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockInFilterPerson.toLowerCase()))
           if (stockInFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockInFilterWarehouse)
+          if (stockInFilterCondition !== '') filtered = filtered.filter(r => (r.items || []).some((it: any) => it.conditionId === stockInFilterCondition))
           if (stockInFilterSearch) { const q = stockInFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
@@ -1897,9 +1965,9 @@ export default function IMSApp() {
                       {totalItems > 0 ? (<>
                         {/* Mobile: stacked cards */}
                         <div className="sm:hidden space-y-1.5">
-                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId); const cond = conditions.find(c => c.id === item.conditionId)
                             return (<div key={item.id} className={`rounded-md border p-2 space-y-1 ${item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed border-amber-300 dark:border-amber-600' : ''}`}>
-                              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium truncate">{prod?.name || `#${item.productId}`}</span>{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400 shrink-0">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400 shrink-0">Saved</Badge>}</div>
+                              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium truncate flex items-center gap-1">{prod?.name || `#${item.productId}`}{cond && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4 shrink-0">{cond.name}</Badge>}</span>{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400 shrink-0">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400 shrink-0">Saved</Badge>}</div>
                               <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
                                 <div><span className="text-muted-foreground">Qty: </span><span className="font-mono">{item.quantity}</span></div>
                                 <div><span className="text-muted-foreground">Unit: </span>{item.unit}</div>
@@ -1911,15 +1979,16 @@ export default function IMSApp() {
                         </div>
                         {/* Desktop: table */}
                         <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
-                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-6 text-[10px] text-right w-24">Total</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
+                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-6 text-[10px] text-right w-24">Total</TableHead><TableHead className="h-6 text-[10px] w-20">Condition</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
                         </TableRow></TableHeader><TableBody>
-                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId); const cond = conditions.find(c => c.id === item.conditionId)
                             return (<TableRow key={item.id} className={item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed' : ''}>
                               <TableCell className="py-1 text-[11px] font-medium">{prod?.name || `#${item.productId}`}</TableCell>
                               <TableCell className="py-1 text-[11px] text-right font-mono">{item.quantity}</TableCell>
                               <TableCell className="py-1 text-[11px] text-muted-foreground">{item.unit}</TableCell>
                               <TableCell className="py-1 text-[11px] text-right font-mono">{fmt(item.costPerUnit || 0)}</TableCell>
                               <TableCell className="py-1 text-[11px] text-right font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</TableCell>
+                              <TableCell className="py-1">{cond ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{cond.name}</Badge> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
                               <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
                               <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></TableCell>
                             </TableRow>)})}
@@ -1949,7 +2018,7 @@ export default function IMSApp() {
                     {/* ── Pick Mode ── */}
                     {stockInMode === 'pic' ? (
                       (() => {
-                        const sel = (stockInPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) as { productId: number; qty: number; unit: string; costPerUnit: number; notes: string }
+                        const sel = (stockInPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', costPerUnit: 0, notes: '', conditionId: null }) as { productId: number; qty: number; unit: string; costPerUnit: number; notes: string; conditionId: number | null }
                         const pickItems = products.filter(p => !stockInSearch || p.name.toLowerCase().includes(stockInSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockInSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name)).map(p => ({ value: String(p.id), label: p.name, sublabel: p.sku }))
                         return (<div className="space-y-1.5">
                           <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockInSearch} onChange={e => setStockInSearch(e.target.value)} className="h-6 text-[11px] pl-7" /></div>
@@ -1958,7 +2027,7 @@ export default function IMSApp() {
                             <PaginatedCombobox
                               items={pickItems}
                               value={sel.productId ? String(sel.productId) : ''}
-                              onChange={v => { setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}
+                              onChange={v => { setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '', conditionId: prev['_selected']?.conditionId ?? null } })) }}
                               placeholder="Select product..."
                               perPage={20}
                               contentClassName="w-64"
@@ -1969,17 +2038,18 @@ export default function IMSApp() {
                               <Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
                               <Input type="number" step="0.01" min={0} value={sel.costPerUnit || ''} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], costPerUnit: parseFloat(e.target.value) || 0 } as any }))} placeholder="Cost/U" className="h-7 text-[11px] text-right" />
                             </div>
-                            <Button size="sm" disabled={addingItem || !sel.productId} className="h-7 text-[11px] bg-emerald-600 text-white w-full" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '' }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add to receipt</Button>
+                            <PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={sel.conditionId ? String(sel.conditionId) : ''} onChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], conditionId: parseInt(v) } as any }))} placeholder="Condition —" compact contentClassName="w-56" />
+                            <Button size="sm" disabled={addingItem || !sel.productId} className="h-7 text-[11px] bg-emerald-600 text-white w-full" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '', conditionId: sel.conditionId ?? null }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add to receipt</Button>
                           </div>
                           {/* Desktop: table */}
                           <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
-                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
+                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 text-[10px] w-28">Condition</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-emerald-300 dark:border-b-emerald-600">
                             <TableCell className="py-0.5">
                               <PaginatedCombobox
                                 items={pickItems}
                                 value={sel.productId ? String(sel.productId) : ''}
-                                onChange={v => { setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}
+                                onChange={v => { setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '', conditionId: prev['_selected']?.conditionId ?? null } })) }}
                                 placeholder="Select product..."
                                 perPage={20}
                                 contentClassName="w-64"
@@ -1989,7 +2059,8 @@ export default function IMSApp() {
                             <TableCell className="py-0.5"><Input type="number" min={1} value={sel.qty || 1} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
                             <TableCell className="py-0.5"><Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
                             <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={sel.costPerUnit || ''} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], costPerUnit: parseFloat(e.target.value) || 0 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
-                            <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '' }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+                            <TableCell className="py-0.5"><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={sel.conditionId ? String(sel.conditionId) : ''} onChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], conditionId: parseInt(v) } as any }))} placeholder="Condition —" compact contentClassName="w-56" /></TableCell>
+                            <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '', conditionId: sel.conditionId ?? null }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
                           </TableRow></TableBody></Table></div>
                         </div>)
                       })()
@@ -2007,12 +2078,13 @@ export default function IMSApp() {
                                   <Select value={inp.unit} onValueChange={v => updateInRowInput(prod.id, { unit: v })}><SelectTrigger className="h-6 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
                                   <Input type="number" step="0.01" min={0} value={inp.costPerUnit || ''} onChange={e => updateInRowInput(prod.id, { costPerUnit: parseFloat(e.target.value) || 0 })} placeholder="Cost/U" className="h-6 text-[11px] text-right" />
                                 </div>
-                                <Button size="sm" disabled={addingItem} className="h-6 text-[10px] bg-emerald-600 text-white w-full" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '' }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add</Button>
+                                <PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={inp.conditionId ? String(inp.conditionId) : ''} onChange={v => updateInRowInput(prod.id, { conditionId: parseInt(v) })} placeholder="Condition —" compact contentClassName="w-56" />
+                                <Button size="sm" disabled={addingItem} className="h-6 text-[10px] bg-emerald-600 text-white w-full" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '', conditionId: inp.conditionId ?? null }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '', conditionId: null }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add</Button>
                               </div>)})}
                           </div>
                           {/* Desktop: table */}
                           <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
-                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
+                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 text-[10px] w-28">Condition</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody>
                             {paged.map(prod => { const inp = getInRowInput(prod.id)
                               return (<TableRow key={prod.id}>
@@ -2020,7 +2092,8 @@ export default function IMSApp() {
                                 <TableCell className="py-0.5"><Input type="number" min={1} value={inp.qty} onChange={e => updateInRowInput(prod.id, { qty: parseInt(e.target.value) || 1 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
                                 <TableCell className="py-0.5"><Select value={inp.unit} onValueChange={v => updateInRowInput(prod.id, { unit: v })}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
                                 <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={inp.costPerUnit || ''} onChange={e => updateInRowInput(prod.id, { costPerUnit: parseFloat(e.target.value) || 0 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
-                                <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '' }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+                                <TableCell className="py-0.5"><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={inp.conditionId ? String(inp.conditionId) : ''} onChange={v => updateInRowInput(prod.id, { conditionId: parseInt(v) })} placeholder="Condition —" compact contentClassName="w-56" /></TableCell>
+                                <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '', conditionId: inp.conditionId ?? null }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '', conditionId: null }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
                               </TableRow>)})}
                           </TableBody></Table></div>
                           <Pager page={stockInProductPage} totalPages={totalPages} onPageChange={setStockInProductPage} />
@@ -2046,8 +2119,8 @@ export default function IMSApp() {
 
         {/* ── Filters ── */}
         <FilterPanel
-          activeCount={(stockOutFilterSearch ? 1 : 0) + (stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0)}
-          onClear={() => { setStockOutFilterSearch(''); setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutRecPage(1) }}
+          activeCount={(stockOutFilterSearch ? 1 : 0) + (stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0) + (stockOutFilterCondition !== '' ? 1 : 0)}
+          onClear={() => { setStockOutFilterSearch(''); setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutFilterCondition(''); setStockOutRecPage(1) }}
           resultLabel={`${stockOutData.length} recorders`}
         >
           <FilterField label="Search" width="w-48">
@@ -2064,6 +2137,15 @@ export default function IMSApp() {
           /></FilterField>
           <FilterField label="Status" width="w-32"><Select value={stockOutFilterStatus || '_all'} onValueChange={v => { setStockOutFilterStatus(v === '_all' ? '' : v); setStockOutRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="partial_return">Partial Return</SelectItem><SelectItem value="returned">Returned</SelectItem></SelectContent></Select></FilterField>
           <FilterField label="Person" width="w-40"><Input value={stockOutFilterPerson} onChange={e => { setStockOutFilterPerson(e.target.value); setStockOutRecPage(1) }} placeholder="Search name..." className="h-8 text-xs" /></FilterField>
+          <FilterField label="Condition" width="w-44">
+            <PaginatedCombobox
+              items={conditions.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+              value={stockOutFilterCondition === '' ? '_all' : String(stockOutFilterCondition)}
+              onChange={v => { setStockOutFilterCondition(v === '_all' ? '' : parseInt(v)); setStockOutRecPage(1) }}
+              allLabel="All Conditions"
+              placeholder="All"
+            />
+          </FilterField>
         </FilterPanel>
 
         {(() => {
@@ -2074,6 +2156,7 @@ export default function IMSApp() {
           if (stockOutFilterStatus) filtered = filtered.filter(r => r.status === stockOutFilterStatus)
           if (stockOutFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockOutFilterPerson.toLowerCase()))
           if (stockOutFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockOutFilterWarehouse)
+          if (stockOutFilterCondition !== '') filtered = filtered.filter(r => (r.items || []).some((it: any) => it.conditionId === stockOutFilterCondition))
           if (stockOutFilterSearch) { const q = stockOutFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_OUT_REC_PER_PAGE)
@@ -2113,9 +2196,9 @@ export default function IMSApp() {
                       {totalItems > 0 ? (<>
                         {/* Mobile: stacked cards */}
                         <div className="sm:hidden space-y-1.5">
-                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId); const cond = conditions.find(c => c.id === item.conditionId)
                             return (<div key={item.id} className={`rounded-md border p-2 space-y-1 ${item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed border-amber-300 dark:border-amber-600' : ''}`}>
-                              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium truncate">{prod?.name || `#${item.productId}`}</span>{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400 shrink-0">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400 shrink-0">Saved</Badge>}</div>
+                              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium truncate flex items-center gap-1">{prod?.name || `#${item.productId}`}{cond && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4 shrink-0">{cond.name}</Badge>}</span>{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400 shrink-0">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400 shrink-0">Saved</Badge>}</div>
                               <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
                                 <div><span className="text-muted-foreground">Qty: </span><span className="font-mono">{item.quantity}</span></div>
                                 <div><span className="text-muted-foreground">Unit: </span>{item.unit}</div>
@@ -2127,15 +2210,16 @@ export default function IMSApp() {
                         </div>
                         {/* Desktop: table */}
                         <div className="hidden sm:block rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
-                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Ret</TableHead><TableHead className="h-6 text-[10px] w-20">Deadline</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
+                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Ret</TableHead><TableHead className="h-6 text-[10px] w-20">Deadline</TableHead><TableHead className="h-6 text-[10px] w-20">Condition</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
                         </TableRow></TableHeader><TableBody>
-                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId); const cond = conditions.find(c => c.id === item.conditionId)
                             return (<TableRow key={item.id} className={item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed' : ''}>
                               <TableCell className="py-1 text-[11px] font-medium">{prod?.name || `#${item.productId}`}</TableCell>
                               <TableCell className="py-1 text-[11px] text-right font-mono">{item.quantity}</TableCell>
                               <TableCell className="py-1 text-[11px] text-muted-foreground">{item.unit}</TableCell>
                               <TableCell className="py-1 text-center">{item.isReturnable ? <RotateCcw className="w-2.5 h-2.5 text-emerald-500 inline" /> : <X className="w-2.5 h-2.5 text-red-400 inline" />}</TableCell>
                               <TableCell className="py-1 text-[11px] text-muted-foreground">{item.returnDeadline || '—'}</TableCell>
+                              <TableCell className="py-1">{cond ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{cond.name}</Badge> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
                               <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
                               <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingItem(r.id, item.tempId) : crud.remove(`/stock-out/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></TableCell>
                             </TableRow>)})}
@@ -2165,7 +2249,7 @@ export default function IMSApp() {
                     {/* ── Pick Mode: single row with Select dropdown that has paginated content ── */}
                     {stockOutMode === 'pic' ? (
                       (() => {
-                        const sel = (stockOutPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }) as { productId: number; qty: number; unit: string; isReturnable: boolean; returnDeadline: string }
+                        const sel = (stockOutPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '', conditionId: null }) as { productId: number; qty: number; unit: string; isReturnable: boolean; returnDeadline: string; conditionId: number | null }
                         const pickItems = products.filter(p => !stockOutSearch || p.name.toLowerCase().includes(stockOutSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockOutSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name)).map(p => ({ value: String(p.id), label: p.name, sublabel: p.sku, badge: `(${getAvailableStock(p.id, r.warehouseId)})` }))
                         return (<div className="space-y-1.5">
                           <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockOutSearch} onChange={e => setStockOutSearch(e.target.value)} className="h-6 text-[11px] pl-7" /></div>
@@ -2174,7 +2258,7 @@ export default function IMSApp() {
                             <PaginatedCombobox
                               items={pickItems}
                               value={sel.productId ? String(sel.productId) : ''}
-                              onChange={v => { setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}
+                              onChange={v => { setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '', conditionId: prev['_selected']?.conditionId ?? null } })) }}
                               placeholder="Select product..."
                               perPage={20}
                               contentClassName="w-64"
@@ -2186,17 +2270,18 @@ export default function IMSApp() {
                               <div className="flex items-center justify-center gap-1"><Switch checked={sel.isReturnable || false} onCheckedChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], isReturnable: v } }))} className="scale-75" /><span className="text-[9px] text-muted-foreground">Ret</span></div>
                             </div>
                             {sel.isReturnable && <CustomDatePicker value={sel.returnDeadline || ''} onChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], returnDeadline: v } }))} />}
-                            <Button size="sm" disabled={addingItem || !sel.productId} className="h-7 text-[11px] bg-blue-600 text-white w-full" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; const avail = getAvailableStock(sel.productId, r.warehouseId); if (sel.qty > avail) { toast({ title: `Only ${avail} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', isReturnable: sel.isReturnable || false, returnDeadline: sel.returnDeadline || null, notes: '' }); setStockOutPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add to recorder</Button>
+                            <PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={sel.conditionId ? String(sel.conditionId) : ''} onChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], conditionId: parseInt(v) } }))} placeholder="Condition —" compact contentClassName="w-56" />
+                            <Button size="sm" disabled={addingItem || !sel.productId} className="h-7 text-[11px] bg-blue-600 text-white w-full" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; const avail = getAvailableStock(sel.productId, r.warehouseId); if (sel.qty > avail) { toast({ title: `Only ${avail} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', isReturnable: sel.isReturnable || false, returnDeadline: sel.returnDeadline || null, notes: '', conditionId: sel.conditionId ?? null }); setStockOutPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add to recorder</Button>
                           </div>
                           {/* Desktop: table */}
                           <div className="hidden sm:block rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
-                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 w-10"></TableHead>
+                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 text-[10px] w-28">Condition</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-blue-300 dark:border-b-blue-600">
                             <TableCell className="py-0.5">
                               <PaginatedCombobox
                                 items={pickItems}
                                 value={sel.productId ? String(sel.productId) : ''}
-                                onChange={v => { setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '' } })) }}
+                                onChange={v => { setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', isReturnable: prev['_selected']?.isReturnable || false, returnDeadline: prev['_selected']?.returnDeadline || '', conditionId: prev['_selected']?.conditionId ?? null } })) }}
                                 placeholder="Select product..."
                                 perPage={20}
                                 contentClassName="w-64"
@@ -2208,7 +2293,8 @@ export default function IMSApp() {
                             <TableCell className="py-0.5"><Select value={sel.unit || 'pcs'} onValueChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } }))}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
                             <TableCell className="py-0.5 text-center"><Switch checked={sel.isReturnable || false} onCheckedChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], isReturnable: v } }))} className="scale-75" /></TableCell>
                             <TableCell className="py-0.5">{sel.isReturnable ? <CustomDatePicker value={sel.returnDeadline || ''} onChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], returnDeadline: v } }))} /> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
-                            <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-blue-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; const avail = getAvailableStock(sel.productId, r.warehouseId); if (sel.qty > avail) { toast({ title: `Only ${avail} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', isReturnable: sel.isReturnable || false, returnDeadline: sel.returnDeadline || null, notes: '' }); setStockOutPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+                            <TableCell className="py-0.5"><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={sel.conditionId ? String(sel.conditionId) : ''} onChange={v => setStockOutPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], conditionId: parseInt(v) } }))} placeholder="Condition —" compact contentClassName="w-56" /></TableCell>
+                            <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-blue-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; const avail = getAvailableStock(sel.productId, r.warehouseId); if (sel.qty > avail) { toast({ title: `Only ${avail} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', isReturnable: sel.isReturnable || false, returnDeadline: sel.returnDeadline || null, notes: '', conditionId: sel.conditionId ?? null }); setStockOutPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
                           </TableRow></TableBody></Table></div>
                         </div>)
                       })()
@@ -2227,12 +2313,13 @@ export default function IMSApp() {
                                   <div className="flex items-center justify-center gap-1"><Switch checked={inp.isReturnable} onCheckedChange={v => updateRowInput(prod.id, { isReturnable: v })} className="scale-75" /><span className="text-[9px] text-muted-foreground">Ret</span></div>
                                 </div>
                                 {inp.isReturnable && <CustomDatePicker value={inp.returnDeadline} onChange={v => updateRowInput(prod.id, { returnDeadline: v })} />}
-                                <Button size="sm" disabled={addingItem || stk <= 0} className="h-6 text-[10px] bg-blue-600 text-white w-full" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; if (inp.qty > stk) { toast({ title: `Only ${stk} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, isReturnable: inp.isReturnable, returnDeadline: inp.returnDeadline || null, notes: '' }); updateRowInput(prod.id, { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add</Button>
+                                <PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={inp.conditionId ? String(inp.conditionId) : ''} onChange={v => updateRowInput(prod.id, { conditionId: parseInt(v) })} placeholder="Condition —" compact contentClassName="w-56" />
+                                <Button size="sm" disabled={addingItem || stk <= 0} className="h-6 text-[10px] bg-blue-600 text-white w-full" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; if (inp.qty > stk) { toast({ title: `Only ${stk} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, isReturnable: inp.isReturnable, returnDeadline: inp.returnDeadline || null, notes: '', conditionId: inp.conditionId ?? null }); updateRowInput(prod.id, { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '', conditionId: null }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add</Button>
                               </div>)})}
                           </div>
                           {/* Desktop: table */}
                           <div className="hidden sm:block rounded-md border overflow-hidden"><Table><TableHeader><TableRow>
-                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 w-10"></TableHead>
+                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-16">In Stock</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-center w-12">Ret?</TableHead><TableHead className="h-5 text-[10px] w-20">Deadline</TableHead><TableHead className="h-5 text-[10px] w-28">Condition</TableHead><TableHead className="h-5 w-10"></TableHead>
                           </TableRow></TableHeader><TableBody>
                             {paged.map(prod => { const inp = getRowInput(prod.id); const stk = getAvailableStock(prod.id, r.warehouseId)
                               return (<TableRow key={prod.id}>
@@ -2242,7 +2329,8 @@ export default function IMSApp() {
                                 <TableCell className="py-0.5"><Select value={inp.unit} onValueChange={v => updateRowInput(prod.id, { unit: v })}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
                                 <TableCell className="py-0.5 text-center"><Switch checked={inp.isReturnable} onCheckedChange={v => updateRowInput(prod.id, { isReturnable: v })} className="scale-75" /></TableCell>
                                 <TableCell className="py-0.5">{inp.isReturnable ? <CustomDatePicker value={inp.returnDeadline} onChange={v => updateRowInput(prod.id, { returnDeadline: v })} /> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
-                                <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || stk <= 0} className="h-5 text-[10px] bg-blue-600 text-white px-1.5" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; if (inp.qty > stk) { toast({ title: `Only ${stk} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, isReturnable: inp.isReturnable, returnDeadline: inp.returnDeadline || null, notes: '' }); updateRowInput(prod.id, { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '' }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+                                <TableCell className="py-0.5"><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={inp.conditionId ? String(inp.conditionId) : ''} onChange={v => updateRowInput(prod.id, { conditionId: parseInt(v) })} placeholder="Condition —" compact contentClassName="w-56" /></TableCell>
+                                <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || stk <= 0} className="h-5 text-[10px] bg-blue-600 text-white px-1.5" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; if (inp.qty > stk) { toast({ title: `Only ${stk} in stock`, variant: 'destructive' }); return }; addPendingItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, isReturnable: inp.isReturnable, returnDeadline: inp.returnDeadline || null, notes: '', conditionId: inp.conditionId ?? null }); updateRowInput(prod.id, { qty: 1, unit: 'pcs', isReturnable: false, returnDeadline: '', conditionId: null }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
                               </TableRow>)})}
                           </TableBody></Table></div>
                           <Pager page={stockOutProductPage} totalPages={totalPages} onPageChange={setStockOutProductPage} />
@@ -2284,8 +2372,8 @@ export default function IMSApp() {
           <div className="mt-3 space-y-3">
             {/* Advanced Filters */}
             <FilterPanel
-              activeCount={(returnsSearch ? 1 : 0) + (returnsWarehouseFilter !== '' ? 1 : 0) + (returnsFilterDateFrom ? 1 : 0) + (returnsFilterDateTo ? 1 : 0) + (returnsFilterRecorder ? 1 : 0) + (returnsFilterProgress ? 1 : 0) + (returnsFilterCategory !== '' ? 1 : 0) + (returnsFilterPerson.trim() ? 1 : 0)}
-              onClear={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsFilterDateFrom(''); setReturnsFilterDateTo(''); setReturnsFilterRecorder(''); setReturnsFilterProgress(''); setReturnsFilterCategory(''); setReturnsFilterPerson(''); setReturnsPage(1) }}
+              activeCount={(returnsSearch ? 1 : 0) + (returnsWarehouseFilter !== '' ? 1 : 0) + (returnsFilterDateFrom ? 1 : 0) + (returnsFilterDateTo ? 1 : 0) + (returnsFilterRecorder ? 1 : 0) + (returnsFilterProgress ? 1 : 0) + (returnsFilterCategory !== '' ? 1 : 0) + (returnsFilterPerson.trim() ? 1 : 0) + (returnsFilterCondition !== '' ? 1 : 0)}
+              onClear={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsFilterDateFrom(''); setReturnsFilterDateTo(''); setReturnsFilterRecorder(''); setReturnsFilterProgress(''); setReturnsFilterCategory(''); setReturnsFilterPerson(''); setReturnsFilterCondition(''); setReturnsPage(1) }}
               resultLabel={`${returnsData.length} item(s)`}
             >
               <FilterField label="Search" width="w-56">
@@ -2322,6 +2410,15 @@ export default function IMSApp() {
                   placeholder="All"
                 />
               </FilterField>
+              <FilterField label="Condition" width="w-44">
+                <PaginatedCombobox
+                  items={conditions.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+                  value={returnsFilterCondition === '' ? '_all' : String(returnsFilterCondition)}
+                  onChange={v => { setReturnsFilterCondition(v === '_all' ? '' : parseInt(v)); setReturnsPage(1) }}
+                  allLabel="All Conditions"
+                  placeholder="All"
+                />
+              </FilterField>
               <FilterField label="Person / Supplier" width="w-44">
                 <Input value={returnsFilterPerson} onChange={e => { setReturnsFilterPerson(e.target.value); setReturnsPage(1) }} placeholder="Name contains..." className="h-8 text-xs" />
               </FilterField>
@@ -2346,6 +2443,7 @@ export default function IMSApp() {
               const filtered = returnsData.filter(it => {
                 if (returnsWarehouseFilter !== '' && it.warehouseId !== returnsWarehouseFilter) return false
                 if (returnsFilterCategory !== '' && it.product?.categoryId !== returnsFilterCategory) return false
+                if (returnsFilterCondition !== '' && it.conditionId !== returnsFilterCondition) return false
                 if (personQ && !(it.recorder?.personName || '').toLowerCase().includes(personQ)) return false
                 if (returnsFilterDateFrom && new Date(it.createdAt) < new Date(returnsFilterDateFrom + 'T00:00:00')) return false
                 if (returnsFilterDateTo && new Date(it.createdAt) > new Date(returnsFilterDateTo + 'T23:59:59')) return false
@@ -2410,10 +2508,10 @@ export default function IMSApp() {
                 {/* Mobile: stacked cards */}
                 <div className="sm:hidden space-y-2">
                   {paged.map(it => {
-                    const wh = warehouses.find(w => w.id === it.warehouseId)
+                    const wh = warehouses.find(w => w.id === it.warehouseId); const cond = conditions.find(c => c.id === it.conditionId)
                     return (<Card key={it.id} className="shadow-sm"><CardContent className="p-2.5 space-y-1.5">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div>
+                        <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`}{cond && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4 shrink-0">{cond.name}</Badge>}</div>
                           <div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</div></div>
                         <div className="flex items-center gap-0.5 shrink-0">
                           <Button size="sm" variant="ghost" onClick={() => openReturnSourceDlg(it)} className="h-5 w-5 p-0 text-muted-foreground" title="View source record"><Eye className="w-3 h-3" /></Button>
@@ -2448,12 +2546,13 @@ export default function IMSApp() {
                     {returnsTab === 'flagged' && <TableHead className="h-7 text-[10px] text-right w-16">Non-Ret</TableHead>}
                     <TableHead className="h-7 text-[10px] text-right w-16">Remaining</TableHead>
                     <TableHead className="h-7 text-[10px] w-24">Deadline</TableHead>
+                    <TableHead className="h-7 text-[10px] w-20">Condition</TableHead>
                     <TableHead className="h-7 text-[10px] w-28">Progress</TableHead>
                     <TableHead className="h-7 w-20 text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {paged.map(it => {
-                      const wh = warehouses.find(w => w.id === it.warehouseId)
+                      const wh = warehouses.find(w => w.id === it.warehouseId); const cond = conditions.find(c => c.id === it.conditionId)
                       const pct = Math.min(100, (it.returnedQty / it.quantity) * 100)
                       return (<TableRow key={it.id}>
                         <TableCell className="py-1 text-[11px]"><div className="font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`}</div></TableCell>
@@ -2464,6 +2563,7 @@ export default function IMSApp() {
                         {returnsTab === 'flagged' && <TableCell className="py-1 text-[11px] text-right font-mono text-rose-600">{it.nonReturnableQty || 0}</TableCell>}
                         <TableCell className="py-1 text-[11px] text-right font-mono text-violet-600 font-semibold">{it.remainingQty}</TableCell>
                         <TableCell className="py-1 text-[11px]">{it.returnDeadline ? <span className="text-amber-600">{it.returnDeadline}</span> : <span className="text-muted-foreground">—</span>}</TableCell>
+                        <TableCell className="py-1">{cond ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{cond.name}</Badge> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="py-1"><div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full bg-gradient-to-r from-emerald-500 to-violet-500" style={{ width: `${pct}%` }} /></div><div className="text-[9px] text-muted-foreground mt-0.5 text-center">{pct.toFixed(0)}%</div></TableCell>
                         <TableCell className="py-1 text-right">
                           <div className="flex items-center justify-end gap-0.5">
@@ -2565,8 +2665,8 @@ export default function IMSApp() {
           <div className="mt-3 space-y-3">
             {/* Advanced Filters (rose theme) */}
             <FilterPanel
-              activeCount={(nonRetSearch ? 1 : 0) + (nonRetWarehouseFilter !== '' ? 1 : 0) + (nonRetFilterDateFrom ? 1 : 0) + (nonRetFilterDateTo ? 1 : 0) + (nonRetFilterRecorder ? 1 : 0) + (nonRetFilterProgress ? 1 : 0) + (nonRetFilterCategory !== '' ? 1 : 0) + (nonRetFilterPerson.trim() ? 1 : 0) + (nonRetFilterReason ? 1 : 0)}
-              onClear={() => { setNonRetSearch(''); setNonRetWarehouseFilter(''); setNonRetFilterDateFrom(''); setNonRetFilterDateTo(''); setNonRetFilterRecorder(''); setNonRetFilterProgress(''); setNonRetFilterCategory(''); setNonRetFilterPerson(''); setNonRetFilterReason(''); setNonRetPage(1) }}
+              activeCount={(nonRetSearch ? 1 : 0) + (nonRetWarehouseFilter !== '' ? 1 : 0) + (nonRetFilterDateFrom ? 1 : 0) + (nonRetFilterDateTo ? 1 : 0) + (nonRetFilterRecorder ? 1 : 0) + (nonRetFilterProgress ? 1 : 0) + (nonRetFilterCategory !== '' ? 1 : 0) + (nonRetFilterPerson.trim() ? 1 : 0) + (nonRetFilterReason ? 1 : 0) + (nonRetFilterCondition !== '' ? 1 : 0)}
+              onClear={() => { setNonRetSearch(''); setNonRetWarehouseFilter(''); setNonRetFilterDateFrom(''); setNonRetFilterDateTo(''); setNonRetFilterRecorder(''); setNonRetFilterProgress(''); setNonRetFilterCategory(''); setNonRetFilterPerson(''); setNonRetFilterReason(''); setNonRetFilterCondition(''); setNonRetPage(1) }}
               resultLabel={`${nonRetData.length} item(s)`}
             >
               <FilterField label="Search" width="w-56">
@@ -2600,6 +2700,15 @@ export default function IMSApp() {
                   value={nonRetFilterCategory === '' ? '_all' : String(nonRetFilterCategory)}
                   onChange={v => { setNonRetFilterCategory(v === '_all' ? '' : parseInt(v)); setNonRetPage(1) }}
                   allLabel="All Categories"
+                  placeholder="All"
+                />
+              </FilterField>
+              <FilterField label="Condition" width="w-44">
+                <PaginatedCombobox
+                  items={conditions.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+                  value={nonRetFilterCondition === '' ? '_all' : String(nonRetFilterCondition)}
+                  onChange={v => { setNonRetFilterCondition(v === '_all' ? '' : parseInt(v)); setNonRetPage(1) }}
+                  allLabel="All Conditions"
                   placeholder="All"
                 />
               </FilterField>
@@ -2637,6 +2746,7 @@ export default function IMSApp() {
               const filtered = nonRetData.filter(it => {
                 if (nonRetWarehouseFilter !== '' && it.warehouseId !== nonRetWarehouseFilter) return false
                 if (nonRetFilterCategory !== '' && it.product?.categoryId !== nonRetFilterCategory) return false
+                if (nonRetFilterCondition !== '' && it.conditionId !== nonRetFilterCondition) return false
                 if (personQ && !(it.recorder?.personName || '').toLowerCase().includes(personQ)) return false
                 if (nonRetFilterDateFrom && new Date(it.createdAt) < new Date(nonRetFilterDateFrom + 'T00:00:00')) return false
                 if (nonRetFilterDateTo && new Date(it.createdAt) > new Date(nonRetFilterDateTo + 'T23:59:59')) return false
@@ -2703,10 +2813,10 @@ export default function IMSApp() {
                 {/* Mobile: stacked cards */}
                 <div className="sm:hidden space-y-2">
                   {paged.map(it => {
-                    const wh = warehouses.find(w => w.id === it.warehouseId)
+                    const wh = warehouses.find(w => w.id === it.warehouseId); const cond = conditions.find(c => c.id === it.conditionId)
                     return (<Card key={it.id} className="shadow-sm"><CardContent className="p-2.5 space-y-1.5">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0"><div className="text-[11px] font-medium truncate">{it.product?.name || `#${it.productId}`}</div>
+                        <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`}{cond && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4 shrink-0">{cond.name}</Badge>}</div>
                           <div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</div></div>
                         <div className="flex items-center gap-0.5 shrink-0">
                           <Button size="sm" variant="ghost" onClick={() => openReturnSourceDlg(it)} className="h-5 w-5 p-0 text-muted-foreground" title="View source record"><Eye className="w-3 h-3" /></Button>
@@ -2744,12 +2854,13 @@ export default function IMSApp() {
                     <TableHead className="h-7 text-[10px] text-right w-16">Returned</TableHead>
                     <TableHead className="h-7 text-[10px] text-right w-16">Non-Ret</TableHead>
                     <TableHead className="h-7 text-[10px] text-right w-16">Remaining</TableHead>
+                    <TableHead className="h-7 text-[10px] w-20">Condition</TableHead>
                     <TableHead className="h-7 text-[10px] w-28">Reasons</TableHead>
                     <TableHead className="h-7 w-24 text-right">Actions</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
                     {paged.map(it => {
-                      const wh = warehouses.find(w => w.id === it.warehouseId)
+                      const wh = warehouses.find(w => w.id === it.warehouseId); const cond = conditions.find(c => c.id === it.conditionId)
                       return (<TableRow key={it.id}>
                         <TableCell className="py-1 text-[11px]"><div className="font-medium truncate">{it.product?.name || `#${it.productId}`}</div><div className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`}</div></TableCell>
                         <TableCell className="py-1 text-[11px]">{it.recorder?.personName || '—'}</TableCell>
@@ -2758,6 +2869,7 @@ export default function IMSApp() {
                         <TableCell className="py-1 text-[11px] text-right font-mono text-emerald-600">{it.returnedQty}</TableCell>
                         <TableCell className="py-1 text-[11px] text-right font-mono text-rose-600 font-semibold">{it.nonReturnableQty || 0}</TableCell>
                         <TableCell className="py-1 text-[11px] text-right font-mono text-violet-600 font-semibold">{it.remainingQty}</TableCell>
+                        <TableCell className="py-1">{cond ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{cond.name}</Badge> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="py-1">
                           {it.nonReturnables && it.nonReturnables.length > 0 ? (
                             <div className="flex flex-wrap gap-0.5">{it.nonReturnables.slice(0, 2).map(n => (<Badge key={n.id} className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400 border-0 text-[8px] h-3.5 px-1">{REASON_LABELS[n.reason] || n.reason}×{n.quantity}</Badge>))}{it.nonReturnables.length > 2 && <span className="text-[9px] text-muted-foreground">+{it.nonReturnables.length - 2}</span>}</div>
@@ -2918,7 +3030,7 @@ export default function IMSApp() {
               // - Bottom "More" group: categories, orders, suppliers, audit, features
               const ORG_KEYS = new Set(['enterprises', 'branches', 'warehouses', 'users'])
               const INV_KEYS = new Set(['products', 'stock', 'stockIn', 'stockOut', 'returns'])
-              const MORE_KEYS = new Set(['categories', 'orders', 'suppliers', 'audit', 'features'])
+              const MORE_KEYS = new Set(['categories', 'conditions', 'orders', 'suppliers', 'audit', 'features'])
               const present = new Set(navItems.map(n => n.key))
               const top = navItems.filter(n => n.key === 'dashboard')
               const org = navItems.filter(n => ORG_KEYS.has(n.key))
@@ -3116,6 +3228,7 @@ export default function IMSApp() {
                   <SectionHeader icon={WHIcon}>Stock Registration</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={WHIcon}>Warehouse</IconLabel><PaginatedCombobox items={warehouses.filter(w=>w.isActive).map(w=>({value:String(w.id),label:w.name,sublabel:w.code}))} value={dlgData.warehouseId ? String(dlgData.warehouseId) : ''} onChange={v=>setDlgData({...dlgData,warehouseId:parseInt(v)})} placeholder="Select warehouse..." /></div>
                   <div className="space-y-1"><IconLabel icon={ArrowUpFromLine}>Initial Quantity</IconLabel><Input type="number" min="0" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} placeholder="Enter quantity..." className="h-8 text-sm rounded-md" /></div>
+                  <div className="space-y-1"><IconLabel icon={ClipboardCheck}>Condition</IconLabel><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={dlgData.conditionId ? String(dlgData.conditionId) : ''} onChange={v=>setDlgData({...dlgData,conditionId:parseInt(v)})} placeholder="Condition —" /></div>
                 </div>
               </>}
 
@@ -3152,6 +3265,7 @@ export default function IMSApp() {
                   <SectionHeader icon={ArrowUpFromLine}>Quantity In</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={ArrowUpFromLine}>Quantity</IconLabel><Input type="number" min="1" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} placeholder="Enter quantity..." className="h-8 text-sm rounded-md" /></div>
                   {dlgData.productId && <div className="text-[11px] text-muted-foreground mt-1">Current stock: {stockData.filter(s=>s.productId===dlgData.productId).reduce((sum,s)=>sum+s.quantity,0)} {products.find(p=>p.id===dlgData.productId)?.unit || 'pcs'} across all warehouses</div>}
+                  <div className="space-y-1"><IconLabel icon={ClipboardCheck}>Condition</IconLabel><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={dlgData.conditionId ? String(dlgData.conditionId) : ''} onChange={v=>setDlgData({...dlgData,conditionId:parseInt(v)})} placeholder="Condition —" /></div>
                 </div>
               </>}
 
@@ -3210,6 +3324,7 @@ export default function IMSApp() {
                     <div className="space-y-1"><IconLabel icon={Hash}>Quantity</IconLabel><Input type="number" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} className="h-8 text-sm rounded-md" /></div>
                     <div className="space-y-1"><IconLabel icon={Box}>Unit</IconLabel><Select value={dlgData.unit||'pcs'} onValueChange={v=>setDlgData({...dlgData,unit:v})}><SelectTrigger className="h-8 text-sm rounded-md"><SelectValue /></SelectTrigger><SelectContent className="max-h-60">{SORTED_MEASUREMENTS.map(m=><SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></div>
                   </div>
+                  <div className="space-y-1"><IconLabel icon={ClipboardCheck}>Condition</IconLabel><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={dlgData.conditionId ? String(dlgData.conditionId) : ''} onChange={v=>setDlgData({...dlgData,conditionId:parseInt(v)})} placeholder="Condition —" /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={RotateCcw}>Return</SectionHeader>
@@ -3240,6 +3355,10 @@ export default function IMSApp() {
 
               {/* ─── Category ─── */}
               {dlgType === 'category' && <>
+                {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Building2}>Organization</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><PaginatedCombobox items={enterprises.map(e=>({value:String(e.id),label:e.name}))} value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : ''} onChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})} placeholder="Select enterprise..." perPage={10} /></div>
+                </div>}
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Tag}>Details</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={Tag}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} className="h-8 text-sm rounded-md" /></div>
@@ -3247,6 +3366,22 @@ export default function IMSApp() {
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={FileText}>Description</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Description</IconLabel><Input value={dlgData.description||''} onChange={e=>setDlgData({...dlgData,description:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+                </div>
+              </>}
+
+              {/* ─── Condition (mirrors Category — managed list of inventory conditions) ─── */}
+              {dlgType === 'condition' && <>
+                {role==='super_admin' && <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Building2}>Organization</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={Building2}>Enterprise</IconLabel><PaginatedCombobox items={enterprises.map(e=>({value:String(e.id),label:e.name}))} value={dlgData.enterpriseId ? String(dlgData.enterpriseId) : ''} onChange={v=>setDlgData({...dlgData,enterpriseId:parseInt(v)})} placeholder="Select enterprise..." perPage={10} /></div>
+                </div>}
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={ClipboardCheck}>Details</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={ClipboardCheck}>Name</IconLabel><Input value={dlgData.name||''} onChange={e=>setDlgData({...dlgData,name:e.target.value})} placeholder="e.g. New, Used, Refurbished, Damaged" className="h-8 text-sm rounded-md" /></div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={FileText}>Description</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={FileText}>Description</IconLabel><Input value={dlgData.description||''} onChange={e=>setDlgData({...dlgData,description:e.target.value})} placeholder="Optional description..." className="h-8 text-sm rounded-md" /></div>
                 </div>
               </>}
 
@@ -3283,6 +3418,12 @@ export default function IMSApp() {
                 if (dlgType==='warehouse'&&!sd.enterpriseId) sd.enterpriseId=eid
                 if (dlgType==='stockOut'&&!sd.enterpriseId) sd.enterpriseId=eid
                 if (dlgType==='stockInRecorder'&&!sd.enterpriseId) sd.enterpriseId=eid
+                if (dlgType==='category'&&!sd.enterpriseId) sd.enterpriseId=eid
+                if (dlgType==='condition'&&!sd.enterpriseId) sd.enterpriseId=eid
+                // Normalize conditionId (empty string/undefined → null)
+                if (dlgType==='registerItem' || dlgType==='stockIn' || dlgType==='stockOutItem') {
+                  if (!sd.conditionId || sd.conditionId === 0) sd.conditionId = null
+                }
                 if (dlgType==='stock') await crud.create('/stock',{productId:dlgData.productId,warehouseId:dlgData.warehouseId,delta:dlgData.delta})
                 else if (dlgType==='registerItem') {
                   // Register Item: create product + stock-in in one step
@@ -3301,7 +3442,7 @@ export default function IMSApp() {
                   }
                   if (!prodRes || !prodRes.id) { toast({ title: 'Failed to create product - no ID returned', variant: 'destructive' }); return }
                   try {
-                    await apiFetch('/stock', { method: 'POST', body: JSON.stringify({ action: 'stockIn', productId: prodRes.id, warehouseId: dlgData.warehouseId, quantity: dlgData.quantity }) })
+                    await apiFetch('/stock', { method: 'POST', body: JSON.stringify({ action: 'stockIn', productId: prodRes.id, warehouseId: dlgData.warehouseId, quantity: dlgData.quantity, conditionId: dlgData.conditionId || null }) })
                     toast({ title: `Registered: ${dlgData.name} with ${dlgData.quantity} ${dlgData.unit || 'pcs'}` })
                   } catch (e: any) {
                     toast({ title: `Product created but stock-in failed: ${e.message}. Add stock manually.`, variant: 'destructive' })
@@ -3313,7 +3454,7 @@ export default function IMSApp() {
                   if (!dlgData.warehouseId) { toast({ title: 'Select a warehouse', variant: 'destructive' }); return }
                   if (!dlgData.quantity || dlgData.quantity <= 0) { toast({ title: 'Enter a positive quantity', variant: 'destructive' }); return }
                   try {
-                    await apiFetch('/stock', { method: 'POST', body: JSON.stringify({ action: 'stockIn', productId: dlgData.productId, warehouseId: dlgData.warehouseId, quantity: dlgData.quantity }) })
+                    await apiFetch('/stock', { method: 'POST', body: JSON.stringify({ action: 'stockIn', productId: dlgData.productId, warehouseId: dlgData.warehouseId, quantity: dlgData.quantity, conditionId: dlgData.conditionId || null }) })
                     toast({ title: `Stock in: +${dlgData.quantity} added` })
                   } catch (e: any) {
                     toast({ title: `Stock in failed: ${e.message}`, variant: 'destructive' })
@@ -3347,9 +3488,10 @@ export default function IMSApp() {
                 <>
                 {/* Mobile: stacked cards */}
                 <div className="sm:hidden space-y-2">
-                  {lotsData.slice((lotsPage - 1) * LOTS_PER_PAGE, lotsPage * LOTS_PER_PAGE).map(l => (
+                  {lotsData.slice((lotsPage - 1) * LOTS_PER_PAGE, lotsPage * LOTS_PER_PAGE).map(l => { const lcond = conditions.find(c => c.id === l.conditionId)
+                    return (
                     <Card key={l.id} className="border-violet-100 dark:border-violet-500/20"><CardContent className="p-2.5 space-y-1.5">
-                      <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-mono font-semibold truncate">{l.lotNumber}</span>{l.status === 'open' ? <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[9px] shrink-0">Open</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[9px] shrink-0">Closed</Badge>}</div>
+                      <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-mono font-semibold truncate">{l.lotNumber}</span><div className="flex items-center gap-1 shrink-0">{lcond && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px]">{lcond.name}</Badge>}{l.status === 'open' ? <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[9px] shrink-0">Open</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[9px] shrink-0">Closed</Badge>}</div></div>
                       <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
                         <div><span className="text-muted-foreground">Qty: </span><span className="font-mono font-medium">{l.quantity}</span></div>
                         <div><span className="text-muted-foreground">Remaining: </span><span className="font-mono font-medium">{l.remainingQty}</span></div>
@@ -3359,7 +3501,7 @@ export default function IMSApp() {
                         <div className="col-span-2"><span className="text-muted-foreground">Received: </span><span className="font-medium">{new Date(l.receivedDate).toLocaleDateString()}</span></div>
                         {l.notes && <div className="col-span-2 text-muted-foreground italic truncate">{l.notes}</div>}
                       </div>
-                    </CardContent></Card>))}
+                    </CardContent></Card>)})}
                 </div>
                 {/* Desktop: table */}
                 <div className="hidden sm:block rounded-md border"><Table>
@@ -3370,11 +3512,13 @@ export default function IMSApp() {
                     <TableHead className="h-7 text-[10px] text-right">Cost/Unit</TableHead>
                     <TableHead className="h-7 text-[10px]">Supplier</TableHead>
                     <TableHead className="h-7 text-[10px]">Source</TableHead>
+                    <TableHead className="h-7 text-[10px]">Condition</TableHead>
                     <TableHead className="h-7 text-[10px]">Received</TableHead>
                     <TableHead className="h-7 text-[10px] text-center">Status</TableHead>
                   </TableRow></TableHeader>
                   <TableBody>
-                    {lotsData.slice((lotsPage - 1) * LOTS_PER_PAGE, lotsPage * LOTS_PER_PAGE).map(l => (
+                    {lotsData.slice((lotsPage - 1) * LOTS_PER_PAGE, lotsPage * LOTS_PER_PAGE).map(l => { const lcond = conditions.find(c => c.id === l.conditionId)
+                      return (
                       <TableRow key={l.id}>
                         <TableCell className="py-1.5 text-[11px] font-mono">{l.lotNumber}</TableCell>
                         <TableCell className="py-1.5 text-[11px] text-right font-mono">{l.quantity}</TableCell>
@@ -3382,9 +3526,10 @@ export default function IMSApp() {
                         <TableCell className="py-1.5 text-[11px] text-right">{fmt(l.costPerUnit)}</TableCell>
                         <TableCell className="py-1.5 text-[11px] text-muted-foreground">{l.supplierName || '—'}</TableCell>
                         <TableCell className="py-1.5 text-[11px]"><Badge className={`${l.source === 'stock_in' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : l.source === 'register_item' ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'} border-0 text-[9px]`}>{l.source.replace('_', ' ')}</Badge></TableCell>
+                        <TableCell className="py-1.5">{lcond ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{lcond.name}</Badge> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
                         <TableCell className="py-1.5 text-[11px] text-muted-foreground">{new Date(l.receivedDate).toLocaleDateString()}</TableCell>
                         <TableCell className="py-1.5 text-center">{l.status === 'open' ? <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[9px]">Open</Badge> : <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[9px]">Closed</Badge>}</TableCell>
-                      </TableRow>))}
+                      </TableRow>)})}
                   </TableBody>
                 </Table></div>
                 </>
@@ -3449,7 +3594,7 @@ export default function IMSApp() {
               return (<div className="space-y-2.5 max-h-[65vh] overflow-y-auto pr-1">
                 {/* Item summary */}
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-1">
-                  <div className="text-sm font-semibold">{it.product?.name}</div>
+                  <div className="text-sm font-semibold flex items-center gap-1.5 flex-wrap">{it.product?.name}{(() => { const c = conditions.find(x => x.id === it.conditionId); return c ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{c.name}</Badge> : null })()}</div>
                   <div className="text-[11px] text-muted-foreground font-mono">{it.product?.sku} · {wh?.name || `WH #${it.warehouseId}`}</div>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] mt-1">
                     <span className="text-muted-foreground">Out: <span className="font-mono font-medium text-foreground">{it.quantity} {it.unit}</span></span>
@@ -3475,7 +3620,7 @@ export default function IMSApp() {
                     <div className="space-y-0.5 max-h-32 overflow-y-auto">
                       {(rec as any).items.map((ri: any) => (
                         <div key={ri.id} className={`text-[11px] flex items-center justify-between gap-2 px-1.5 py-0.5 rounded ${ri.id === it.id ? 'bg-violet-100 dark:bg-violet-500/20 font-semibold' : ''}`}>
-                          <span className="truncate">{ri.product?.name || `#${ri.productId}`}</span>
+                          <span className="truncate flex items-center gap-1">{ri.product?.name || `#${ri.productId}`}{(() => { const c = conditions.find(x => x.id === ri.conditionId); return c ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[8px] h-3.5 px-1">{c.name}</Badge> : null })()}</span>
                           <span className="font-mono shrink-0">{ri.quantity} {ri.unit}</span>
                         </div>
                       ))}
@@ -3573,12 +3718,13 @@ export default function IMSApp() {
                     // active count for the advanced filter panel
                     const advActive = (groupReturnDlg.filterWarehouse !== '' ? 1 : 0)
                       + (groupReturnDlg.filterCategory !== '' ? 1 : 0)
+                      + (groupReturnDlg.filterCondition !== '' ? 1 : 0)
                       + (groupReturnDlg.filterPerson.trim() ? 1 : 0)
                       + (groupReturnDlg.filterDateFrom ? 1 : 0)
                       + (groupReturnDlg.filterDateTo ? 1 : 0)
                       + (groupReturnDlg.filterProgress ? 1 : 0)
                       + (groupReturnDlg.filterFlagged ? 1 : 0)
-                    const clearAdv = () => setGroupReturnDlg(s => ({ ...s, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', availPage: 1 }))
+                    const clearAdv = () => setGroupReturnDlg(s => ({ ...s, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', availPage: 1 }))
                     return (
                       <FilterPanel
                         activeCount={advActive}
@@ -3616,6 +3762,15 @@ export default function IMSApp() {
                             onChange={v => setGroupReturnDlg(s => ({ ...s, filterCategory: v === '_all' ? '' : Number(v), availPage: 1 }))}
                             allLabel="All Categories"
                             placeholder="All Categories"
+                          />
+                        </FilterField>
+                        <FilterField label="Condition" width="w-40">
+                          <PaginatedCombobox
+                            items={conditions.map(c => ({ value: String(c.id), label: c.name }))}
+                            value={groupReturnDlg.filterCondition === '' ? '_all' : String(groupReturnDlg.filterCondition)}
+                            onChange={v => setGroupReturnDlg(s => ({ ...s, filterCondition: v === '_all' ? '' : Number(v), availPage: 1 }))}
+                            allLabel="All Conditions"
+                            placeholder="All Conditions"
                           />
                         </FilterField>
                         <FilterField label="Person / Supplier" width="w-44">
@@ -3656,6 +3811,8 @@ export default function IMSApp() {
                         .filter(it => groupReturnDlg.filterWarehouse === '' || it.warehouseId === groupReturnDlg.filterWarehouse)
                         // category
                         .filter(it => groupReturnDlg.filterCategory === '' || it.product?.categoryId === groupReturnDlg.filterCategory)
+                        // condition
+                        .filter(it => groupReturnDlg.filterCondition === '' || it.conditionId === groupReturnDlg.filterCondition)
                         // person
                         .filter(it => !personQ || (it.recorder?.personName || '').toLowerCase().includes(personQ))
                         // date range (based on stock-out item createdAt)
@@ -3683,9 +3840,9 @@ export default function IMSApp() {
                       const paged = avail.slice((safePage - 1) * perPage, safePage * perPage)
                       return (<>
                         <div className="divide-y">
-                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId); const isFlagged = flaggedSet.has(it.id)
+                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId); const isFlagged = flaggedSet.has(it.id); const gcond = conditions.find(c => c.id === it.conditionId)
                             return (<div key={it.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-violet-50/50 dark:hover:bg-violet-500/5">
-                              <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span>{isFlagged && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[8px] h-3.5 px-1">flagged</Badge>}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
+                              <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span>{gcond && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[8px] h-3.5 px-1">{gcond.name}</Badge>}{isFlagged && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[8px] h-3.5 px-1">flagged</Badge>}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
                               <Button size="sm" variant="outline" onClick={() => addReturnItemToGroup(it)} className="h-6 text-[10px] px-2 shrink-0 border-violet-300 text-violet-700 dark:border-violet-500/40 dark:text-violet-400"><Plus className="w-2.5 h-2.5 mr-0.5" />Add</Button>
                             </div>)
                           })}
@@ -3870,12 +4027,13 @@ export default function IMSApp() {
                   {(() => {
                     const advActive = (groupNonRetDlg.filterWarehouse !== '' ? 1 : 0)
                       + (groupNonRetDlg.filterCategory !== '' ? 1 : 0)
+                      + (groupNonRetDlg.filterCondition !== '' ? 1 : 0)
                       + (groupNonRetDlg.filterPerson.trim() ? 1 : 0)
                       + (groupNonRetDlg.filterDateFrom ? 1 : 0)
                       + (groupNonRetDlg.filterDateTo ? 1 : 0)
                       + (groupNonRetDlg.filterProgress ? 1 : 0)
                       + (groupNonRetDlg.filterFlagged ? 1 : 0)
-                    const clearAdv = () => setGroupNonRetDlg(s => ({ ...s, filterWarehouse: '', filterCategory: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', availPage: 1 }))
+                    const clearAdv = () => setGroupNonRetDlg(s => ({ ...s, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', availPage: 1 }))
                     return (
                       <FilterPanel
                         activeCount={advActive}
@@ -3915,6 +4073,15 @@ export default function IMSApp() {
                             placeholder="All Categories"
                           />
                         </FilterField>
+                        <FilterField label="Condition" width="w-40">
+                          <PaginatedCombobox
+                            items={conditions.map(c => ({ value: String(c.id), label: c.name }))}
+                            value={groupNonRetDlg.filterCondition === '' ? '_all' : String(groupNonRetDlg.filterCondition)}
+                            onChange={v => setGroupNonRetDlg(s => ({ ...s, filterCondition: v === '_all' ? '' : Number(v), availPage: 1 }))}
+                            allLabel="All Conditions"
+                            placeholder="All Conditions"
+                          />
+                        </FilterField>
                         <FilterField label="Person / Supplier" width="w-44">
                           <Input value={groupNonRetDlg.filterPerson} onChange={e => setGroupNonRetDlg(s => ({ ...s, filterPerson: e.target.value, availPage: 1 }))} placeholder="Name contains..." className="h-8 text-xs" />
                         </FilterField>
@@ -3950,6 +4117,7 @@ export default function IMSApp() {
                         .filter(it => !q || (it.product?.name || '').toLowerCase().includes(q) || (it.product?.sku || '').toLowerCase().includes(q) || (it.recorder?.personName || '').toLowerCase().includes(q) || (it.recorder?.recorderCode || '').toLowerCase().includes(q))
                         .filter(it => groupNonRetDlg.filterWarehouse === '' || it.warehouseId === groupNonRetDlg.filterWarehouse)
                         .filter(it => groupNonRetDlg.filterCategory === '' || it.product?.categoryId === groupNonRetDlg.filterCategory)
+                        .filter(it => groupNonRetDlg.filterCondition === '' || it.conditionId === groupNonRetDlg.filterCondition)
                         .filter(it => !personQ || (it.recorder?.personName || '').toLowerCase().includes(personQ))
                         .filter(it => !groupNonRetDlg.filterDateFrom || new Date(it.createdAt || it.recorder?.createdAt || '') >= new Date(groupNonRetDlg.filterDateFrom + 'T00:00:00'))
                         .filter(it => !groupNonRetDlg.filterDateTo || new Date(it.createdAt || it.recorder?.createdAt || '') <= new Date(groupNonRetDlg.filterDateTo + 'T23:59:59'))
@@ -3973,9 +4141,9 @@ export default function IMSApp() {
                       const paged = avail.slice((safePage - 1) * perPage, safePage * perPage)
                       return (<>
                         <div className="divide-y">
-                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId); const isFlagged = flaggedSet.has(it.id)
+                          {paged.map(it => { const wh = warehouses.find(w => w.id === it.warehouseId); const isFlagged = flaggedSet.has(it.id); const gcond = conditions.find(c => c.id === it.conditionId)
                             return (<div key={it.id} className="flex items-center justify-between gap-2 p-1.5 hover:bg-rose-50/50 dark:hover:bg-rose-500/5">
-                              <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span>{isFlagged && <span className="text-[8px] px-1 py-px rounded bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 font-medium">flagged</span>}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
+                              <div className="min-w-0"><div className="text-[11px] font-medium truncate flex items-center gap-1">{it.product?.name || `#${it.productId}`} <span className="text-[9px] text-muted-foreground font-mono">{it.product?.sku}</span>{gcond && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[8px] h-3.5 px-1">{gcond.name}</Badge>}{isFlagged && <span className="text-[8px] px-1 py-px rounded bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 font-medium">flagged</span>}</div><div className="text-[9px] text-muted-foreground">{wh?.name || `#${it.warehouseId}`} · {it.recorder?.personName || '—'} · {it.recorder?.recorderCode} · Remaining: <span className="font-mono font-medium text-violet-600">{it.remainingQty}</span></div></div>
                               <Button size="sm" variant="outline" onClick={() => addNonRetItemToGroup(it)} className="h-6 text-[10px] px-2 shrink-0 border-rose-300 text-rose-700 dark:border-rose-500/40 dark:text-rose-400"><Plus className="w-2.5 h-2.5 mr-0.5" />Add</Button>
                             </div>)
                           })}

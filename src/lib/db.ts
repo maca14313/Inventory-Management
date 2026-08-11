@@ -70,6 +70,11 @@ export interface Category {
   createdAt: string; updatedAt: string
 }
 
+export interface Condition {
+  id: number; enterpriseId: number; name: string; description: string
+  createdAt: string; updatedAt: string
+}
+
 export interface Supplier {
   id: number; enterpriseId: number; name: string; contactPerson: string; email: string
   phone: string; address: string
@@ -93,6 +98,8 @@ export interface Lot {
   quantity: number; remainingQty: number; unit: string; costPerUnit: number
   supplierName: string | null; source: 'stock_in' | 'register_item' | 'adjustment'
   sourceRef: string | null; notes: string | null
+  conditionId?: number | null
+  condition?: { id: number; name: string; description: string } | null
   receivedDate: string; closedAt: string | null
   createdAt: string; updatedAt: string
   status?: 'open' | 'closed'  // derived
@@ -122,6 +129,8 @@ export interface StockInRecorder {
 export interface StockInItem {
   id: number; recorderId: number; productId: number; warehouseId: number
   quantity: number; unit: string; costPerUnit: number; notes: string
+  conditionId?: number | null
+  condition?: { id: number; name: string; description: string } | null
   createdAt: string; updatedAt: string
 }
 
@@ -136,6 +145,8 @@ export interface StockOutItem {
   id: number; recorderId: number; productId: number; warehouseId: number
   quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null
   notes: string
+  conditionId?: number | null
+  condition?: { id: number; name: string; description: string } | null
   createdAt: string; updatedAt: string
 }
 
@@ -387,6 +398,7 @@ interface CreateLotParams {
   source: 'stock_in' | 'register_item' | 'adjustment'
   sourceRef?: string | null
   notes?: string | null
+  conditionId?: number | null
   receivedDate?: Date
 }
 
@@ -406,6 +418,7 @@ async function createLot(tx: Tx, ctx: AuthContext, p: CreateLotParams) {
       source: p.source,
       sourceRef: p.sourceRef ?? null,
       notes: p.notes ?? null,
+      conditionId: p.conditionId ?? null,
       receivedDate: p.receivedDate ?? new Date(),
       closedAt: null,
     },
@@ -1029,6 +1042,83 @@ export const db = {
     },
   },
 
+  // ── Conditions ──────────────────────────────────────────
+  conditions: {
+    findMany: async (ctx: AuthContext, eid?: number): Promise<Condition[]> => {
+      const where: Prisma.ConditionWhereInput = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
+      const rows = await prisma.condition.findMany({ where, orderBy: { id: 'asc' } })
+      return ser(rows) as Condition[]
+    },
+    findById: async (ctx: AuthContext, id: number): Promise<Condition | null> => {
+      const c = await prisma.condition.findUnique({ where: { id } })
+      if (!c) return null
+      if (!canAccessEnterprise(ctx, c.enterpriseId)) return null
+      return ser(c) as Condition
+    },
+    create: async (ctx: AuthContext, d: Partial<Condition>): Promise<Condition> => {
+      if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
+      if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
+      const created = await prisma.$transaction(async (tx) => {
+        const c = await tx.condition.create({
+          data: {
+            enterpriseId: d.enterpriseId!,
+            name: d.name!,
+            description: d.description || '',
+          },
+        })
+        await tx.auditLog.create({
+          data: {
+            userId: ctx.userId, enterpriseId: c.enterpriseId,
+            action: 'condition.create', entity: 'Condition', entityId: c.id,
+            details: `Created condition: ${c.name}`,
+          },
+        })
+        return c
+      })
+      return ser(created) as Condition
+    },
+    update: async (ctx: AuthContext, id: number, d: Partial<Condition>): Promise<Condition> => {
+      const existing = await prisma.condition.findUnique({ where: { id } })
+      if (!existing) throw new Error('Not found')
+      if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
+      if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
+      const updated = await prisma.$transaction(async (tx) => {
+        const c = await tx.condition.update({
+          where: { id },
+          data: {
+            ...(d.name !== undefined ? { name: d.name } : {}),
+            ...(d.description !== undefined ? { description: d.description } : {}),
+          },
+        })
+        await tx.auditLog.create({
+          data: {
+            userId: ctx.userId, enterpriseId: c.enterpriseId,
+            action: 'condition.update', entity: 'Condition', entityId: c.id,
+            details: `Updated condition: ${c.name}`,
+          },
+        })
+        return c
+      })
+      return ser(updated) as Condition
+    },
+    remove: async (ctx: AuthContext, id: number): Promise<void> => {
+      const existing = await prisma.condition.findUnique({ where: { id } })
+      if (!existing) throw new Error('Not found')
+      if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
+      if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
+      await prisma.$transaction(async (tx) => {
+        await tx.auditLog.create({
+          data: {
+            userId: ctx.userId, enterpriseId: existing.enterpriseId,
+            action: 'condition.delete', entity: 'Condition', entityId: id,
+            details: `Deleted condition: ${existing.name}`,
+          },
+        })
+        await tx.condition.delete({ where: { id } })
+      })
+    },
+  },
+
   // ── Suppliers ───────────────────────────────────────────
   suppliers: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Supplier[]> => {
@@ -1228,6 +1318,7 @@ export const db = {
       d: {
         productId: number; warehouseId: number; quantity: number
         unit?: string; costPerUnit?: number; supplierName?: string | null; notes?: string | null
+        conditionId?: number | null
       },
     ): Promise<Stock> => {
       if (d.quantity <= 0) throw new Error('Validation: quantity must be positive')
@@ -1253,6 +1344,7 @@ export const db = {
           source: 'adjustment',
           sourceRef: null,
           notes: d.notes ?? null,
+          conditionId: d.conditionId ?? null,
         })
         await tx.auditLog.create({
           data: {
@@ -1338,6 +1430,7 @@ export const db = {
       if (!canAccessWarehouse(ctx, w.enterpriseId, w.branchId, w.id)) return []
       const rows = await prisma.lot.findMany({
         where: { productId, warehouseId },
+        include: { condition: true },
         orderBy: { receivedDate: 'asc' },
       })
       const serialized = ser(rows) as Lot[]
@@ -1350,6 +1443,7 @@ export const db = {
       const whIds = await getAccessibleWarehouseIds(ctx)
       const rows = await prisma.lot.findMany({
         where: { productId, warehouseId: whIds.length ? { in: whIds } : undefined },
+        include: { condition: true },
         orderBy: { receivedDate: 'asc' },
       })
       const serialized = ser(rows) as Lot[]
@@ -1365,7 +1459,7 @@ export const db = {
         where.remainingQty = { gt: 0 }
         where.closedAt = null
       }
-      const rows = await prisma.lot.findMany({ where, orderBy: { receivedDate: 'asc' } })
+      const rows = await prisma.lot.findMany({ where, include: { condition: true }, orderBy: { receivedDate: 'asc' } })
       const serialized = ser(rows) as Lot[]
       return serialized.map(l => ({ ...l, status: (l.remainingQty > 0 && !l.closedAt) ? 'open' : 'closed' as const }))
     },
@@ -1382,14 +1476,14 @@ export const db = {
       const rows = await prisma.stockInRecorder.findMany({
         where,
         orderBy: { id: 'desc' },
-        include: { items: true },
+        include: { items: { include: { condition: true } } },
       })
       return ser(rows) as StockInRecorder[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<StockInRecorder | null> => {
       const r = await prisma.stockInRecorder.findUnique({
         where: { id },
-        include: { items: true },
+        include: { items: { include: { condition: true } } },
       })
       if (!r) return null
       if (!canAccessWarehouse(ctx, r.enterpriseId, null, r.warehouseId) && ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) return null
@@ -1481,6 +1575,7 @@ export const db = {
             unit: d.unit || prod.unit,
             costPerUnit: d.costPerUnit ?? prod.cost,
             notes: d.notes || '',
+            conditionId: d.conditionId ?? null,
           },
         })
         const s = await tx.stock.upsert({
@@ -1499,6 +1594,7 @@ export const db = {
           source: 'stock_in',
           sourceRef: `${r.recorderCode}-${item.id}`,
           notes: d.notes || null,
+          conditionId: d.conditionId ?? null,
         })
         await tx.auditLog.create({
           data: {
@@ -1587,14 +1683,14 @@ export const db = {
       const rows = await prisma.stockOutRecorder.findMany({
         where,
         orderBy: { id: 'desc' },
-        include: { items: true },
+        include: { items: { include: { condition: true } } },
       })
       return ser(rows) as StockOutRecorder[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<StockOutRecorder | null> => {
       const r = await prisma.stockOutRecorder.findUnique({
         where: { id },
-        include: { items: true },
+        include: { items: { include: { condition: true } } },
       })
       if (!r) return null
       if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) return null
@@ -1703,6 +1799,7 @@ export const db = {
             isReturnable: d.isReturnable ?? false,
             returnDeadline: d.returnDeadline ? new Date(d.returnDeadline as unknown as string) : null,
             notes: d.notes || '',
+            conditionId: d.conditionId ?? null,
           },
         })
         await tx.auditLog.create({
@@ -2143,6 +2240,7 @@ export const db = {
         include: {
           product: true,
           recorder: true,
+          condition: true,
           returns: { orderBy: { id: 'desc' } },
           nonReturnables: { orderBy: { id: 'desc' } },
         },
@@ -2166,6 +2264,8 @@ export const db = {
           isReturnable: it.isReturnable,
           returnDeadline: it.returnDeadline ? it.returnDeadline.toISOString() : null,
           notes: it.notes,
+          conditionId: it.conditionId ?? null,
+          condition: it.condition ? { id: it.condition.id, name: it.condition.name, description: it.condition.description } : null,
           createdAt: it.createdAt.toISOString(),
           updatedAt: it.updatedAt.toISOString(),
           returnedQty,
@@ -2206,7 +2306,8 @@ export const db = {
         where: { id: stockOutItemId },
         include: {
           product: true,
-          recorder: { include: { items: { include: { product: true } } } },
+          recorder: { include: { items: { include: { product: true, condition: true } } } },
+          condition: true,
           returns: { orderBy: { id: 'desc' } },
           nonReturnables: { orderBy: { id: 'desc' } },
         },
@@ -2219,7 +2320,10 @@ export const db = {
         id: it.id, recorderId: it.recorderId, productId: it.productId, warehouseId: it.warehouseId,
         quantity: it.quantity, unit: it.unit, isReturnable: it.isReturnable,
         returnDeadline: it.returnDeadline ? it.returnDeadline.toISOString() : null,
-        notes: it.notes, createdAt: it.createdAt.toISOString(), updatedAt: it.updatedAt.toISOString(),
+        notes: it.notes,
+        conditionId: it.conditionId ?? null,
+        condition: it.condition ? { id: it.condition.id, name: it.condition.name, description: it.condition.description } : null,
+        createdAt: it.createdAt.toISOString(), updatedAt: it.updatedAt.toISOString(),
         returnedQty, nonReturnableQty, remainingQty: it.quantity - returnedQty - nonReturnableQty,
         product: {
           id: it.product.id, enterpriseId: it.product.enterpriseId, name: it.product.name,
@@ -2238,6 +2342,8 @@ export const db = {
             id: si.id, recorderId: si.recorderId, productId: si.productId, warehouseId: si.warehouseId,
             quantity: si.quantity, unit: si.unit, isReturnable: si.isReturnable,
             returnDeadline: si.returnDeadline ? si.returnDeadline.toISOString() : null, notes: si.notes,
+            conditionId: si.conditionId ?? null,
+            condition: si.condition ? { id: si.condition.id, name: si.condition.name, description: si.condition.description } : null,
             createdAt: si.createdAt.toISOString(), updatedAt: si.updatedAt.toISOString(),
             product: si.product ? { id: si.product.id, name: si.product.name, sku: si.product.sku, unit: si.product.unit } as any : undefined,
           })) : [],
@@ -2310,6 +2416,7 @@ export const db = {
           source: 'adjustment',
           sourceRef: `RETURN-${it.recorder.recorderCode}-${it.id}-${ret.id}`,
           notes: `Return of stock-out item #${it.id} from recorder ${it.recorder.recorderCode}${d.notes ? ` — ${d.notes}` : ''}`,
+          conditionId: it.conditionId ?? null,
         })
         // Update StockOutRecorder status: 'returned' if all items fully returned, else 'partial_return'
         // Use select (not include) to avoid materializing full Return relation objects
@@ -2439,7 +2546,7 @@ export const db = {
       if (ctx.role !== 'super_admin' && ctx.enterpriseId) where.enterpriseId = ctx.enterpriseId
       const rows = await prisma.returnRecorder.findMany({
         where,
-        include: { returns: { include: { stockOutItem: { include: { product: true } } } } },
+        include: { returns: { include: { stockOutItem: { include: { product: true, condition: true } } } } },
         orderBy: { id: 'desc' },
       })
       return rows.map(r => ({
@@ -2458,6 +2565,8 @@ export const db = {
             isReturnable: rt.stockOutItem.isReturnable,
             returnDeadline: rt.stockOutItem.returnDeadline ? rt.stockOutItem.returnDeadline.toISOString() : null,
             notes: rt.stockOutItem.notes,
+            conditionId: rt.stockOutItem.conditionId ?? null,
+            condition: (rt.stockOutItem as any).condition ? { id: (rt.stockOutItem as any).condition.id, name: (rt.stockOutItem as any).condition.name, description: (rt.stockOutItem as any).condition.description } : null,
             createdAt: rt.stockOutItem.createdAt.toISOString(), updatedAt: rt.stockOutItem.updatedAt.toISOString(),
             product: rt.stockOutItem.product ? {
               id: rt.stockOutItem.product.id, name: rt.stockOutItem.product.name, sku: rt.stockOutItem.product.sku, unit: rt.stockOutItem.product.unit,
@@ -2626,7 +2735,7 @@ export const db = {
       if (ctx.role !== 'super_admin' && ctx.enterpriseId) where.enterpriseId = ctx.enterpriseId
       const rows = await prisma.nonReturnableRecorder.findMany({
         where,
-        include: { nonReturnables: { include: { stockOutItem: { include: { product: true } } } } },
+        include: { nonReturnables: { include: { stockOutItem: { include: { product: true, condition: true } } } } },
         orderBy: { id: 'desc' },
       })
       return rows.map(r => ({
@@ -2642,6 +2751,8 @@ export const db = {
           stockOutItem: nr.stockOutItem ? {
             id: nr.stockOutItem.id, productId: nr.stockOutItem.productId, warehouseId: nr.stockOutItem.warehouseId,
             quantity: nr.stockOutItem.quantity, unit: nr.stockOutItem.unit,
+            conditionId: nr.stockOutItem.conditionId ?? null,
+            condition: (nr.stockOutItem as any).condition ? { id: (nr.stockOutItem as any).condition.id, name: (nr.stockOutItem as any).condition.name, description: (nr.stockOutItem as any).condition.description } : null,
             product: nr.stockOutItem.product ? {
               id: nr.stockOutItem.product.id, name: nr.stockOutItem.product.name, sku: nr.stockOutItem.product.sku, unit: nr.stockOutItem.product.unit,
             } as any : undefined,
@@ -2673,6 +2784,7 @@ export async function registerItem(
     costPerUnit?: number
     supplierName?: string | null
     notes?: string | null
+    conditionId?: number | null
   },
 ): Promise<{ product: Product; stock: Stock | null }> {
   if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
@@ -2713,6 +2825,7 @@ export async function registerItem(
         source: 'register_item',
         sourceRef: `REGISTER-${p.id}`,
         notes: params.notes ?? null,
+        conditionId: params.conditionId ?? null,
       })
     }
     await tx.auditLog.create({
@@ -2743,6 +2856,7 @@ interface RegisterItemInput {
   costPerUnit?: number
   supplierName?: string | null
   notes?: string | null
+  conditionId?: number | null
 }
 
 /**
@@ -2821,6 +2935,7 @@ export async function registerItems(
           source: 'register_item',
           sourceRef: `REGISTER-${p.id}`,
           notes: lotNotesParts.length ? lotNotesParts.join(' | ') : null,
+          conditionId: item.conditionId ?? null,
         })
         lotsCreated++
       }

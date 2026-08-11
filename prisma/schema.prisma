@@ -30,6 +30,7 @@ model Enterprise {
   warehouses      Warehouse[]
   users           User[]
   categories      Category[]
+  conditions      Condition[]
   suppliers       Supplier[]
   products        Product[]
   orders          Order[]
@@ -133,6 +134,23 @@ model Category {
   @@index([enterpriseId])
 }
 
+// ─── 5b. Condition ─────────────────────────────────────────
+model Condition {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  name          String
+  description   String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  stockInItems  StockInItem[]
+  stockOutItems StockOutItem[]
+  lots          Lot[]
+
+  @@index([enterpriseId])
+}
+
 // ─── 6. Supplier ───────────────────────────────────────────
 model Supplier {
   id            Int      @id @default(autoincrement())
@@ -211,6 +229,7 @@ model Lot {
   source        String   // 'stock_in' | 'register_item' | 'adjustment'
   sourceRef     String?
   notes         String?
+  conditionId   Int?
   receivedDate  DateTime @default(now())
   closedAt      DateTime?
   createdAt     DateTime @default(now())
@@ -219,11 +238,13 @@ model Lot {
   product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse     Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  condition     Condition? @relation(fields: [conditionId], references: [id], onDelete: SetNull)
 
   @@index([productId, warehouseId])
   @@index([enterpriseId])
   @@index([source])
   @@index([sourceRef])
+  @@index([conditionId])
 }
 
 // ─── 10. Order ─────────────────────────────────────────────
@@ -305,16 +326,19 @@ model StockInItem {
   unit          String   @default("piece")
   costPerUnit   Float    @default(0)
   notes         String   @default("")
+  conditionId   Int?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   recorder      StockInRecorder @relation(fields: [recorderId], references: [id], onDelete: Cascade)
   product       Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse     Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  condition     Condition?      @relation(fields: [conditionId], references: [id], onDelete: SetNull)
 
   @@index([recorderId])
   @@index([productId])
   @@index([warehouseId])
+  @@index([conditionId])
 }
 
 // ─── 14. StockOutRecorder ──────────────────────────────────
@@ -351,12 +375,14 @@ model StockOutItem {
   isReturnable  Boolean  @default(false)
   returnDeadline DateTime?
   notes         String   @default("")
+  conditionId   Int?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   recorder      StockOutRecorder @relation(fields: [recorderId], references: [id], onDelete: Cascade)
   product       Product          @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouse     Warehouse        @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  condition     Condition?       @relation(fields: [conditionId], references: [id], onDelete: SetNull)
   returns       Return[]
   nonReturnables NonReturnable[]
 
@@ -364,6 +390,7 @@ model StockOutItem {
   @@index([productId])
   @@index([warehouseId])
   @@index([isReturnable])
+  @@index([conditionId])
 }
 
 // ─── 15b. ReturnRecorder (a first-class record for a group return — mirrors StockInRecorder) ──

@@ -203,6 +203,7 @@ export const ALL_NAV_ITEMS: NavItem[] = [
   { key: 'users', label: 'Users', icon: 'Users', href: '/users', permission: 'users:view' },
   { key: 'products', label: 'Products', icon: 'Package', href: '/products', permission: 'products:view' },
   { key: 'categories', label: 'Categories', icon: 'Tag', href: '/categories', permission: 'categories:view' },
+  { key: 'conditions', label: 'Conditions', icon: 'ClipboardCheck', href: '/conditions', permission: 'categories:view' },
   { key: 'stock', label: 'Stock', icon: 'Box', href: '/stock', permission: 'stock:view' },
   { key: 'orders', label: 'Orders', icon: 'ShoppingCart', href: '/orders', permission: 'orders:view' },
   { key: 'suppliers', label: 'Suppliers', icon: 'Truck', href: '/suppliers', permission: 'suppliers:view' },

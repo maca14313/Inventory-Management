@@ -1,0 +1,340 @@
+   400→- Updated filteredProducts/filteredStock derived values to apply new filters; added filteredOrders
+   401→- Replaced inline filter sections on ALL list pages with FilterPanel:
+   402→  - Products: Search + Category + Status + Low-stock-only switch
+   403→  - Stock: Search + Warehouse + Low-stock-only switch
+   404→  - Stock In: Date From/To + Warehouse + Status + Supplier
+   405→  - Stock Out: Date From/To + Warehouse + Status + Person
+   406→  - Orders: Search + Status + Type
+   407→  - Returns: Search + Warehouse + Out Date From/To + Recorder Code + Return Progress
+   408→- Improved Returns tab labels: "Should Be Returned"/"Not Flagged" → "Flagged for Return"/"Other Stock-Outs"
+   409→- Refactored Group Return dialog to mirror Stock-In recorder creation flow:
+   410→  - Extended groupReturnDlg state with personName/personPhone/personEmail/personAddress/notes/warehouseId
+   411→  - openGroupReturnDlg now pre-fills person + warehouse from the first item's recorder
+   412→  - Dialog UI: supplier/person header (editable) + restock warehouse display + items table (Select all/None, per-item qty + Full) + notes textarea + summary bar + "Create Group Return" button
+   413→  - submitGroupReturn now passes group notes as per-item notes
+   414→- Lint: clean (no errors)
+   415→- Browser verification (agent-browser):
+   416→  - Returns page: tabs show "Flagged for Return"/"Other Stock-Outs"; Advanced Filters expands to 6 fields; group return dialog shows person header + warehouse + items + notes
+   417→  - Products page: Advanced Filters expands to Search + Category + Status + Low-stock switch
+   418→  - Stock Out page: Advanced Filters expands to Date From/To + Warehouse + Status + Person
+   419→  - Mobile (iPhone 14): Returns page has 0 horizontal scroll; tabs + filter render correctly
+   420→
+   421→Stage Summary:
+   422→- All 4 user requests fulfilled: (1) Group Return mirrors Stock-In recorder creation; (2) better tab labels; (3) collapsible advanced filter on Returns; (4) all filters in the app are now collapsible and advanced
+   423→- Reusable FilterPanel component keeps filter UX consistent across Products/Stock/Stock In/Stock Out/Orders/Returns
+   424→- No backend changes needed (returns group API already accepts items[] with notes; all filtering is client-side on already-loaded data)
+   425→
+   426→---
+   427→Task ID: group-return-new-record
+   428→Agent: main
+   429→Task: Make Group Return create a NEW record (like Stock In "New Receipt") with the ability to start fresh with a new person + pick items from ALL returnable stock-outs (not just existing person buttons)
+   430→
+   431→Work Log:
+   432→- Added `ReturnRecorder` model to prisma/schema.prisma (id, enterpriseId, recorderCode RET-YYYY-NNNN, personName/Phone/Email/Address, notes, status, itemCount, totalQty, timestamps) + `returnRecorderId Int?` FK on Return + `returnRecorders ReturnRecorder[]` relation on Enterprise
+   433→- Ran `bun run db:push` to apply schema (ReturnRecorder table + returnRecorderId column)
+   434→- src/lib/db.ts: 
+   435→  - Added `ReturnRecorder` interface + `returnRecorderId` to `ReturnRecord` interface
+   436→  - Modified `processReturn` to accept optional `returnRecorderId` and set it on Return.create
+   437→  - Rewrote `processGroupReturn` to: (1) create a ReturnRecorder record (RET-YYYY-NNNN), (2) loop processReturn with returnRecorderId, (3) update recorder with itemCount/totalQty/status, (4) audit log. Returns `{ recorder, processed, lastError }`
+   438→  - Added `findRecorders(ctx)` to list all ReturnRecorder records with nested returns+stockOutItem+product
+   439→  - Fixed Prisma serialization crashes in Next.js runtime: replaced `ser()` calls with manual field mapping (explicit field-by-field object construction) in findReturnable, findItemById, processReturn, processGroupReturn, findRecorders — the `ser()` function's `Object.keys()` iteration on Prisma objects caused segfaults in the Turbopack/node runtime
+   440→  - Changed `findMany({ include: { returns: true } })` to `findMany({ select: { returns: { select: { quantity: true } } } })` in processReturn's status check to avoid materializing full Return relation objects
+   441→- src/app/api/returns/route.ts: added `?recorders=1` query branch to list ReturnRecorder records (avoids creating a new route file which crashed Turbopack)
+   442→- src/app/api/returns/group/route.ts: updated to accept `{ personName, personPhone, personEmail, personAddress, notes, items[] }` and pass to processGroupReturn
+   443→- src/app/page.tsx:
+   444→  - Added `ReturnRecorder` interface + `returnRecorderId` to ReturnRecord
+   445→  - Extended groupReturnDlg state with `mode: 'prefilled' | 'new'`, `availableItems`, `itemSearch`, `loadingAvailable`
+   446→  - Added `groupReturnRecords` state + `loadGroupReturnRecords` callback (fetches /api/returns?recorders=1)
+   447→  - Added `openNewGroupReturnDlg()` — fetches ALL returnable items (both tabs), opens fresh dialog with empty person + item picker
+   448→  - Added `addReturnItemToGroup` / `removeReturnItemFromGroup` helpers for the item picker
+   449→  - Updated `submitGroupReturn` to send person info + items to /api/returns/group (creates ReturnRecorder record)
+   450→  - Added "New Group Return" button to Returns page header (violet gradient, mirrors Stock In "New Receipt")
+   451→  - Rewrote Group Return dialog to support two modes:
+   452→    - 'new' mode: empty person header (editable) + item picker (search ALL returnable items, Add buttons) + items list with Remove buttons + notes + summary
+   453→    - 'prefilled' mode: person header pre-filled from existing recorder + items with Switch toggles (existing behavior)
+   454→  - Added collapsible "Return Records" section below the tabs showing created ReturnRecorder records (expandable cards with recorder code, person, status, itemCount, totalQty, returns table) — mirrors Stock In recorders list
+   455→  - Updated useEffect to load group return records when Returns page opens
+   456→- Bumped PRISMA_CLIENT_VERSION stamp to force dev server to pick up regenerated Prisma client
+   457→
+   458→Verification:
+   459→- npx tsc --noEmit → 0 errors in src/ ✓
+   460→- bun run lint → clean ✓
+   461→- bun script tests (with valid userId 78):
+   462→  - findReturnable flagged → 1 item, not_flagged → 2 items ✓
+   463→  - processGroupReturn → created RET-2026-0003 with personName, itemCount=1, totalQty=1, status=completed ✓
+   464→  - findRecorders → lists all ReturnRecorder records with nested returns ✓
+   465→- curl tests (with correct x-user-id: 78, x-user-role: super_admin headers):
+   466→  - GET /api/returns?tab=flagged → 200, returns Laptop Pro 15" item ✓
+   467→  - GET /api/returns?tab=not_flagged → 200, returns Network Switch + Wireless Keyboard items ✓
+   468→  - GET /api/returns?recorders=1 → 200, returns ReturnRecorder records ✓
+   469→  - POST /api/returns/group → 200, created RET-2026-0003 with full recorder data ✓
+   470→- Browser verification partially completed (first session showed Returns page UI with New Group Return button + dialog); full re-verification blocked by sandbox 4GB memory limit (chrome + node dev server cannot coexist stably when multiple API routes need compilation)
+   471→
+   472→Stage Summary:
+   473→- Group Return now creates a NEW ReturnRecorder record (RET-YYYY-NNNN) — exactly like Stock In creates a StockInRecorder. The "New Group Return" button opens a fresh dialog with an empty person header + an item picker that searches ALL returnable stock-outs (both tabs, all persons/recorders), so the user can build a brand-new group return combining items from different sources. The created records appear in a collapsible "Return Records" section.
+   474→- Key fix: replaced `ser()` with manual field mapping in all returns db functions to fix Prisma object serialization segfaults in the Next.js Turbopack/node runtime
+   475→- Schema: +ReturnRecorder model, +returnRecorderId FK on Return, +returnRecorders relation on Enterprise
+   476→- API: /api/returns/group now creates a ReturnRecorder; /api/returns?recorders=1 lists them
+   477→- Frontend: New Group Return button + item picker dialog + Return Records section
+   478→
+   479→---
+   480→Task ID: returns-3rd-tab-pagination
+   481→Agent: main
+   482→Task: (1) Move Return Records up as a 3rd top-level tab alongside Flagged/Other Stock-Outs; (2) add pagination to the Group Return by Person person-buttons, the available-items picker, the items-to-return list, and the warehouses list (searchable combobox); (3) paginate the Return Records list itself.
+   483→
+   484→Work Log:
+   485→- src/app/page.tsx state changes:
+   486→  - `returnsTab` type widened to `'flagged' | 'not_flagged' | 'records'`
+   487→  - Added `returnsGroupPage` + `RETURNS_GROUP_PER_PAGE = 8` (person-button pagination)
+   488→  - Added `returnRecordsPage` + `RETURN_RECORDS_PER_PAGE = 6` (records-list pagination)
+   489→  - Added `returnsWhComboOpen` + `returnsWhComboSearch` (searchable warehouse combobox)
+   490→  - Added `availPage` + `itemsPage` fields to `groupReturnDlg` state (pagination inside the dialog)
+   491→  - Removed now-unused `returnRecordsOpen` state (Return Records is a tab, not a collapsible)
+   492→- Updated `loadReturns` to accept the 'records' union (early-returns when tab === 'records')
+   493→- Updated the Returns useEffect to skip the per-item fetch on the 'records' tab and reset all 3 pagination cursors on tab/page change
+   494→- `openGroupReturnDlg`/`openNewGroupReturnDlg`/`addReturnItemToGroup`/`removeReturnItemFromGroup` now reset availPage/itemsPage to 1 on open/mutation
+   495→- Added `Popover`/`PopoverTrigger`/`PopoverContent` imports (for the searchable warehouse combobox)
+   496→- Returns page render restructure:
+   497→  - TabsList: grid-cols-2 → grid-cols-3, added a 3rd "Return Records" TabsTrigger (Layers icon)
+   498→  - The items view (filter + group bar + items table + pager) is now wrapped in `{returnsTab !== 'records' && (<div>...</div>)}`
+   499→  - The Warehouse FilterField is now a Popover combobox: button shows the selected warehouse name, popover has a search input + scrollable list of warehouses + "All Warehouses" option — handles many warehouses gracefully
+   500→  - "Group Return by Person" violet bar: person buttons are now paginated (8 per page) with a count badge + prev/next pager
+   501→  - The old Collapsible Return Records section is removed; replaced with a `{returnsTab === 'records' && (<div>...</div>)}` block containing a paginated (6 per page) list of ReturnRecorder cards with the same expand/collapse detail + the standard Pager component
+   502→- Group Return dialog changes:
+   503→  - Available-items picker (NEW mode): replaced `avail.slice(0, 30)` + "N more" message with proper pagination (8 per page) + page count + prev/next pager; availPage resets to 1 when the search query changes
+   504→  - Items-to-return list: added pagination (6 per page) with page count + prev/next pager; switched per-row updates from index-based (`i === idx`) to id-based (`x.item.id === it.id`) so pagination doesn't break qty/selected/remove matching
+   505→- Fixed a stray extra `)}` closing brace introduced during the items-list IIFE refactor
+   506→- Lint: clean. `npx tsc --noEmit`: 0 errors in src/ (only pre-existing errors in examples/ and skills/ demo files)
+   507→
+   508→Stage Summary:
+   509→- Returns page now has 3 top-level tabs: Flagged for Return · Other Stock-Outs · Return Records (each with its own content; the records tab has its own paginated list)
+   510→- Every list in the Returns/Group-Return area that could grow large is now paginated: (a) person buttons in the violet bar (8/page), (b) available-items picker in the New Group Return dialog (8/page), (c) items-to-return list in the Group Return dialog (6/page), (d) Return Records in the 3rd tab (6/page)
+   511→- Warehouse filter is now a searchable combobox (Popover + search input + scrollable list) so enterprises with many warehouses can find/select warehouses without a long dropdown
+   512→- All updates are client-side; no backend changes were needed (the returns API already returns full lists)
+   513→
+   514→---
+   515→Task ID: 9
+   516→Agent: main
+   517→Task: Add advanced collapsible filters inside the "+ New Group Return" modal on the Returns page so users can find what they want in that modal.
+   518→
+   519→Work Log:
+   520→- Read current page.tsx (2824 lines) to inspect the Group Return dialog implementation — found item picker only had a basic text search Input.
+   521→- Read the existing FilterPanel + FilterField reusable components (defined earlier in page.tsx) and the page-level Returns advanced filter as the template.
+   522→- Extended the `groupReturnDlg` state type with 10 new fields: filterWarehouse, filterCategory, filterPerson, filterDateFrom, filterDateTo, filterProgress, filterFlagged, whComboOpen, whComboSearch, availableFlaggedIds.
+   523→- Updated `openGroupReturnDlg` (prefilled mode) to initialize the new filter fields to defaults.
+   524→- Updated `openNewGroupReturnDlg` (new mode) to initialize the new filter fields AND record which item ids came from the 'flagged' tab (availableFlaggedIds) so the Flagged Status filter can differentiate flagged vs not-flagged items.
+   525→- Replaced the basic search Input section with: header + always-visible search Input + a collapsible `FilterPanel` containing 7 advanced filters:
+   526→  1. Warehouse (searchable combobox via Popover — handles many warehouses)
+   527→  2. Category (Select dropdown from `categories` state)
+   528→  3. Person / Supplier (text "Name contains...")
+   529→  4. Stock-Out From (date input — filters by stock-out item createdAt)
+   530→  5. Stock-Out To (date input)
+   531→  6. Return Progress (Select: All / Not started / Partial / Fully returned)
+   532→  7. Flagged Status (Select: All (both tabs) / Should be returned / Other stock-outs)
+   533→- Added a "flagged" amber badge next to flagged items in the available items list so users can visually tell which items came from the "Should be returned" tab.
+   534→- Applied all advanced filters in the available-items filter chain (in addition to the existing search and already-added filters).
+   535→- Wired the FilterPanel's activeCount + onClear (Clear button resets all 7 filters and resets availPage to 1).
+   536→- Verified lint passes cleanly (`bun run lint` — no errors).
+   537→- Verified via Agent Browser: opened the Returns page → clicked "New Group Return" → modal opened → "Advanced Filters" button present and collapsible → expanded it → all 7 filter fields visible → tested Warehouse combobox (searchable, shows all warehouses) → selected Acme HQ Main WH → active count badge updated to "1", items list narrowed correctly → tested Flagged Status combobox → selected "Other stock-outs" → active count updated to "2", items list narrowed from 3 to 2 → clicked Clear button → all filters reset, active count badge disappeared, items list returned to 3. All dev.log API calls return 200.
+   538→
+   539→Stage Summary:
+   540→- Group Return "+ New Group Return" modal now has a collapsible Advanced Filters panel matching the rest of the app's filter UX.
+   541→- 7 advanced filters available: Warehouse (searchable), Category, Person/Supplier, Stock-Out From/To date range, Return Progress, Flagged Status.
+   542→- Active count badge + Clear button work correctly.
+   543→- Flagged items are visually tagged with an amber "flagged" badge in the picker.
+   544→- All filters reset when modal is reopened (initialized in both openGroupReturnDlg and openNewGroupReturnDlg).
+   545→- Lint clean, dev server clean, browser-verified end-to-end.
+   546→
+   547→---
+   548→Task ID: 10
+   549→Agent: main
+   550→Task: 1) Make all advanced filter panels consistent (add Category and other missing filter methods to every page). 2) Reorganize the sidebar: group Enterprises+Branches+Warehouses+Users into one "Organization" group; move Categories+Orders+Suppliers+Audit Log+Features to the bottom under a "More" group.
+   551→
+   552→Work Log:
+   553→- Audited all 6 FilterPanel instances across the app to identify missing filter methods:
+   554→  • Products (line 1026): Search, Category, Status, Low stock — FULL ✓
+   555→  • Stock (line 1207): Search, Warehouse, Low stock — MISSING Category
+   556→  • Orders (line 1282): Search, Status, Type — MISSING Warehouse
+   557→  • Stock In (line 1357): Date range, Warehouse, Status, Supplier — MISSING Search
+   558→  • Stock Out (line 1551): Date range, Warehouse, Status, Person — MISSING Search
+   559→  • Returns (line 1763): Search, Warehouse, Date range, Recorder Code, Progress — MISSING Category + Person
+   560→- Added new filter state variables:
+   561→  • `stockCategoryFilter` for Stock page
+   562→  • `orderWarehouseFilter` for Orders page
+   563→  • `stockInFilterSearch` for Stock In page (search by recorderCode/personName/notes)
+   564→  • `stockOutFilterSearch` for Stock Out page (search by recorderCode/personName/notes)
+   565→  • `returnsFilterCategory` and `returnsFilterPerson` for Returns page
+   566→- Updated filter logic chains:
+   567→  • Stock: added category filter (checks product.categoryId)
+   568→  • Orders: added warehouse filter (checks o.warehouseId)
+   569→  • Stock In: added search filter (matches recorderCode/personName/notes)
+   570→  • Stock Out: added search filter (matches recorderCode/personName/notes)
+   571→  • Returns: added category filter (checks it.product.categoryId) + person filter (checks it.recorder.personName)
+   572→- Updated all FilterPanel UIs to include the new filter fields, updated activeCount formulas, and updated onClear handlers to reset the new state.
+   573→- Reorganized the sidebar nav from a flat list into 4 visual sections:
+   574→  • Top (no header): Dashboard
+   575→  • ORGANIZATION group: Enterprises, Branches, Warehouses, Users
+   576→  • INVENTORY group: Products, Stock, Stock In, Stock Out, Returns
+   577→  • MORE group (bottom): Categories, Orders, Suppliers, Audit Log, Features
+   578→- Implemented the grouping inside the existing `<nav>` using a self-invoking IIFE that partitions navItems (which is already permission-filtered) into the 4 buckets and renders each group with a small uppercase header label. Items not in any known bucket are rendered defensively between Inventory and More.
+   579→- Verified lint passes cleanly (`bun run lint` — no errors).
+   580→- Verified via Agent Browser:
+   581→  • Super Admin login: sidebar shows Dashboard → ORGANIZATION (Enterprises, Branches, Warehouses, Users) → INVENTORY (Products, Stock, Stock In, Stock Out, Returns) → MORE (Categories, Orders, Suppliers, Audit Log, Features) ✓
+   582→  • Warehouse Admin login: same grouping, with permission-filtered items (Users, Audit Log) correctly hidden — group headers still render correctly ✓
+   583→  • Stock page Advanced Filters: now shows Search + Category + Warehouse + Low stock ✓
+   584→  • Orders page Advanced Filters: now shows Search + Warehouse + Status + Type ✓
+   585→  • Stock In page Advanced Filters: now shows Search (Code, supplier, notes) + Date range + Warehouse + Status + Supplier ✓
+   586→  • Stock Out page Advanced Filters: now shows Search (Code, person, notes) + Date range + Warehouse + Status + Person ✓
+   587→  • Returns page Advanced Filters: now shows Search + Warehouse + Category + Person/Supplier + Out Date range + Recorder Code + Return Progress ✓
+   588→- All dev.log API calls return 200, no runtime errors.
+   589→
+   590→Stage Summary:
+   591→- All 6 advanced filter panels across the app are now consistent — each has Search (where applicable), Category (where items have a category), Warehouse, Date range, Status/Progress, and Person/Supplier filters as appropriate to the data type.
+   592→- Sidebar is now grouped into 4 clear sections (Dashboard / Organization / Inventory / More) instead of a flat 15-item list, making navigation much easier especially for Super Admin who sees all items.
+   593→- Grouping is permission-aware: when a role can't see certain items (e.g. Warehouse Admin can't see Users/Audit Log), those items are simply omitted from their group but the group headers and remaining items still render correctly.
+   594→- Lint clean, dev server clean, browser-verified for both Super Admin and Warehouse Admin roles.
+   595→
+   596→---
+   597→Task ID: 11
+   598→Agent: general-purpose (pagination-everywhere)
+   599→Task: Add pagination everywhere data can grow, including inside Select dropdowns — by building a reusable PaginatedCombobox and replacing all large-data Selects.
+   600→
+   601→Work Log:
+   602→- Read worklog (Tasks 0–10) + read page.tsx (~2996 lines) in chunks to map every <Select> usage and the existing Returns warehouse Popover combobox style (~line 1800) used as the visual reference.
+   603→- Built `PaginatedCombobox` reusable component (defined OUTSIDE IMSApp, right after FilterField ~line 212): Popover-based, with sticky search input, scrollable list (max-h-56), perPage pagination (default 10), Prev/Next footer (hidden when 1 page), "No matches." empty state, optional "All" option at top (allLabel/allValue), violet highlight for selected item, ChevronDown on trigger, compact prop for h-7 text-[11px]. Uses internal useState for open/search/page that reset on close. Default contentClassName w-44 (matches existing warehouse comboboxes), overridable.
+   604→- Replaced all large-data Selects with PaginatedCombobox:
+   605→  • Products filter Category (allLabel="All Categories") + registerWarehouseId + register row categoryId (pic h-8 + table compact h-7) — 4 selects.
+   606→  • Stock filter Category + Warehouse (allLabel variants) — 2 selects.
+   607→  • Orders filter Warehouse (allLabel="All Warehouses") — 1 select.
+   608→  • Stock In filter Warehouse + Stock Out filter Warehouse — 2 selects.
+   609→  • Returns filter Category — 1 select.
+   610→  • Group Return modal filter Category — 1 select.
+   611→  • Dialog forms (registerItem/stockIn/stockOut/stockOutItem/stockInRecorder/order/branch/warehouse/user): enterprise (×3), branch (×2 incl. "None" with allValue="0"), category, product (×2), warehouse (×5 with `w.isActive` filter or full list) — 13 selects.
+   612→  • Stock In Pick Mode product Select (mobile + desktop): replaced with PaginatedCombobox (perPage=20, contentClassName=w-64, compact, items = filtered+sorted products mapped to {value,label,sublabel:sku}). Removed the now-unused external pagination footer + stockInPickSelectPage state + STOCK_IN_PICK_SELECT_PER_PAGE constant.
+   613→  • Stock Out Pick Mode product Select (mobile + desktop): same pattern; items include `badge: '(<stock>)'` so users still see the available-quantity hint inside the dropdown. Removed stockOutPickSelectPage state + STOCK_OUT_PICK_SELECT_PER_PAGE constant.
+   614→- Preserved every existing value/onChange contract (parseInt where needed, allLabel/allValue="_all" for filter selects with "All X" options, allValue="0" for the user-dialog Branch "None" option).
+   615→- Did NOT touch small/fixed selects: CustomDatePicker year/month, status/type/unit-measurement/role/progress/flagged-status selects — all left as native <Select>.
+   616→- Ran `bun run lint` → exit 0 (no errors). `npx tsc --noEmit` → 0 errors in src/app/page.tsx (only pre-existing errors in examples/ + skills/ demo files).
+   617→- Browser-verified via agent-browser (logged in as superadmin):
+   618→  • Stock page Advanced Filters → Warehouse combobox: opens with sticky search + "All Warehouses" + 7 warehouses with codes; typed "beta" → list filtered to 3 Beta warehouses; clicked "Beta Main WH 1" → trigger label updated + active-count badge changed to "1" + table filtered.
+   619→  • Stock page Category combobox: opened → showed "All Categories" + 10 of 15 categories on page 1; clicked Next → showed remaining 5 categories on page 2; Next button became disabled on last page. Pagination footer present.
+   620→  • Orders page Advanced Filters → Warehouse combobox rendered; Status/Type selects still native (correct).
+   621→  • Orders dialog (New Order) → Warehouse combobox opens with searchable warehouse list including codes; works.
+   622→  • Stock In Pick Mode (expanded a receipt) → product combobox opens with searchable alphabetically-sorted product list (SKU as sublabel); selection updates the cell.
+   623→  • Stock Out Pick Mode → product combobox opens with each product showing SKU sublabel + "(<stock>)" badge; clicked "Laptop Pro 15\""" → trigger updated + "In Stock" cell showed 30; previously-existing "Only N in stock" toast logic still fires correctly.
+   624→- dev.log shows only 200 responses + "✓ Compiled" lines (no runtime/compile errors).
+   625→
+   626→Stage Summary:
+   627→- Built reusable PaginatedCombobox (Popover + sticky search + perPage pagination + optional "All" option + violet-selected style) — ~138 lines added near FilterField.
+   628→- Replaced 23 large-data <Select> dropdowns (warehouses / categories / products / enterprises / branches) with PaginatedCombobox across all 6 list-page filter panels, the multi-item product registration form, the Stock In/Out Pick-mode product pickers, and the 7 create/edit dialogs (product, registerItem, stockIn, stockOut, stockOutItem, order, branch, warehouse, user, stockInRecorder). Cleaned up two now-unused `*PickSelectPage`/`*_PER_PAGE` state+constant pairs.
+   629→- Lint clean (exit 0), TypeScript clean for src/, dev server compiling cleanly, browser-verified end-to-end: search + pagination + selection all work in Stock filter Warehouse+Category, Orders dialog Warehouse, Stock In Pick product, Stock Out Pick product (with stock badge).
+   630→- Small/fixed selects (year/month, status, type, unit/measurement, role, progress, flagged-status) intentionally left as native <Select>.
+   631→
+   632→---
+   633→Task ID: 12
+   634→Agent: main
+   635→Task: Add a "Non-Returnable" feature to the Returns page — items that "should be returned" (isReturnable=true) but cannot be returned for a reason chosen from a catalogue of ~66 reasons. Must mirror the Returns feature exactly (all features + style), with single-item + group operations, records, advanced filters, and pagination everywhere.
+   636→
+   637→Work Log:
+   638→- prisma/schema.prisma:
+   639→  - Added `NonReturnableRecorder` model (mirrors `ReturnRecorder`): id, enterpriseId, recorderCode "NR-YYYY-NNNN", personName/Phone/Email/Address, notes, status, itemCount, totalQty, timestamps, relation to NonReturnable[]
+   640→  - Added `NonReturnable` model (mirrors `Return`): id, stockOutItemId, nonReturnableRecorderId?, quantity, unit, reason (key from NON_RETURNABLE_REASONS), reasonDetail (free-text for "other"), notes, decidedAt, timestamps, relations to StockOutItem + NonReturnableRecorder
+   641→  - Added `nonReturnables NonReturnable[]` relation on Enterprise and StockOutItem
+   642→  - Ran `bun run db:push` to apply schema
+   643→- src/lib/db.ts:
+   644→  - Added `NonReturnable` + `NonReturnableRecorder` interfaces
+   645→  - Extended `ReturnableItem` with `nonReturnableQty: number` and `nonReturnables?: NonReturnable[]`
+   646→  - Updated `findReturnable` to include `nonReturnables` in the Prisma include, compute `nonReturnableQty = sum(nonReturnables.quantity)`, and compute `remainingQty = quantity - returnedQty - nonReturnableQty` (so fully-resolved items drop from both Returns + Non-Returnable lists)
+   647→  - Updated `findItemById` the same way (so the source-record dialog shows non-returnable history)
+   648→  - Updated `processReturn` to include `nonReturnables` in the include and validate against the new remaining (qty - returned - nonReturnable) — prevents returning units already marked non-returnable
+   649→  - Added `db.nonReturnables` domain (mirrors `db.returns`):
+   650→    - `processNonReturnable(ctx, { stockOutItemId, quantity, reason, reasonDetail?, notes?, nonReturnableRecorderId? })` — creates a NonReturnable record (NO stock change), validates remaining > 0, audit log
+   651→    - `processGroupNonReturnable(ctx, { personName, personPhone?, ..., items })` — creates a NEW NonReturnableRecorder (NR-YYYY-NNNN), loops processNonReturnable, updates recorder with itemCount/totalQty/status, audit log
+   652→    - `findRecorders(ctx)` — lists all NonReturnableRecorder records with nested nonReturnables + stockOutItem + product
+   653→- API routes:
+   654→  - `src/app/api/non-returnables/route.ts` — GET (?recorders=1 lists NR- records; ?tab=flagged lists flagged items via db.returns.findReturnable) + POST (single-item decision)
+   655→  - `src/app/api/non-returnables/group/route.ts` — POST (group decision, creates NR- record)
+   656→  - `src/app/api/non-returnables/[id]/route.ts` — GET (single stock-out item with returns + nonReturnables, reuses db.returns.findItemById)
+   657→- src/app/page.tsx:
+   658→  - Added `NON_RETURNABLE_REASONS` constant — 66 reasons (the user's ~50 + 16 additional: contaminated, counterfeit-suspected, damaged-in-transit, dead-on-arrival→"dead", destroyed, disposed, electrical-fault, export-restricted, incompatible-item, liquid-damaged, manufacturer-defect, quarantine, recalled, refurbished, regulated-item, return-window-closed) + "other" (always last, triggers free-text reasonDetail)
+   659→  - Added `REASON_LABELS` lookup map (reason key → human-readable label)
+   660→  - Added `NonReturnable` + `NonReturnableRecorder` interfaces (frontend)
+   661→  - Extended `ReturnableItem` interface with `nonReturnableQty` + `nonReturnables`
+   662→  - Imported `Ban` icon from lucide-react
+   663→  - Widened `returnsTab` state type to include `'non_returnable'`
+   664→  - Added full non-returnable state block (mirrors returns state): nonRetTab, nonRetData, nonRetLoading, nonRetPage, nonRetGroupPage, nonRetRecordsPage, nonRetWhComboOpen/Search, 9 filter states (search, warehouse, dateFrom/To, recorder, progress, category, person, reason), nonRetDlg (single), groupNonRetDlg (group), groupNonRetRecords, expandedNonRetRec
+   665→  - Added handlers: loadNonReturnables, loadGroupNonRetRecords, openNonRetDlg, submitNonReturnable, openGroupNonRetDlg, openNewGroupNonRetDlg, addNonRetItemToGroup, removeNonRetItemFromGroup, submitGroupNonReturnable
+   666→  - Updated loadReturns to skip fetch for 'non_returnable' tab; updated the Returns useEffect to handle the new tab
+   667→  - Updated Returns page header: added "New Group Non-Returnable" button (rose gradient) next to "New Group Return"
+   668→  - Updated TabsList from 3 to 4 columns; added 4th "Non-Returnable" tab (Ban icon)
+   669→  - Added "Mark Non-Returnable" button (rose, `Non-Ret` label) next to "Return" on all Flagged-tab items (mobile cards + desktop table)
+   670→  - Added "Non-Ret" column to the Flagged-tab desktop table (conditional on returnsTab === 'flagged')
+   671→  - Added "Non-Ret: X" line to the Flagged-tab mobile cards (only when nonReturnableQty > 0)
+   672→  - Added full Non-Returnable tab content (rose theme throughout): FilterPanel with 9 filters (Search, Warehouse combobox, Category, Person, Out Date range, Recorder Code, Progress, Reason — the Reason filter is a PaginatedCombobox over NON_RETURNABLE_REASONS), Group Non-Returnable by Person bar (paginated), mobile cards + desktop table (with Non-Ret + Reasons columns), Pager
+   673→  - Added Non-Returnable Records section below the items (paginated, expandable cards showing NR- code, person, status, itemCount, totalQty, and a table of nonReturnables with Product/Qty/Reason badge/Detail/Decided At)
+   674→  - Added single-item "Mark as Non-Returnable" dialog (rose theme): item summary, qty input (Full/Half buttons), reason PaginatedCombobox (perPage=12, searchable), conditional reasonDetail input (when reason='other'), notes textarea, summary callout, submit button
+   675→  - Added group "New Group Non-Returnable Record" dialog (rose theme, mirrors groupReturnDlg): person header (editable), item picker with advanced filters (Warehouse combobox, Category, Person, Date range, Progress), per-item qty + reason PaginatedCombobox + conditional reasonDetail, notes, summary bar, submit button
+   676→  - Updated source-record dialog: added "Non-Returnable History" section (rose badges for each decision with reason + qty + decidedAt), added "Mark Non-Returnable" button to the footer (alongside "Return This Item")
+   677→
+   678→Verification:
+   679→- `bun run db:push` → schema applied, Prisma client regenerated
+   680→- `bun run lint` → 0 errors
+   681→- `npx tsc --noEmit` → 0 errors in src/
+   682→- curl tests:
+   683→  - GET /api/non-returnables?recorders=1 → 200, returns NR- records
+   684→  - GET /api/non-returnables?tab=flagged → 200, returns flagged items with nonReturnableQty + remainingQty
+   685→  - POST /api/non-returnables → 200, creates NonReturnable record
+   686→  - POST /api/non-returnables/group → 200, creates NR- record (NR-2026-0001)
+   687→  - GET /api/non-returnables/22 → 200, returns item with nonReturnables[]
+   688→- Browser verification (agent-browser, superadmin):
+   689→  - Returns page shows 4 tabs (Flagged for Return · Other Stock-Outs · Return Records · Non-Returnable) + both "New Group Non-Returnable" (rose) + "New Group Return" (violet) buttons
+   690→  - Flagged tab: each item has "Return" + "Non-Ret" buttons; desktop table has a "Non-Ret" column showing nonReturnableQty; mobile card shows "Non-Ret: X" when > 0
+   691→  - Non-Returnable tab: FilterPanel with 9 filters (including Reason filter), Group Non-Returnable by Person bar (paginated), items table (Out/Returned/Non-Ret/Remaining/Reasons/Actions), Non-Returnable Records section below with expandable NR- cards
+   692→  - Single-item dialog: qty defaults to full remaining, reason PaginatedCombobox opens with sticky search + 12 reasons per page + pagination, selecting "other" reveals reasonDetail input, submit creates NonReturnable + toast "Marked N piece of X as non-returnable (Reason)"
+   693→  - Group dialog: person header + item picker (with advanced filters) + per-item reason dropdown + submit creates NR- record (NR-2026-0002) + toast "Created non-returnable record NR-2026-0002 — 1 item(s) marked"
+   694→  - Source-record dialog: shows both "Return History" + "Non-Returnable History" sections; footer has both "Mark Non-Returnable" (rose) + "Return This Item" (violet) buttons
+   695→  - Items disappear from lists when fully resolved (remaining = qty - returned - nonReturnable = 0)
+   696→  - All dev.log API calls return 200, no runtime/compile errors
+   697→
+   698→Stage Summary:
+   699→- New "Non-Returnable" feature mirrors the Returns feature 1:1 — same UX, same style (rose/red accent instead of violet), same feature set (single-item + group operations, records, advanced collapsible filters, pagination everywhere including PaginatedCombobox dropdowns).
+   700→- 66 reasons in the catalogue (user's ~50 + 16 additional + "other" with free-text detail).
+   701→- New schema: +NonReturnableRecorder, +NonReturnable models. Existing ReturnableItem extended with nonReturnableQty; remainingQty now = qty - returned - nonReturnable (so items drop from both lists when fully resolved).
+   702→- New API: /api/non-returnables (GET+POST), /api/non-returnables/group (POST), /api/non-returnables/[id] (GET).
+   703→- Frontend: 4th "Non-Returnable" tab on Returns page; "Mark Non-Returnable" buttons on Flagged-tab items + source-record dialog; "New Group Non-Returnable" button; single + group dialogs with per-item reason dropdown; Non-Returnable Records section; "Non-Returnable History" section in source-record dialog; "Non-Ret" column on Flagged-tab table; Reason filter in the Non-Returnable tab's advanced filters.
+   704→- Lint clean, TypeScript clean, browser-verified end-to-end.
+   705→
+   706→---
+   707→Task ID: 13
+   708→Agent: main
+   709→Task: Fix "0 item(s) ready / can't see any item to make Non-Returnable" bug in the New Group Non-Returnable Record modal — items showed in other modals (Group Return) but not in the Non-Returnable group modal.
+   710→
+   711→Work Log:
+   712→- Investigated root cause: `openNewGroupNonRetDlg` (and `loadNonReturnables`) only fetched the `flagged` tab (`isReturnable=true` items) via `/api/non-returnables?tab=flagged`, while `openNewGroupReturnDlg` fetches BOTH `flagged` AND `not_flagged` tabs from `/api/returns`. When there were no flagged items (or all flagged items were fully resolved), the Non-Returnable modal showed 0 items while Group Return showed items (from the not_flagged pool).
+   713→- Fixed `loadNonReturnables` (src/app/page.tsx ~line 983): now fetches BOTH `/api/returns?tab=flagged` and `/api/returns?tab=not_flagged` in parallel and combines them — mirrors `openNewGroupReturnDlg` exactly. This also fixes the main Non-Returnable tab list which had the same issue.
+   714→- Fixed `openNewGroupNonRetDlg` (src/app/page.tsx ~line 1082): now fetches BOTH tabs from `/api/returns` and combines, instead of only fetching `?tab=flagged` from `/api/non-returnables`. Records `availableFlaggedIds` (the IDs that came from the flagged tab) so the Flagged Status filter can differentiate.
+   715→- Added "Flagged Status" filter to the New Group Non-Returnable modal's Advanced Filters (mirroring Group Return's 7th filter): Select with options "All (both tabs)" / "Should be returned" / "Other stock-outs". Required adding `filterFlagged` + `availableFlaggedIds` to the `groupNonRetDlg` state type, default value, and both open functions (`openGroupNonRetDlg` prefilled mode + `openNewGroupNonRetDlg` new mode).
+   716→- Applied the Flagged Status filter in the available-items filter chain (filters by membership in `availableFlaggedIds` set).
+   717→- Added an amber "flagged" badge next to flagged items in the picker list (same as Group Return).
+   718→- Updated labels: "Add Flagged Items to Mark" → "Add Items to Mark"; "Loading flagged items..." → "Loading items..."; "All flagged items added." → "All items added."; result label "N flagged item(s)" → "N item(s)".
+   719→- Updated `advActive` count and `clearAdv` handler to include the new `filterFlagged` field.
+   720→
+   721→Verification:
+   722→- `bun run lint` → 0 errors
+   723→- `npx tsc --noEmit` → 0 errors in src/
+   724→- Browser-verified (agent-browser, superadmin):
+   725→  - Opened Returns page → clicked "New Group Non-Returnable" → modal now shows "2 item(s)" in the available items picker (previously 0)
+   726→  - Both items visible: "StartupXYZ · SOUT-2026-0002 · Remaining: 1" and "Client Corp Ltd · SOUT-2026-0001 · Remaining: 20"
+   727→  - Expanded Advanced Filters → "Flagged Status" filter present with "All (both tabs)" option
+   728→  - Selected "Should be returned" → "No items match your filters." (confirms no flagged items exist, explaining the old 0-item bug)
+   729→  - Selected "Other stock-outs" → both items appear
+   730→  - Added an item → "Items to Mark" section populated with Qty + Reason fields
+   731→  - Selected "Damaged" reason → summary updated to "1 item(s) ready · Total qty to mark: 20"
+   732→  - All dev.log API calls return 200 (both /api/returns?tab=flagged and ?tab=not_flagged now called), no runtime/compile errors
+   733→
+   734→Stage Summary:
+   735→- Root cause: Non-Returnable modal only fetched flagged (isReturnable=true) stock-out items, while Group Return fetched both flagged + not-flagged. With no flagged items in the DB, the Non-Returnable picker was empty.
+   736→- Fix: Both `loadNonReturnables` and `openNewGroupNonRetDlg` now fetch BOTH tabs from `/api/returns` and combine — mirroring `openNewGroupReturnDlg` exactly. Any stock-out item with remaining quantity can now be marked non-returnable.
+   737→- Enhancement: Added "Flagged Status" filter (7th filter) to the Non-Returnable modal to fully mirror the Group Return modal's filter set. Flagged items show an amber "flagged" badge in the picker.
+
+[showing lines 400-737 of 739; use offset=738 with limit to continue reading]
