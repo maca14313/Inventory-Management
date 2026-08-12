@@ -25,6 +25,7 @@ import {
   ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw, Calendar, Check, Eye, LayoutGrid, List,
   Sun, Moon, Phone, Mail, MapPin, FileText, Hash, ChevronLeft, Sparkles, ChevronRight as ChevronRightIcon, SkipBack, SkipForward, Printer, Filter, CalendarDays,
   MessageSquare, Send, Ban, ClipboardCheck,
+  Paperclip, Download, Upload, Image as ImageIcon, File as FileIcon, FileImage,
 } from 'lucide-react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -49,6 +50,7 @@ const SORTED_MEASUREMENTS = [...MEASUREMENTS].sort((a, b) => a.localeCompare(b))
 const ICONS: Record<string, React.ComponentType<any>> = {
   LayoutDashboard, Package, Warehouse: WHIcon, Users, ShoppingCart, Tag, ClipboardCheck,
   Box, Truck, Building2, GitBranch, Shield, Globe, ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw,
+  Paperclip,
 }
 
 const PIE_COLORS = ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316']
@@ -75,6 +77,28 @@ interface ReturnRecorder { id: number; enterpriseId: number; recorderCode: strin
 interface NonReturnable { id: number; stockOutItemId: number; nonReturnableRecorderId: number | null; quantity: number; unit: string; reason: string; reasonDetail: string; notes: string; decidedAt: string; createdAt: string; stockOutItem?: { id: number; productId: number; warehouseId: number; quantity: number; unit: string; product?: Product } }
 interface NonReturnableRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; nonReturnables?: (NonReturnable & { stockOutItem?: { product: Product } })[] }
 interface ReturnableItem extends StockOutItem { returnedQty: number; remainingQty: number; nonReturnableQty: number; product: Product; recorder: StockOutRecorder; returns: ReturnRecord[]; nonReturnables?: NonReturnable[]; createdAt: string }
+
+// ─── Attachments ────────────────────────────────────────────
+interface AttachmentMetaField { id: number; attachmentId: number; key: string; value: string; description: string; createdAt: string; updatedAt: string }
+interface AttachmentRecord {
+  id: number; enterpriseId: number; branchId: number | null; warehouseId: number | null
+  fileName: string; storedName: string; mimeType: string; originalSize: number; storedSize: number
+  isImage: boolean; previewData: string
+  entityType: string; entityId: number | null
+  title: string; description: string; uploadedById: number | null
+  metaFields?: AttachmentMetaField[]
+  uploadedBy?: { id: number; username: string; fullName: string } | null
+  createdAt: string; updatedAt: string
+}
+const ATTACHMENT_ENTITY_TYPES = [
+  { key: 'standalone', label: 'Standalone' },
+  { key: 'stock_in', label: 'Stock In' },
+  { key: 'stock_out', label: 'Stock Out' },
+  { key: 'return', label: 'Return' },
+  { key: 'non_returnable', label: 'Non-Returnable' },
+  { key: 'order', label: 'Order' },
+  { key: 'product', label: 'Product' },
+] as const
 
 // ─── Non-Returnable reasons catalogue ────────────────────────────
 // Curated list of why a "should-be-returned" item cannot be returned.
@@ -462,6 +486,9 @@ export default function IMSApp() {
   const [stockWarehouseFilter, setStockWarehouseFilter] = useState<number | ''>('')
   const [stockLowOnly, setStockLowOnly] = useState(false)
   const [stockCategoryFilter, setStockCategoryFilter] = useState<number | ''>('')
+  // "Has Attachments" filter for Stock In / Stock Out list pages
+  const [stockInHasAttachments, setStockInHasAttachments] = useState(false)
+  const [stockOutHasAttachments, setStockOutHasAttachments] = useState(false)
   // Orders advanced filters
   const [orderSearch, setOrderSearch] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState('')
@@ -472,9 +499,40 @@ export default function IMSApp() {
   const [features, setFeatures] = useState<Feature[]>([])
   const [stockOutData, setStockOutData] = useState<StockOutRecorder[]>([])
   const [stockInData, setStockInData] = useState<StockInRecorder[]>([])
+  const [attachmentsData, setAttachmentsData] = useState<AttachmentRecord[]>([])
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null)
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // ─── Attachments state ────────────────────────────────────
+  const [attFilterSearch, setAttFilterSearch] = useState('')
+  const [attFilterEntityType, setAttFilterEntityType] = useState<'' | string>('')
+  const [attFilterBranchId, setAttFilterBranchId] = useState<number | ''>('')
+  const [attFilterWarehouseId, setAttFilterWarehouseId] = useState<number | ''>('')
+  const [attFilterIsImage, setAttFilterIsImage] = useState<'' | 'true' | 'false'>('')
+  const [attFilterMetaKey, setAttFilterMetaKey] = useState('')
+  const [attFilterMetaValue, setAttFilterMetaValue] = useState('')
+  const [attFilterDateFrom, setAttFilterDateFrom] = useState('')
+  const [attFilterDateTo, setAttFilterDateTo] = useState('')
+  const [attPage, setAttPage] = useState(1)
+  const ATTACHMENTS_PER_PAGE = 12
+  // Upload dialog
+  const [attUpload, setAttUpload] = useState<{
+    open: boolean; submitting: boolean
+    file: File | null
+    title: string; description: string
+    entityType: string; entityId: string
+    branchId: string; warehouseId: string
+    metaFields: { key: string; value: string; description: string }[]
+  }>({ open: false, submitting: false, file: null, title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', metaFields: [] })
+  // Edit dialog
+  const [attEdit, setAttEdit] = useState<{
+    open: boolean; submitting: boolean; attachment: AttachmentRecord | null
+    title: string; description: string; entityType: string; entityId: string
+    metaFields: { key: string; value: string; description: string }[]
+  }>({ open: false, submitting: false, attachment: null, title: '', description: '', entityType: 'standalone', entityId: '', metaFields: [] })
+  // Preview dialog (full-size image)
+  const [attPreview, setAttPreview] = useState<{ open: boolean; attachment: AttachmentRecord | null }>({ open: false, attachment: null })
 
   // Lots dialog state (Change 2)
   const [lotsData, setLotsData] = useState<Lot[]>([])
@@ -1171,10 +1229,11 @@ export default function IMSApp() {
       const fObj = (url: string, fallback: any = null) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err); return fallback } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return fallback })
       const defaultStats: DashboardStats = { enterpriseCount: 0, branchCount: 0, warehouseCount: 0, userCount: 0, productCount: 0, orderCount: 0, pendingOrderCount: 0, totalStockValue: 0, lowStockProducts: [], totalLots: 0, openLots: 0, stockInCount: 0, stockOutCount: 0 }
       const defaultAnalytics: AnalyticsData = { stockByWarehouse: [], stockByCategory: [], topProducts: [], recentActivity: [] }
-      const [s, e, b, w, u, c, cond, sup, p, st, o, a, feat, so, si, an] = await Promise.all([
+      const [s, e, b, w, u, c, cond, sup, p, st, o, a, feat, so, si, an, att] = await Promise.all([
         fObj('/dashboard', defaultStats), fArr('/enterprises'), fArr('/branches'), fArr('/warehouses'), fArr('/users'),
         fArr('/categories'), fArr('/conditions'), fArr('/suppliers'), fArr('/products'), fArr('/stock'), fArr('/orders'),
         fArr('/audit'), fArr('/features'), fArr('/stock-out'), fArr('/stock-in'), fObj('/analytics', defaultAnalytics),
+        fArr('/attachments'),
       ])
       // Ensure stats is always a proper object with all required fields
       const safeStats: DashboardStats = s && typeof s === 'object' && !Array.isArray(s) ? { ...defaultStats, ...s } : defaultStats
@@ -1183,6 +1242,7 @@ export default function IMSApp() {
       setAllUsers(Array.isArray(u) ? u : []); setCategories(Array.isArray(c) ? c : []); setConditions(Array.isArray(cond) ? cond : []); setSuppliers(Array.isArray(sup) ? sup : []); setProducts(Array.isArray(p) ? p : [])
       setStockData(Array.isArray(st) ? st : []); setOrders(Array.isArray(o) ? o : []); setAuditData(Array.isArray(a) ? a : []); setFeatures(Array.isArray(feat) ? feat : [])
       setStockOutData(Array.isArray(so) ? so : []); setStockInData(Array.isArray(si) ? si : []); setAnalyticsData(safeAnalytics)
+      setAttachmentsData(Array.isArray(att) ? att : [])
     } catch (e: any) { console.error('loadData error:', e) }
     if (showGlobalLoading) setLoading(false)
   }, [auth.isLoggedIn, auth.userId, auth.role, auth.enterpriseId, auth.branchId, auth.warehouseId])
@@ -1198,6 +1258,25 @@ export default function IMSApp() {
     createSilent: async (ep: string, d: any) => { const k = crudKey('create', ep); setCrudLoading(prev => new Set(prev).add(k)); try { await apiFetch(ep, { method: 'POST', body: JSON.stringify(d) }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData() } finally { setCrudLoading(prev => { const n = new Set(prev); n.delete(k); return n }) } },
     update: async (ep: string, d: any) => { const k = crudKey('update', ep); setCrudLoading(prev => new Set(prev).add(k)); try { await apiFetch(ep, { method: 'PUT', body: JSON.stringify(d) }); toast({ title: 'Updated successfully' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData() } finally { setCrudLoading(prev => { const n = new Set(prev); n.delete(k); return n }) } },
     remove: async (ep: string) => { const k = crudKey('remove', ep); setCrudLoading(prev => new Set(prev).add(k)); try { await apiFetch(ep, { method: 'DELETE' }); toast({ title: 'Deleted' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); await loadData() } finally { setCrudLoading(prev => { const n = new Set(prev); n.delete(k); return n }) } },
+  }
+
+  // Upload attachments linked to a newly-created record (entityType + entityId).
+  // Used by the Stock In / Stock Out recorder dialogs when files are selected.
+  const uploadAttachmentsFor = async (entityType: string, entityId: number, warehouseId: number | undefined, files: File[]) => {
+    const h = useAuthStore.getState().getAuthHeaders()
+    let ok = 0
+    for (const file of files) {
+      try {
+        const fd = new FormData()
+        fd.append('file', file)
+        fd.append('entityType', entityType)
+        fd.append('entityId', String(entityId))
+        if (warehouseId) fd.append('warehouseId', String(warehouseId))
+        const res = await fetch(`${BASE}/api/attachments`, { method: 'POST', headers: h, body: fd })
+        if (res.ok) ok++
+      } catch { /* skip failed file */ }
+    }
+    if (ok > 0) toast({ title: `${ok} attachment(s) linked to ${entityType} #${entityId}` })
   }
 
   const openCreate = (type: string) => { setDlgType(type); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }
@@ -1227,6 +1306,7 @@ export default function IMSApp() {
     { key: 'stockIn', label: 'Stock In', icon: 'ArrowDownToLine', href: '/stock-in', permission: 'stock:view' as Permission },
     { key: 'stockOut', label: 'Stock Out', icon: 'ArrowUpFromLine', href: '/stock-out', permission: 'orders:view' as Permission },
     { key: 'returns', label: 'Returns', icon: 'RotateCcw', href: '/returns', permission: 'stock:view' as Permission },
+    { key: 'attachments', label: 'Attachments', icon: 'Paperclip', href: '/attachments', permission: 'stock:view' as Permission },
     { key: 'features', label: 'Features', icon: 'ToggleLeft', href: '/features', permission: 'enterprises:set_features' as Permission },
   ]).filter((v, i, a) => a.findIndex(x => x.key === v.key) === i)
 
@@ -1877,6 +1957,111 @@ export default function IMSApp() {
       </div>
     )
 
+    // ─── ATTACHMENTS (files zipped + uploaded, image preview, custom metadata, tenant-isolated)
+    if (page === 'attachments' && hasPermission(role!, 'stock:view')) return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><Paperclip className="w-4 h-4 text-violet-500" />Attachments</h1>
+          <p className="text-xs text-muted-foreground">Files are gzipped on upload. Images preview inline. Attach to any record or keep standalone. Never shared across enterprises / branches / warehouses.</p></div>
+          <Button size="sm" onClick={() => setAttUpload({ open: true, submitting: false, file: null, title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', metaFields: [] })} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-7 text-xs"><Upload className="w-3 h-3 mr-1" />Upload</Button>
+        </div>
+
+        <FilterPanel
+          activeCount={(attFilterSearch ? 1 : 0) + (attFilterEntityType ? 1 : 0) + (attFilterBranchId !== '' ? 1 : 0) + (attFilterWarehouseId !== '' ? 1 : 0) + (attFilterIsImage ? 1 : 0) + (attFilterMetaKey ? 1 : 0) + (attFilterMetaValue ? 1 : 0) + (attFilterDateFrom ? 1 : 0) + (attFilterDateTo ? 1 : 0)}
+          onClear={() => { setAttFilterSearch(''); setAttFilterEntityType(''); setAttFilterBranchId(''); setAttFilterWarehouseId(''); setAttFilterIsImage(''); setAttFilterMetaKey(''); setAttFilterMetaValue(''); setAttFilterDateFrom(''); setAttFilterDateTo(''); setAttPage(1) }}
+          resultLabel={`${attachmentsData.length} file(s)`}
+        >
+          <FilterField label="Search" width="w-48">
+            <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Title, file name, desc..." value={attFilterSearch} onChange={e => { setAttFilterSearch(e.target.value); setAttPage(1) }} className="h-8 text-xs pl-7" /></div>
+          </FilterField>
+          <FilterField label="Entity Type" width="w-40"><Select value={attFilterEntityType || '_all'} onValueChange={v => { setAttFilterEntityType(v === '_all' ? '' : v); setAttPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Types</SelectItem>{ATTACHMENT_ENTITY_TYPES.map(et => <SelectItem key={et.key} value={et.key}>{et.label}</SelectItem>)}</SelectContent></Select></FilterField>
+          <FilterField label="Branch" width="w-40"><PaginatedCombobox items={branches.map(br => ({ value: String(br.id), label: br.name, sublabel: br.code }))} value={attFilterBranchId === '' ? '_all' : String(attFilterBranchId)} onChange={v => { setAttFilterBranchId(v === '_all' ? '' : parseInt(v)); setAttPage(1) }} allLabel="All Branches" placeholder="All" /></FilterField>
+          <FilterField label="Warehouse" width="w-40"><PaginatedCombobox items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))} value={attFilterWarehouseId === '' ? '_all' : String(attFilterWarehouseId)} onChange={v => { setAttFilterWarehouseId(v === '_all' ? '' : parseInt(v)); setAttPage(1) }} allLabel="All Warehouses" placeholder="All" /></FilterField>
+          <FilterField label="File Kind" width="w-32"><Select value={attFilterIsImage || '_all'} onValueChange={v => { setAttFilterIsImage(v === '_all' ? '' : v as 'true' | 'false'); setAttPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Files</SelectItem><SelectItem value="true">Images Only</SelectItem><SelectItem value="false">Non-Images</SelectItem></SelectContent></Select></FilterField>
+          <FilterField label="Meta Key" width="w-36"><Input value={attFilterMetaKey} onChange={e => { setAttFilterMetaKey(e.target.value); setAttPage(1) }} placeholder="e.g. batch" className="h-8 text-xs" /></FilterField>
+          <FilterField label="Meta Value" width="w-36"><Input value={attFilterMetaValue} onChange={e => { setAttFilterMetaValue(e.target.value); setAttPage(1) }} placeholder="e.g. B-001" className="h-8 text-xs" /></FilterField>
+          <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={attFilterDateFrom} onChange={v => { setAttFilterDateFrom(v); setAttPage(1) }} /></FilterField>
+          <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={attFilterDateTo} onChange={v => { setAttFilterDateTo(v); setAttPage(1) }} /></FilterField>
+        </FilterPanel>
+
+        {(() => {
+          const filtered = attachmentsData.filter(a => {
+            if (attFilterSearch) { const q = attFilterSearch.toLowerCase(); if (!a.title.toLowerCase().includes(q) && !a.fileName.toLowerCase().includes(q) && !a.description.toLowerCase().includes(q)) return false }
+            if (attFilterEntityType && a.entityType !== attFilterEntityType) return false
+            if (attFilterBranchId !== '' && a.branchId !== attFilterBranchId) return false
+            if (attFilterWarehouseId !== '' && a.warehouseId !== attFilterWarehouseId) return false
+            if (attFilterIsImage === 'true' && !a.isImage) return false
+            if (attFilterIsImage === 'false' && a.isImage) return false
+            if (attFilterMetaKey) { const k = attFilterMetaKey.toLowerCase(); if (!(a.metaFields || []).some(m => m.key.toLowerCase().includes(k))) return false }
+            if (attFilterMetaValue) { const v = attFilterMetaValue.toLowerCase(); if (!(a.metaFields || []).some(m => m.value.toLowerCase().includes(v))) return false }
+            if (attFilterDateFrom && new Date(a.createdAt) < new Date(attFilterDateFrom + 'T00:00:00')) return false
+            if (attFilterDateTo && new Date(a.createdAt) > new Date(attFilterDateTo + 'T23:59:59')) return false
+            return true
+          })
+          const totalPages = Math.ceil(filtered.length / ATTACHMENTS_PER_PAGE) || 1
+          const safePage = Math.min(attPage, totalPages)
+          const paged = filtered.slice((safePage - 1) * ATTACHMENTS_PER_PAGE, safePage * ATTACHMENTS_PER_PAGE)
+          const fmtSize = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`
+          const entityLabel = (et: string) => ATTACHMENT_ENTITY_TYPES.find(e => e.key === et)?.label || et
+          const attHeaders = useAuthStore.getState().getAuthHeaders()
+
+          if (filtered.length === 0) return <Card className="shadow-sm border-dashed"><CardContent className="p-8 text-center text-sm text-muted-foreground">No attachments found. Click <span className="font-semibold text-violet-600">Upload</span> to add one.</CardContent></Card>
+
+          return (<>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {paged.map(a => {
+                const wh = warehouses.find(w => w.id === a.warehouseId)
+                const br = branches.find(b => b.id === a.branchId)
+                return (
+                  <Card key={a.id} className="shadow-sm hover:shadow-md transition-shadow overflow-hidden flex flex-col">
+                    <div className="relative bg-muted/40 h-32 flex items-center justify-center overflow-hidden">
+                      {a.isImage ? (
+                        <img src={`${BASE}/api/attachments/${a.id}/download?inline=1`} alt={a.title || a.fileName} className="w-full h-full object-cover" loading="lazy" onClick={() => setAttPreview({ open: true, attachment: a })} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                      ) : (
+                        <FileIcon className="w-10 h-10 text-muted-foreground/50" />
+                      )}
+                      <div className="absolute top-1.5 left-1.5 flex gap-1">
+                        {a.isImage && <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px]"><ImageIcon className="w-2.5 h-2.5 mr-0.5" />IMG</Badge>}
+                        <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-0 text-[9px]">{entityLabel(a.entityType)}{a.entityId ? ` #${a.entityId}` : ''}</Badge>
+                      </div>
+                    </div>
+                    <CardContent className="p-2.5 flex-1 flex flex-col gap-1">
+                      <div className="font-semibold text-sm truncate">{a.title || a.fileName}</div>
+                      <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1"><FileText className="w-2.5 h-2.5" />{a.fileName}</div>
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <span>{fmtSize(a.originalSize)}</span>
+                        {a.storedSize < a.originalSize && <span className="text-emerald-600">→ {fmtSize(a.storedSize)} gz</span>}
+                      </div>
+                      {(a.metaFields || []).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {(a.metaFields || []).slice(0, 3).map(m => <Tooltip key={m.id}><TooltipTrigger asChild><Badge className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border-0 text-[9px] font-mono">{m.key}: {m.value}</Badge></TooltipTrigger><TooltipContent side="top" className="text-xs"><div><span className="font-semibold">{m.key}</span>: {m.value}</div>{m.description && <div className="text-muted-foreground">{m.description}</div>}</TooltipContent></Tooltip>)}
+                          {(a.metaFields || []).length > 3 && <Badge className="bg-muted text-muted-foreground border-0 text-[9px]">+{(a.metaFields || []).length - 3}</Badge>}
+                        </div>
+                      )}
+                      {(wh || br) && <div className="text-[9px] text-muted-foreground/70">{wh ? `W: ${wh.name}` : ''}{br ? ` • B: ${br.name}` : ''}</div>}
+                      <div className="text-[9px] text-muted-foreground/50">{new Date(a.createdAt).toLocaleDateString()}</div>
+                      <div className="flex gap-1 mt-auto pt-1.5">
+                        <Button size="sm" variant="outline" onClick={() => { const url = `${BASE}/api/attachments/${a.id}/download`; fetch(url, { headers: attHeaders }).then(r => r.blob()).then(b => { const u = URL.createObjectURL(b); const link = document.createElement('a'); link.href = u; link.download = a.fileName; link.click(); URL.revokeObjectURL(u) }) }} className="h-6 text-xs flex-1"><Download className="w-3 h-3 mr-1" />Save</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setAttEdit({ open: true, submitting: false, attachment: a, title: a.title, description: a.description, entityType: a.entityType, entityId: a.entityId ? String(a.entityId) : '', metaFields: (a.metaFields || []).map(m => ({ key: m.key, value: m.value, description: m.description })) })} className="h-6 w-6 p-0"><Pencil className="w-3 h-3" /></Button>
+                        <Button size="sm" variant="ghost" onClick={async () => { if (!confirm(`Delete "${a.fileName}"? This cannot be undone.`)) return; try { await apiFetch(`/attachments/${a.id}`, { method: 'DELETE' }); toast({ title: 'Attachment deleted' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } }} className="text-red-500 h-6 w-6 p-0"><Trash2 className="w-3 h-3" /></Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setAttPage(p => Math.max(1, p - 1))} className="h-7"><ChevronLeft className="w-3.5 h-3.5" /></Button>
+                <span className="text-xs text-muted-foreground">Page {safePage} of {totalPages}</span>
+                <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setAttPage(p => Math.min(totalPages, p + 1))} className="h-7"><ChevronRight className="w-3.5 h-3.5" /></Button>
+              </div>
+            )}
+          </>)
+        })()}
+      </div>
+    )
+
     // ─── STOCK OUT RECORDER
     // ─── STOCK IN (Task 1-b + Task 6: mirrors Stock Out, emerald theme)
     if (page === 'stockIn') return (
@@ -1888,8 +2073,8 @@ export default function IMSApp() {
 
         {/* ── Filters ── */}
         <FilterPanel
-          activeCount={(stockInFilterSearch ? 1 : 0) + (stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0) + (stockInFilterCondition !== '' ? 1 : 0)}
-          onClear={() => { setStockInFilterSearch(''); setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInFilterCondition(''); setStockInRecPage(1) }}
+          activeCount={(stockInFilterSearch ? 1 : 0) + (stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0) + (stockInFilterCondition !== '' ? 1 : 0) + (stockInHasAttachments ? 1 : 0)}
+          onClear={() => { setStockInFilterSearch(''); setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInFilterCondition(''); setStockInHasAttachments(false); setStockInRecPage(1) }}
           resultLabel={`${stockInData.length} recorders`}
         >
           <FilterField label="Search" width="w-48">
@@ -1915,6 +2100,7 @@ export default function IMSApp() {
               placeholder="All"
             />
           </FilterField>
+          <FilterField label="Has Attachments" width="w-36"><div className="flex items-center gap-1.5 h-8"><Switch checked={stockInHasAttachments} onCheckedChange={v => { setStockInHasAttachments(v); setStockInRecPage(1) }} /><span className="text-xs text-muted-foreground">{stockInHasAttachments ? 'Yes' : 'Any'}</span></div></FilterField>
         </FilterPanel>
 
         {(() => {
@@ -1926,6 +2112,7 @@ export default function IMSApp() {
           if (stockInFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockInFilterWarehouse)
           if (stockInFilterCondition !== '') filtered = filtered.filter(r => (r.items || []).some((it: any) => it.conditionId === stockInFilterCondition))
           if (stockInFilterSearch) { const q = stockInFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
+          if (stockInHasAttachments) filtered = filtered.filter(r => attachmentsData.some(a => a.entityType === 'stock_in' && a.entityId === r.id))
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
           const recPaged = filtered.slice((stockInRecPage - 1) * STOCK_IN_REC_PER_PAGE, stockInRecPage * STOCK_IN_REC_PER_PAGE)
@@ -2119,8 +2306,8 @@ export default function IMSApp() {
 
         {/* ── Filters ── */}
         <FilterPanel
-          activeCount={(stockOutFilterSearch ? 1 : 0) + (stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0) + (stockOutFilterCondition !== '' ? 1 : 0)}
-          onClear={() => { setStockOutFilterSearch(''); setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutFilterCondition(''); setStockOutRecPage(1) }}
+          activeCount={(stockOutFilterSearch ? 1 : 0) + (stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0) + (stockOutFilterCondition !== '' ? 1 : 0) + (stockOutHasAttachments ? 1 : 0)}
+          onClear={() => { setStockOutFilterSearch(''); setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutFilterCondition(''); setStockOutHasAttachments(false); setStockOutRecPage(1) }}
           resultLabel={`${stockOutData.length} recorders`}
         >
           <FilterField label="Search" width="w-48">
@@ -2146,6 +2333,7 @@ export default function IMSApp() {
               placeholder="All"
             />
           </FilterField>
+          <FilterField label="Has Attachments" width="w-36"><div className="flex items-center gap-1.5 h-8"><Switch checked={stockOutHasAttachments} onCheckedChange={v => { setStockOutHasAttachments(v); setStockOutRecPage(1) }} /><span className="text-xs text-muted-foreground">{stockOutHasAttachments ? 'Yes' : 'Any'}</span></div></FilterField>
         </FilterPanel>
 
         {(() => {
@@ -2158,6 +2346,7 @@ export default function IMSApp() {
           if (stockOutFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockOutFilterWarehouse)
           if (stockOutFilterCondition !== '') filtered = filtered.filter(r => (r.items || []).some((it: any) => it.conditionId === stockOutFilterCondition))
           if (stockOutFilterSearch) { const q = stockOutFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
+          if (stockOutHasAttachments) filtered = filtered.filter(r => attachmentsData.some(a => a.entityType === 'stock_out' && a.entityId === r.id))
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_OUT_REC_PER_PAGE)
           const recPaged = filtered.slice((stockOutRecPage - 1) * STOCK_OUT_REC_PER_PAGE, stockOutRecPage * STOCK_OUT_REC_PER_PAGE)
@@ -3030,7 +3219,7 @@ export default function IMSApp() {
               // - Bottom "More" group: categories, orders, suppliers, audit, features
               const ORG_KEYS = new Set(['enterprises', 'branches', 'warehouses', 'users'])
               const INV_KEYS = new Set(['products', 'stock', 'stockIn', 'stockOut', 'returns'])
-              const MORE_KEYS = new Set(['categories', 'conditions', 'orders', 'suppliers', 'audit', 'features'])
+              const MORE_KEYS = new Set(['categories', 'conditions', 'orders', 'suppliers', 'audit', 'features', 'attachments'])
               const present = new Set(navItems.map(n => n.key))
               const top = navItems.filter(n => n.key === 'dashboard')
               const org = navItems.filter(n => ORG_KEYS.has(n.key))
@@ -3310,6 +3499,12 @@ export default function IMSApp() {
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
                 </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Paperclip}>Attachments</SectionHeader>
+                  <div className="text-[10px] text-muted-foreground">Attach delivery notes, photos, or documents. Files are zipped on upload and linked to this dispatch.</div>
+                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-blue-100 file:text-blue-700 file:text-xs file:font-medium hover:file:bg-blue-200 dark:file:bg-blue-500/20 dark:file:text-blue-300" />
+                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
+                </div>
               </>}
 
               {/* ─── StockOutItem ─── */}
@@ -3404,6 +3599,12 @@ export default function IMSApp() {
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="h-8 text-sm rounded-md min-h-[60px]" /></div>
                 </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Paperclip}>Attachments</SectionHeader>
+                  <div className="text-[10px] text-muted-foreground">Attach invoices, photos, or documents. Files are zipped on upload and linked to this receipt.</div>
+                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-emerald-100 file:text-emerald-700 file:text-xs file:font-medium hover:file:bg-emerald-200 dark:file:bg-emerald-500/20 dark:file:text-emerald-300" />
+                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
+                </div>
               </>}
 
             </div>
@@ -3467,10 +3668,20 @@ export default function IMSApp() {
                   if (!sd.enterpriseId) sd.enterpriseId = eid
                   await crud.create(`/stock-out/${recorderId}/item`, sd)
                 }
-                else if (dlgEdit && dlgType==='stockInRecorder') await crud.update(`/stock-in/${dlgEdit.id}`, sd)
-                else if (dlgType==='stockInRecorder') await crud.create('/stock-in', sd)
+                else if (dlgEdit && dlgType==='stockInRecorder') { await crud.update(`/stock-in/${dlgEdit.id}`, sd); if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_in', dlgEdit.id, dlgData.warehouseId, dlgData.pendingFiles) }
+                else if (dlgType==='stockInRecorder') {
+                  const rec = await apiFetch('/stock-in', { method: 'POST', body: JSON.stringify(sd) })
+                  toast({ title: 'Created successfully' })
+                  if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_in', rec.id, dlgData.warehouseId, dlgData.pendingFiles)
+                  await loadData()
+                }
                 else if (dlgEdit) await crud.update(dlgType==='stockOut' ? `/stock-out/${dlgEdit.id}` : `/${dlgType}s/${dlgEdit.id}`,sd)
-                else if (dlgType==='stockOut') await crud.create('/stock-out', sd)
+                else if (dlgType==='stockOut') {
+                  const rec = await apiFetch('/stock-out', { method: 'POST', body: JSON.stringify(sd) })
+                  toast({ title: 'Created successfully' })
+                  if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_out', rec.id, dlgData.warehouseId, dlgData.pendingFiles)
+                  await loadData()
+                }
                 else await crud.create(`/${dlgType}s`, sd)
                 } catch(e: any) { toast({ title: e.message, variant: 'destructive' }) }
                 setDlgSubmitting(false)
@@ -4253,6 +4464,148 @@ export default function IMSApp() {
               <Button onClick={submitGroupNonReturnable} disabled={groupNonRetDlg.submitting || groupNonRetDlg.items.filter(i => (groupNonRetDlg.mode === 'new' || i.selected) && i.qty > 0 && i.reason).length === 0 || (groupNonRetDlg.mode === 'new' && !groupNonRetDlg.personName.trim())} className="bg-gradient-to-r from-rose-600 to-red-600 text-white">
                 {groupNonRetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Ban className="w-4 h-4 mr-1.5" />}Create Non-Returnable Record
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── ATTACHMENT UPLOAD DIALOG ─── */}
+        <Dialog open={attUpload.open} onOpenChange={o => setAttUpload(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-lg w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Upload className="w-4 h-4 text-violet-500" />Upload Attachment</DialogTitle></DialogHeader>
+            <div className="space-y-2.5 max-h-[65vh] overflow-y-auto pr-1">
+              <div className="space-y-1">
+                <Label className="text-xs font-medium">File *</Label>
+                <input type="file" onChange={e => setAttUpload(s => ({ ...s, file: e.target.files?.[0] || null }))} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-violet-100 file:text-violet-700 file:text-xs file:font-medium hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300" />
+                {attUpload.file && <div className="text-[10px] text-muted-foreground">{attUpload.file.name} — {(attUpload.file.size / 1024).toFixed(1)} KB{attUpload.file.type.startsWith('image/') && <Badge className="ml-1 bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px]"><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />image</Badge>}</div>}
+              </div>
+              <div className="space-y-1"><Label className="text-xs font-medium">Title</Label><Input value={attUpload.title} onChange={e => setAttUpload(s => ({ ...s, title: e.target.value }))} placeholder="Optional title..." className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs font-medium">Description</Label><Textarea value={attUpload.description} onChange={e => setAttUpload(s => ({ ...s, description: e.target.value }))} placeholder="Optional description..." className="h-8 text-sm min-h-[50px]" /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1"><Label className="text-xs font-medium">Entity Type</Label><Select value={attUpload.entityType} onValueChange={v => setAttUpload(s => ({ ...s, entityType: v }))}><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent>{ATTACHMENT_ENTITY_TYPES.map(et => <SelectItem key={et.key} value={et.key}>{et.label}</SelectItem>)}</SelectContent></Select></div>
+                <div className="space-y-1"><Label className="text-xs font-medium">Entity ID {attUpload.entityType === 'standalone' && '(n/a)'}</Label><Input value={attUpload.entityId} onChange={e => setAttUpload(s => ({ ...s, entityId: e.target.value }))} placeholder="Record ID..." disabled={attUpload.entityType === 'standalone'} className="h-8 text-sm" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1"><Label className="text-xs font-medium">Branch (scope)</Label><PaginatedCombobox items={branches.map(br => ({ value: String(br.id), label: br.name, sublabel: br.code }))} value={attUpload.branchId || '_all'} onChange={v => setAttUpload(s => ({ ...s, branchId: v === '_all' ? '' : v }))} allLabel="Enterprise-wide" placeholder="Enterprise-wide" /></div>
+                <div className="space-y-1"><Label className="text-xs font-medium">Warehouse (scope)</Label><PaginatedCombobox items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))} value={attUpload.warehouseId || '_all'} onChange={v => setAttUpload(s => ({ ...s, warehouseId: v === '_all' ? '' : v }))} allLabel="Branch-wide" placeholder="Branch-wide" /></div>
+              </div>
+              <div className="bg-muted/30 rounded-lg p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between"><Label className="text-xs font-semibold flex items-center gap-1"><Paperclip className="w-3 h-3" />Custom Metadata</Label><Button size="sm" variant="ghost" onClick={() => setAttUpload(s => ({ ...s, metaFields: [...s.metaFields, { key: '', value: '', description: '' }] }))} className="h-6 text-xs text-violet-600"><Plus className="w-3 h-3 mr-0.5" />Add Field</Button></div>
+                <p className="text-[10px] text-muted-foreground">Add unlimited key-value-description fields to describe this attachment. These power the advanced filters.</p>
+                {attUpload.metaFields.length === 0 && <div className="text-[10px] text-muted-foreground italic">No custom fields. Click "Add Field" to add one.</div>}
+                {attUpload.metaFields.map((m, i) => (
+                  <div key={i} className="space-y-1 bg-card rounded-md p-1.5 border">
+                    <div className="flex gap-1">
+                      <Input value={m.key} onChange={e => setAttUpload(s => ({ ...s, metaFields: s.metaFields.map((x, j) => j === i ? { ...x, key: e.target.value } : x) }))} placeholder="Key (e.g. batch)" className="h-7 text-xs flex-1" />
+                      <Input value={m.value} onChange={e => setAttUpload(s => ({ ...s, metaFields: s.metaFields.map((x, j) => j === i ? { ...x, value: e.target.value } : x) }))} placeholder="Value (e.g. B-001)" className="h-7 text-xs flex-1" />
+                      <Button size="sm" variant="ghost" onClick={() => setAttUpload(s => ({ ...s, metaFields: s.metaFields.filter((_, j) => j !== i) }))} className="text-red-500 h-7 w-7 p-0"><X className="w-3 h-3" /></Button>
+                    </div>
+                    <Input value={m.description} onChange={e => setAttUpload(s => ({ ...s, metaFields: s.metaFields.map((x, j) => j === i ? { ...x, description: e.target.value } : x) }))} placeholder="Description (optional)..." className="h-7 text-xs" />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setAttUpload(s => ({ ...s, open: false }))} disabled={attUpload.submitting} className="text-muted-foreground">Cancel</Button>
+              <Button disabled={attUpload.submitting || !attUpload.file} onClick={async () => {
+                if (!attUpload.file) { toast({ title: 'Select a file first', variant: 'destructive' }); return }
+                setAttUpload(s => ({ ...s, submitting: true }))
+                try {
+                  const fd = new FormData()
+                  fd.append('file', attUpload.file)
+                  if (attUpload.title) fd.append('title', attUpload.title)
+                  if (attUpload.description) fd.append('description', attUpload.description)
+                  fd.append('entityType', attUpload.entityType)
+                  if (attUpload.entityId && attUpload.entityType !== 'standalone') fd.append('entityId', attUpload.entityId)
+                  if (attUpload.branchId) fd.append('branchId', attUpload.branchId)
+                  if (attUpload.warehouseId) fd.append('warehouseId', attUpload.warehouseId)
+                  const cleanMeta = attUpload.metaFields.filter(m => m.key.trim())
+                  if (cleanMeta.length > 0) fd.append('metaFields', JSON.stringify(cleanMeta))
+                  if (role === 'super_admin' && eid) fd.append('enterpriseId', String(eid))
+                  const res = await fetch(`${BASE}/api/attachments`, { method: 'POST', headers: useAuthStore.getState().getAuthHeaders(), body: fd })
+                  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Upload failed (${res.status})`) }
+                  toast({ title: `Uploaded: ${attUpload.file.name}` })
+                  setAttUpload(s => ({ ...s, open: false, submitting: false, file: null, title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', metaFields: [] }))
+                  await loadData()
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setAttUpload(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">{attUpload.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Upload className="w-4 h-4 mr-1.5" />}Upload</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── ATTACHMENT EDIT DIALOG ─── */}
+        <Dialog open={attEdit.open} onOpenChange={o => setAttEdit(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-lg w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Pencil className="w-4 h-4 text-violet-500" />Edit Attachment</DialogTitle></DialogHeader>
+            <div className="space-y-2.5 max-h-[65vh] overflow-y-auto pr-1">
+              {attEdit.attachment && <div className="text-[10px] text-muted-foreground bg-muted/30 rounded-md p-1.5 flex items-center gap-1"><FileText className="w-3 h-3" />{attEdit.attachment.fileName} — {(attEdit.attachment.originalSize / 1024).toFixed(1)} KB</div>}
+              <div className="space-y-1"><Label className="text-xs font-medium">Title</Label><Input value={attEdit.title} onChange={e => setAttEdit(s => ({ ...s, title: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs font-medium">Description</Label><Textarea value={attEdit.description} onChange={e => setAttEdit(s => ({ ...s, description: e.target.value }))} className="h-8 text-sm min-h-[50px]" /></div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1"><Label className="text-xs font-medium">Entity Type</Label><Select value={attEdit.entityType} onValueChange={v => setAttEdit(s => ({ ...s, entityType: v }))}><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent>{ATTACHMENT_ENTITY_TYPES.map(et => <SelectItem key={et.key} value={et.key}>{et.label}</SelectItem>)}</SelectContent></Select></div>
+                <div className="space-y-1"><Label className="text-xs font-medium">Entity ID {attEdit.entityType === 'standalone' && '(n/a)'}</Label><Input value={attEdit.entityId} onChange={e => setAttEdit(s => ({ ...s, entityId: e.target.value }))} disabled={attEdit.entityType === 'standalone'} className="h-8 text-sm" /></div>
+              </div>
+              <div className="bg-muted/30 rounded-lg p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between"><Label className="text-xs font-semibold flex items-center gap-1"><Paperclip className="w-3 h-3" />Custom Metadata</Label><Button size="sm" variant="ghost" onClick={() => setAttEdit(s => ({ ...s, metaFields: [...s.metaFields, { key: '', value: '', description: '' }] }))} className="h-6 text-xs text-violet-600"><Plus className="w-3 h-3 mr-0.5" />Add Field</Button></div>
+                {attEdit.metaFields.length === 0 && <div className="text-[10px] text-muted-foreground italic">No custom fields.</div>}
+                {attEdit.metaFields.map((m, i) => (
+                  <div key={i} className="space-y-1 bg-card rounded-md p-1.5 border">
+                    <div className="flex gap-1">
+                      <Input value={m.key} onChange={e => setAttEdit(s => ({ ...s, metaFields: s.metaFields.map((x, j) => j === i ? { ...x, key: e.target.value } : x) }))} placeholder="Key" className="h-7 text-xs flex-1" />
+                      <Input value={m.value} onChange={e => setAttEdit(s => ({ ...s, metaFields: s.metaFields.map((x, j) => j === i ? { ...x, value: e.target.value } : x) }))} placeholder="Value" className="h-7 text-xs flex-1" />
+                      <Button size="sm" variant="ghost" onClick={() => setAttEdit(s => ({ ...s, metaFields: s.metaFields.filter((_, j) => j !== i) }))} className="text-red-500 h-7 w-7 p-0"><X className="w-3 h-3" /></Button>
+                    </div>
+                    <Input value={m.description} onChange={e => setAttEdit(s => ({ ...s, metaFields: s.metaFields.map((x, j) => j === i ? { ...x, description: e.target.value } : x) }))} placeholder="Description (optional)..." className="h-7 text-xs" />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setAttEdit(s => ({ ...s, open: false }))} disabled={attEdit.submitting} className="text-muted-foreground">Cancel</Button>
+              <Button disabled={attEdit.submitting} onClick={async () => {
+                if (!attEdit.attachment) return
+                setAttEdit(s => ({ ...s, submitting: true }))
+                try {
+                  await apiFetch(`/attachments/${attEdit.attachment.id}`, { method: 'PUT', body: JSON.stringify({
+                    title: attEdit.title, description: attEdit.description,
+                    entityType: attEdit.entityType,
+                    entityId: attEdit.entityType === 'standalone' ? null : (attEdit.entityId ? parseInt(attEdit.entityId) : null),
+                    metaFields: attEdit.metaFields.filter(m => m.key.trim()),
+                  }) })
+                  toast({ title: 'Attachment updated' })
+                  setAttEdit(s => ({ ...s, open: false, submitting: false }))
+                  await loadData()
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setAttEdit(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">{attEdit.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Check className="w-4 h-4 mr-1.5" />}Save</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── ATTACHMENT IMAGE PREVIEW DIALOG ─── */}
+        <Dialog open={attPreview.open} onOpenChange={o => setAttPreview(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-2xl w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><ImageIcon className="w-4 h-4 text-violet-500" />{attPreview.attachment?.title || attPreview.attachment?.fileName || 'Image Preview'}</DialogTitle></DialogHeader>
+            {attPreview.attachment && (
+              <div className="space-y-2">
+                <div className="bg-muted/30 rounded-lg overflow-hidden flex items-center justify-center max-h-[60vh]">
+                  <img src={`${BASE}/api/attachments/${attPreview.attachment.id}/download?inline=1`} alt={attPreview.attachment.fileName} className="max-w-full max-h-[60vh] object-contain" />
+                </div>
+                <div className="text-xs text-muted-foreground flex flex-wrap gap-2">
+                  <span>{attPreview.attachment.fileName}</span>
+                  <span>•</span>
+                  <span>{attPreview.attachment.mimeType}</span>
+                  <span>•</span>
+                  <span>{(attPreview.attachment.originalSize / 1024).toFixed(1)} KB</span>
+                </div>
+                {(attPreview.attachment.metaFields || []).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {(attPreview.attachment.metaFields || []).map(m => <Badge key={m.id} className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border-0 text-[10px] font-mono"><span className="font-semibold">{m.key}</span>: {m.value}</Badge>)}
+                  </div>
+                )}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setAttPreview(s => ({ ...s, open: false }))}>Close</Button>
+              {attPreview.attachment && <Button onClick={() => { const a = attPreview.attachment!; const url = `${BASE}/api/attachments/${a.id}/download`; fetch(url, { headers: useAuthStore.getState().getAuthHeaders() }).then(r => r.blob()).then(b => { const u = URL.createObjectURL(b); const link = document.createElement('a'); link.href = u; link.download = a.fileName; link.click(); URL.revokeObjectURL(u) }) }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white"><Download className="w-4 h-4 mr-1.5" />Download</Button>}
             </DialogFooter>
           </DialogContent>
         </Dialog>

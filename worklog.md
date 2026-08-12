@@ -799,3 +799,62 @@ Stage Summary:
 - Condition is displayed as a column/badge in: Stock In items, Stock Out items, Returns items, Non-Returnable items, source-record dialogs.
 - Bonus fix: Category dialog also got the Enterprise picker for super_admin (same bug existed but was never hit because super_admin rarely creates categories directly).
 - Lint clean, TypeScript clean, browser-verified end-to-end.
+
+---
+Task ID: ATTACH-1
+Agent: main
+Task: Add Attachments feature — files (any type) zipped+uploaded, image preview, unlimited custom metadata (key-value-description), attachable to any record or standalone, tenant-isolated, with its own page + advanced filters.
+
+Work Log:
+- Added Prisma models: Attachment (enterprise/branch/warehouse scoped, gzipped file storage, isImage, entityType/entityId linking, title/description, uploadedBy) + AttachmentMeta (key/value/description, unlimited). Relations added to Enterprise, Branch, Warehouse, User.
+- Ran `bun run db:push` — schema synced, Prisma client regenerated.
+- Created `src/lib/attachments.ts` (server-only domain layer, separate from db.ts because db.ts is imported by the client bundle and fs/zlib/sharp are Node-only):
+  - findMany (tenant-scoped filters: search, entityType, entityId, branchId, warehouseId, isImage, metaKey, metaValue, dateFrom, dateTo)
+  - findById, create (gzip+store on disk, image flag), update (replace metaFields), remove (delete file+DB), getDownloadInfo, countsByEntity, distinctMetaKeys
+  - Tenant isolation: super_admin sees all; enterprise_admin scoped to enterprise; branch_admin sees branch + enterprise-scoped; warehouse_admin sees warehouse + enterprise-scoped. Attachments never cross tenant boundaries.
+- Storage: files gzipped via `zlib.gzipSync` and stored at `<cwd>/../ims-attachments/att_<ts>_<rand>.gz` (OUTSIDE project tree — storing inside cwd/ crashed Turbopack's file watcher). Download endpoint gunzips on the fly.
+- Image preview: NO sharp dependency (native addon crashed Turbopack dev server). Instead, the download endpoint supports `?inline=1` (Content-Disposition: inline) so the browser renders `<img src="/api/attachments/[id]/download?inline=1">` directly.
+- API routes created:
+  - GET/POST `/api/attachments` (multipart upload: file + title + description + entityType + entityId + branchId + warehouseId + metaFields JSON)
+  - GET/PUT/DELETE `/api/attachments/[id]`
+  - GET `/api/attachments/[id]/download[?inline=1]`
+- Backend fully verified via curl: upload (67B PNG → 85B gzipped), list (with metaFields), download (67B decompressed = original), inline (image/png), tenant isolation (enterprise 23 → 404 on enterprise 22's file), delete.
+
+Stage Summary:
+- Backend complete and verified. Attachment + AttachmentMeta models live, storage externalized, gzip compression works, tenant isolation enforced, image preview via inline download endpoint.
+- Key decision: kept attachments.ts SEPARATE from db.ts (not `db.attachments`) because db.ts is client-bundled and Node builtins/native addons break it. API routes import `{ attachments }` from `@/lib/attachments` directly.
+- Key decision: dropped sharp for thumbnails; use inline download endpoint for `<img>` previews instead. Robust and dependency-free.
+- Storage dir: `/home/z/my-project/../ims-attachments/` (sibling, outside project root).
+- Next: build the Attachments page UI in page.tsx (grid + image preview + upload dialog with dynamic meta fields + filter panel), then integrate attachment uploaders into Stock In / Stock Out / Return / Non-Returnable create flows, then add "Has Attachments" filters to advanced filter panels.
+
+---
+Task ID: ATTACH-2
+Agent: main
+Task: Build Attachments page UI + integrate attachment uploaders into Stock In/Stock Out recorder flows + add "Has Attachments" advanced filter.
+
+Work Log:
+- Added icon imports (Paperclip, Download, Upload, ImageIcon, FileIcon, FileImage) + ICONS map entry.
+- Added AttachmentRecord + AttachmentMetaField interfaces + ATTACHMENT_ENTITY_TYPES constant (standalone, stock_in, stock_out, return, non_returnable, order, product).
+- Added 'attachments' to nav items (permission: stock:view) + MORE_KEYS sidebar group.
+- Added attachments state: 9 filter fields (search, entityType, branchId, warehouseId, isImage, metaKey, metaValue, dateFrom, dateTo) + pagination + upload dialog + edit dialog + preview dialog.
+- Updated loadData to fetch /api/attachments in parallel.
+- Built Attachments page render: grid of cards with image preview (via inline download endpoint) or file icon, metadata badges (key:value with tooltips), entity-type badge, gzip compression indicator, download/edit/delete buttons, pagination.
+- Built Upload dialog: file picker, title, description, entity type selector, entity ID (disabled when standalone), branch/warehouse scope selectors, dynamic custom metadata fields (add/remove rows with key+value+description).
+- Built Edit dialog: edit title/description/entityType/entityId + full meta-fields editor.
+- Built Image Preview dialog: full-size inline image + metadata + download button.
+- Integrated attachment uploader into Stock In ("New Receipt") and Stock Out dialogs: added file picker (multiple files). After recorder creation (via apiFetch to capture the new ID), uploads each file with entityType='stock_in'/'stock_out' + entityId + warehouseId via uploadAttachmentsFor() helper.
+- Added "Has Attachments" Switch filter to Stock In + Stock Out advanced filter panels. Filter logic checks attachmentsData for matching entityType+entityId.
+- All verified via Agent Browser:
+  - Attachments page: heading, Upload button, Advanced Filters (9 fields confirmed by VLM), grid of cards with metadata badges, Save/Edit/Delete buttons.
+  - Upload dialog: file picker, title, description, entity type, entity ID (disabled/n/a when standalone), branch scope, warehouse scope, custom metadata with Add Field (dynamic key/value/description rows confirmed).
+  - Stock In dialog: "Choose Files" attachment picker confirmed in the New Receipt dialog.
+  - Stock In advanced filters: "Has Attachments" toggle switch confirmed by VLM alongside Search, Date From/To, Warehouse, Status, Supplier, Condition.
+- Lint passes cleanly. Dev server running, all API routes returning 200.
+
+Stage Summary:
+- Attachments feature complete end-to-end. Files of any type are gzipped on upload, stored outside the project tree (<cwd>/../ims-attachments/), and served decompressed on download. Image previews render inline via <img src="/api/attachments/[id]/download?inline=1">.
+- Unlimited custom metadata (key-value-description) per attachment, fully editable, and filterable via Meta Key + Meta Value advanced filters.
+- Attachments can be standalone OR linked to any record (stock_in, stock_out, return, non_returnable, order, product). Stock In and Stock Out creation dialogs have inline file pickers that auto-link files to the newly-created recorder.
+- Tenant isolation enforced: attachments never cross enterprise/branch/warehouse boundaries (verified: enterprise 23 gets 404 on enterprise 22's file).
+- "Has Attachments" filter added to Stock In and Stock Out advanced filter panels.
+- Sidebar "Attachments" item in the MORE group. Dedicated page with grid view, image preview, upload/edit/delete, 9-field advanced filter panel, and pagination.

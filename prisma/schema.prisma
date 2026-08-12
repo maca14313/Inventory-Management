@@ -41,6 +41,7 @@ model Enterprise {
   nonReturnableRecorders NonReturnableRecorder[]
   auditLogs       AuditLog[]
   lots            Lot[]
+  attachments     Attachment[]
 }
 
 // ─── 2. Branch ─────────────────────────────────────────────
@@ -59,6 +60,7 @@ model Branch {
   enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
   warehouses    Warehouse[]
   users         User[]
+  attachments   Attachment[]
 
   @@index([enterpriseId])
 }
@@ -88,6 +90,7 @@ model Warehouse {
   orderItems    OrderItem[]
   stockInItems  StockInItem[]
   stockOutItems StockOutItem[]
+  attachments   Attachment[]
 
   @@index([enterpriseId])
   @@index([branchId])
@@ -113,6 +116,7 @@ model User {
   warehouse     Warehouse?  @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
   orders        Order[]     @relation("OrderCreatedBy")
   auditLogs     AuditLog[]
+  uploadedAttachments Attachment[] @relation("AttachmentUploadedBy")
 
   @@index([enterpriseId])
   @@index([branchId])
@@ -512,4 +516,60 @@ model Feature {
 
   @@unique([enterpriseId, feature])
   @@index([enterpriseId])
+}
+
+// ─── 18. Attachment ────────────────────────────────────────
+// A file (any type) stored gzipped on disk. Can be standalone (entityType='standalone',
+// entityId=null) OR linked to any record (stock_in, stock_out, return, non_returnable,
+// order, product). Supports unlimited custom metadata key-value-description fields.
+// Tenant-isolated: never crosses enterprise/branch/warehouse boundaries.
+model Attachment {
+  id            Int      @id @default(autoincrement())
+  enterpriseId  Int
+  branchId      Int?
+  warehouseId   Int?
+  fileName      String   // original file name
+  storedName    String   // on-disk gzipped file name (e.g. "att_1700000000_abc.gz")
+  mimeType      String   // original mime type
+  originalSize  Int      // bytes before compression
+  storedSize    Int      // bytes after gzip
+  isImage       Boolean  @default(false)
+  previewData   String   @default("")  // base64 data URL thumbnail for images ("" for non-images)
+  entityType    String   @default("standalone")  // 'standalone' | 'stock_in' | 'stock_out' | 'return' | 'non_returnable' | 'order' | 'product'
+  entityId      Int?
+  title         String   @default("")
+  description   String   @default("")
+  uploadedById  Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  enterprise    Enterprise @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  branch        Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  warehouse     Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  uploadedBy    User?      @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  metaFields    AttachmentMeta[]
+
+  @@index([enterpriseId])
+  @@index([branchId])
+  @@index([warehouseId])
+  @@index([entityType, entityId])
+  @@index([uploadedById])
+  @@index([isImage])
+}
+
+// ─── 19. AttachmentMeta ────────────────────────────────────
+// Custom key-value-description metadata attached to an attachment. Unlimited count.
+model AttachmentMeta {
+  id            Int      @id @default(autoincrement())
+  attachmentId  Int
+  key           String
+  value         String   @default("")
+  description   String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  attachment    Attachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+
+  @@index([attachmentId])
+  @@index([key])
 }
