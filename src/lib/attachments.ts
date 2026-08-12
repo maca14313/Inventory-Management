@@ -3,17 +3,20 @@
  *
  * WHY A SEPARATE MODULE:
  *   src/lib/db.ts is imported by the client (page.tsx imports MEASUREMENTS), so it
- *   must stay browser-bundleable. This module uses Node-only builtins (fs, zlib) and
- *   sharp (child_process) for gzipped file storage + image thumbnails, so it MUST NOT
- *   be imported by any client component. Only API route handlers import it.
+ *   must stay browser-bundleable. This module uses Node-only builtins (fs, zlib,
+ *   archiver, adm-zip) for ZIP archive creation + extraction, so it MUST NOT be
+ *   imported by any client component. Only API route handlers import it.
  *
  * TENANT ISOLATION:
  *   Attachments never cross enterprise / branch / warehouse boundaries. See attachmentWhere().
  *
  * STORAGE:
- *   Files are gzipped (zlib.gzipSync) and stored on disk as <cwd>/attachments/att_<ts>_<rand>.gz.
- *   Download endpoint gunzips on the fly and serves the original bytes + filename + mime.
- *   Image files also get a 320px JPEG base64 thumbnail stored in DB for fast preview.
+ *   Files are bundled into a real ZIP archive (archiver) and stored on disk as
+ *   <cwd>/../ims-attachments/att_<ts>_<rand>.zip. Single-file uploads still get
+ *   zipped (one entry). Download endpoint streams the whole zip; ?fileIndex=N
+ *   extracts a single entry for inline image preview.
+ *   Legacy ".gz" files (created by the previous gzip-based implementation) are
+ *   transparently handled by the download endpoint (gunzip fallback).
  */
 
 import { prisma } from './prisma'
@@ -24,8 +27,8 @@ import {
 import fs from 'fs'
 import path from 'path'
 import zlib from 'zlib'
-// NOTE: no sharp dependency — image previews are served inline via the
-// /api/attachments/[id]/download?inline=1 endpoint (browser <img> decompresses).
+import { ZipArchive } from 'archiver'
+import AdmZip from 'adm-zip'
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -34,10 +37,17 @@ export interface AttachmentMeta {
   createdAt: string; updatedAt: string
 }
 
+export interface AttachmentFileEntry {
+  name: string
+  size: number
+  mimeType: string
+}
+
 export interface Attachment {
   id: number; enterpriseId: number; branchId: number | null; warehouseId: number | null
   fileName: string; storedName: string; mimeType: string; originalSize: number; storedSize: number
-  isImage: boolean; previewData: string
+  isImage: boolean; isMultiFile: boolean; fileCount: number; fileCategory: string
+  fileListJson: string; previewData: string
   entityType: string; entityId: number | null
   title: string; description: string; uploadedById: number | null
   metaFields?: AttachmentMeta[]
@@ -52,10 +62,16 @@ export interface AttachmentFilters {
   branchId?: number
   warehouseId?: number
   isImage?: boolean
+  fileCategory?: string
   metaKey?: string
   metaValue?: string
   dateFrom?: string
   dateTo?: string
+  /** Filter by a meta key=value pair (used by advanced filter content search). */
+  hasMetaKey?: string
+  hasMetaValue?: string
+  /** Match any meta field whose key, value, or description contains this substring. */
+  metaSearch?: string
 }
 
 // ─── Storage helpers ───────────────────────────────────────
@@ -70,13 +86,29 @@ function ensureAttachmentDir() {
 }
 
 function attachmentFilePath(storedName: string): string {
-  return `${ATTACHMENT_DIR}/${storedName}`
+  return path.join(ATTACHMENT_DIR, storedName)
 }
 
 function isImageFile(fileName: string, mimeType: string): boolean {
   if (mimeType && mimeType.startsWith('image/')) return true
   const ext = fileName.toLowerCase().substring(fileName.lastIndexOf('.'))
   return IMAGE_EXTENSIONS.includes(ext)
+}
+
+/** Classify a file into a coarse category used by the Attachments-page tabs. */
+export function classifyFile(fileName: string, mimeType: string): string {
+  const m = (mimeType || '').toLowerCase()
+  const ext = fileName.toLowerCase().substring(fileName.lastIndexOf('.')) || ''
+  if (m.startsWith('image/')) return 'image'
+  if (m === 'application/pdf' || ext === '.pdf') return 'pdf'
+  if (m.startsWith('video/')) return 'video'
+  if (m.startsWith('audio/')) return 'audio'
+  if (['.xls', '.xlsx', '.csv', '.ods'].includes(ext) || m.includes('spreadsheet') || m.includes('excel') || m === 'text/csv') return 'spreadsheet'
+  if (['.ppt', '.pptx', '.odp'].includes(ext) || m.includes('presentation') || m.includes('powerpoint')) return 'presentation'
+  if (['.doc', '.docx', '.odt', '.rtf', '.txt'].includes(ext) || m.includes('document') || m.includes('word') || m === 'text/plain') return 'document'
+  if (['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2'].includes(ext) || m.includes('archive') || m.includes('compressed') || m.includes('zip')) return 'archive'
+  if (['.js', '.ts', '.tsx', '.jsx', '.py', '.java', '.go', '.rs', '.c', '.cpp', '.h', '.cs', '.rb', '.php', '.json', '.xml', '.yml', '.yaml', '.html', '.css', '.sh', '.sql'].includes(ext)) return 'code'
+  return 'other'
 }
 
 /** Convert Prisma rows to plain serializable objects (Date → ISO string). */
@@ -105,13 +137,11 @@ function attachmentWhere(ctx: AuthContext, f: AttachmentFilters = {}): Prisma.At
     w.enterpriseId = ctx.enterpriseId
   } else if (ctx.role === 'branch_admin') {
     if (!ctx.branchId) return { id: -1 }
-    // branch-scoped attachments + enterprise-scoped (branch+warehouse null) ones
     w.OR = [
       { branchId: ctx.branchId },
       { branchId: null, warehouseId: null, enterpriseId: ctx.enterpriseId },
     ]
   } else {
-    // warehouse_admin
     if (!ctx.warehouseId) return { id: -1 }
     w.OR = [
       { warehouseId: ctx.warehouseId },
@@ -123,11 +153,20 @@ function attachmentWhere(ctx: AuthContext, f: AttachmentFilters = {}): Prisma.At
   if (f.branchId) w.branchId = f.branchId
   if (f.warehouseId) w.warehouseId = f.warehouseId
   if (f.isImage !== undefined) w.isImage = f.isImage
+  if (f.fileCategory) w.fileCategory = f.fileCategory
+
+  // Free-text search across title / fileName / description
   if (f.search) {
     const q = f.search.toLowerCase()
-    const searchClause = [{ title: { contains: q } }, { fileName: { contains: q } }, { description: { contains: q } }]
+    const searchClause: Prisma.AttachmentWhereInput[] = [
+      { title: { contains: q } },
+      { fileName: { contains: q } },
+      { description: { contains: q } },
+    ]
     w.OR = (w.OR as any) ? [...(w.OR as any[]), ...searchClause] : searchClause
   }
+
+  // Metadata filters
   if (f.metaKey) {
     w.metaFields = { some: { key: { contains: f.metaKey.toLowerCase() } } }
   }
@@ -136,6 +175,20 @@ function attachmentWhere(ctx: AuthContext, f: AttachmentFilters = {}): Prisma.At
       ? { some: { AND: [{ key: { contains: (f.metaKey || '').toLowerCase() } }, { value: { contains: f.metaValue.toLowerCase() } }] } }
       : { some: { value: { contains: f.metaValue.toLowerCase() } } }
   }
+  if (f.hasMetaKey && f.hasMetaValue) {
+    w.metaFields = { some: { AND: [{ key: f.hasMetaKey }, { value: { contains: f.hasMetaValue } }] } }
+  } else if (f.hasMetaKey) {
+    w.metaFields = { some: { key: f.hasMetaKey } }
+  }
+  if (f.metaSearch) {
+    const ms = f.metaSearch.toLowerCase()
+    w.metaFields = { some: { OR: [
+      { key: { contains: ms } },
+      { value: { contains: ms } },
+      { description: { contains: ms } },
+    ] } }
+  }
+
   if (f.dateFrom || f.dateTo) {
     const created: Prisma.DateTimeFilter = {}
     if (f.dateFrom) created.gte = new Date(f.dateFrom + 'T00:00:00')
@@ -143,6 +196,23 @@ function attachmentWhere(ctx: AuthContext, f: AttachmentFilters = {}): Prisma.At
     w.createdAt = created
   }
   return w
+}
+
+// ─── ZIP helpers ───────────────────────────────────────────
+
+/** Create a ZIP archive Buffer from a list of file buffers. */
+function createZipBuffer(files: { name: string; buffer: Buffer }[]): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const archive = new ZipArchive({ zlib: { level: 6 } })
+    const chunks: Buffer[] = []
+    archive.on('data', (c: Buffer) => chunks.push(c))
+    archive.on('end', () => resolve(Buffer.concat(chunks)))
+    archive.on('error', reject)
+    for (const f of files) {
+      archive.append(f.buffer, { name: f.name })
+    }
+    archive.finalize()
+  })
 }
 
 // ─── Domain API ────────────────────────────────────────────
@@ -176,14 +246,12 @@ export const attachments = {
     return ser(a) as Attachment
   },
 
-  /** Create an attachment from a file buffer. Gzips the file on disk, generates an image
-   *  thumbnail if applicable, and stores metadata + metaFields in the DB. */
+  /** Create an attachment from one OR MORE file buffers. Bundles them into a single
+   *  ZIP archive on disk, classifies the primary file, and stores metadata + metaFields. */
   create: async (
     ctx: AuthContext,
     params: {
-      fileName: string
-      mimeType: string
-      fileBuffer: Buffer
+      files: { name: string; mimeType: string; buffer: Buffer }[]
       title?: string
       description?: string
       entityType?: string
@@ -194,6 +262,7 @@ export const attachments = {
       metaFields?: { key: string; value: string; description: string }[]
     }
   ): Promise<Attachment> => {
+    if (!params.files || params.files.length === 0) throw new Error('Validation: no files provided')
     if (!ctx.enterpriseId && ctx.role !== 'super_admin') throw new Error('FORBIDDEN')
     const enterpriseId = ctx.role === 'super_admin' ? (params.enterpriseId || ctx.enterpriseId) : ctx.enterpriseId
     if (!enterpriseId) throw new Error('Validation: enterpriseId is required')
@@ -211,16 +280,21 @@ export const attachments = {
     }
 
     ensureAttachmentDir()
-    const isImg = isImageFile(params.fileName, params.mimeType)
-    const gzipped = zlib.gzipSync(params.fileBuffer)
-    const storedName = `att_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.gz`
-    const filePath = attachmentFilePath(storedName)
-    fs.writeFileSync(filePath, gzipped)
+    const files = params.files
+    const primary = files[0]
+    const isImg = isImageFile(primary.name, primary.mimeType)
+    const category = classifyFile(primary.name, primary.mimeType)
+    const totalOriginal = files.reduce((s, f) => s + f.buffer.length, 0)
+    const fileList: AttachmentFileEntry[] = files.map(f => ({
+      name: f.name,
+      size: f.buffer.length,
+      mimeType: f.mimeType || 'application/octet-stream',
+    }))
 
-    // No server-side thumbnail generation (sharp native addon is unstable in
-    // Turbopack). Image previews are rendered client-side via the inline download
-    // endpoint. previewData stays empty.
-    const previewData = ''
+    const zipBuffer = await createZipBuffer(files.map(f => ({ name: f.name, buffer: f.buffer })))
+    const storedName = `att_${Date.now()}_${Math.random().toString(36).slice(2, 10)}.zip`
+    const filePath = attachmentFilePath(storedName)
+    fs.writeFileSync(filePath, zipBuffer)
 
     let created: any
     try {
@@ -230,13 +304,17 @@ export const attachments = {
             enterpriseId,
             branchId,
             warehouseId,
-            fileName: params.fileName,
+            fileName: primary.name,
             storedName,
-            mimeType: params.mimeType || 'application/octet-stream',
-            originalSize: params.fileBuffer.length,
-            storedSize: gzipped.length,
+            mimeType: primary.mimeType || 'application/octet-stream',
+            originalSize: totalOriginal,
+            storedSize: zipBuffer.length,
             isImage: isImg,
-            previewData,
+            isMultiFile: files.length > 1,
+            fileCount: files.length,
+            fileCategory: category,
+            fileListJson: JSON.stringify(fileList),
+            previewData: '',
             entityType: params.entityType || 'standalone',
             entityId: params.entityId ?? null,
             title: params.title || '',
@@ -255,7 +333,7 @@ export const attachments = {
           data: {
             userId: ctx.userId, enterpriseId: a.enterpriseId,
             action: 'attachment.create', entity: 'Attachment', entityId: a.id,
-            details: `Uploaded attachment: ${a.fileName} (${a.entityType}${a.entityId ? `#${a.entityId}` : ''})`,
+            details: `Uploaded attachment: ${a.fileName} (${a.fileCount} file(s), ${a.entityType}${a.entityId ? `#${a.entityId}` : ''})`,
           },
         })
         return a
@@ -350,13 +428,57 @@ export const attachments = {
   },
 
   /** Returns disk path + original file info for download. Tenant-checked. */
-  getDownloadInfo: async (ctx: AuthContext, id: number): Promise<{ filePath: string; fileName: string; mimeType: string } | null> => {
+  getDownloadInfo: async (ctx: AuthContext, id: number): Promise<{ filePath: string; fileName: string; mimeType: string; attachment: any } | null> => {
     const a = await prisma.attachment.findUnique({ where: { id } })
     if (!a) return null
     if (!canAccessEnterprise(ctx, a.enterpriseId)) return null
     if (ctx.role === 'warehouse_admin' && a.warehouseId !== null && a.warehouseId !== ctx.warehouseId) return null
     if (ctx.role === 'branch_admin' && a.branchId !== null && a.branchId !== ctx.branchId) return null
-    return { filePath: attachmentFilePath(a.storedName), fileName: a.fileName, mimeType: a.mimeType }
+    return { filePath: attachmentFilePath(a.storedName), fileName: a.fileName, mimeType: a.mimeType, attachment: ser(a) }
+  },
+
+  /** Extract a single entry from the ZIP archive. Used for inline image preview
+   *  (?fileIndex=N) and for serving individual files from a multi-file attachment.
+   *  Returns null if index is out of range or file is missing/corrupt. */
+  extractEntry: async (ctx: AuthContext, id: number, fileIndex: number): Promise<{ buffer: Buffer; entryName: string; mimeType: string } | null> => {
+    const info = await attachments.getDownloadInfo(ctx, id)
+    if (!info) return null
+    const a = info.attachment
+    if (!fs.existsSync(info.filePath)) return null
+    // Legacy .gz file? gunzip and serve as single file (only index 0 valid)
+    if (info.filePath.endsWith('.gz')) {
+      if (fileIndex !== 0) return null
+      try {
+        const buf = zlib.gunzipSync(fs.readFileSync(info.filePath))
+        return { buffer: buf, entryName: a.fileName, mimeType: a.mimeType }
+      } catch {
+        return null
+      }
+    }
+    try {
+      const zip = new AdmZip(info.filePath)
+      const entries = zip.getEntries()
+      if (fileIndex < 0 || fileIndex >= entries.length) return null
+      const entry = entries[fileIndex]
+      const buf = entry.getData()
+      // Re-derive mime from entry name (the stored list may have it, but trust extension)
+      const ext = entry.entryName.toLowerCase().substring(entry.entryName.lastIndexOf('.'))
+      let mime = 'application/octet-stream'
+      if (ext === '.png') mime = 'image/png'
+      else if (ext === '.jpg' || ext === '.jpeg') mime = 'image/jpeg'
+      else if (ext === '.gif') mime = 'image/gif'
+      else if (ext === '.webp') mime = 'image/webp'
+      else if (ext === '.svg') mime = 'image/svg+xml'
+      else if (ext === '.pdf') mime = 'application/pdf'
+      else if (ext === '.txt') mime = 'text/plain'
+      else if (ext === '.json') mime = 'application/json'
+      else if (ext === '.csv') mime = 'text/csv'
+      // For single-file zips where the file was originally an image, prefer stored mimeType
+      if (fileIndex === 0 && a.isImage && a.mimeType.startsWith('image/')) mime = a.mimeType
+      return { buffer: buf, entryName: entry.entryName, mimeType: mime }
+    } catch {
+      return null
+    }
   },
 
   /** Attachment counts grouped by entityId for a given entityType. Powers "has attachments"
@@ -374,7 +496,15 @@ export const attachments = {
     return out
   },
 
-  /** Distinct metadata keys across visible attachments — powers the meta-key filter dropdown. */
+  /** Attachment counts grouped by entityType for a single entityId. Powers item-level badges. */
+  countsForEntity: async (ctx: AuthContext, entityType: string, entityId: number): Promise<number> => {
+    const where = attachmentWhere(ctx, { entityType, entityId })
+    const c = await prisma.attachment.count({ where })
+    return c
+  },
+
+  /** Distinct metadata keys across visible attachments — powers the meta-key filter dropdown
+   *  AND the "by metadata type" tabs on the Attachments page. */
   distinctMetaKeys: async (ctx: AuthContext): Promise<string[]> => {
     const where = attachmentWhere(ctx)
     const rows = await prisma.attachmentMeta.findMany({
@@ -384,5 +514,18 @@ export const attachments = {
       orderBy: { key: 'asc' },
     })
     return rows.map(r => r.key)
+  },
+
+  /** Counts of attachments grouped by fileCategory — powers the file-type tabs. */
+  countsByCategory: async (ctx: AuthContext): Promise<Record<string, number>> => {
+    const where = attachmentWhere(ctx)
+    const rows = await prisma.attachment.groupBy({
+      by: ['fileCategory'],
+      where,
+      _count: { id: true },
+    })
+    const out: Record<string, number> = {}
+    for (const r of rows) out[r.fileCategory] = r._count.id
+    return out
   },
 }

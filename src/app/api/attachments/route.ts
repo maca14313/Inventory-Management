@@ -7,7 +7,9 @@ import { handleError } from '@/lib/route-utils'
  * GET /api/attachments
  * Query params (all optional):
  *   search, entityType, entityId, branchId, warehouseId,
- *   isImage ('true'|'false'), metaKey, metaValue, dateFrom, dateTo
+ *   isImage ('true'|'false'), fileCategory,
+ *   metaKey, metaValue, hasMetaKey, hasMetaValue, metaSearch,
+ *   dateFrom, dateTo
  * Returns: Attachment[] (tenant-scoped, includes metaFields + uploadedBy)
  */
 export async function GET(req: Request) {
@@ -22,8 +24,12 @@ export async function GET(req: Request) {
       branchId: sp.get('branchId') ? parseInt(sp.get('branchId')!, 10) : undefined,
       warehouseId: sp.get('warehouseId') ? parseInt(sp.get('warehouseId')!, 10) : undefined,
       isImage: sp.get('isImage') === null ? undefined : sp.get('isImage') === 'true',
+      fileCategory: sp.get('fileCategory') || undefined,
       metaKey: sp.get('metaKey') || undefined,
       metaValue: sp.get('metaValue') || undefined,
+      hasMetaKey: sp.get('hasMetaKey') || undefined,
+      hasMetaValue: sp.get('hasMetaValue') || undefined,
+      metaSearch: sp.get('metaSearch') || undefined,
       dateFrom: sp.get('dateFrom') || undefined,
       dateTo: sp.get('dateTo') || undefined,
     }
@@ -35,26 +41,47 @@ export async function GET(req: Request) {
 /**
  * POST /api/attachments  (multipart/form-data)
  * Form fields:
- *   file:        File (required) — the file to zip + store
+ *   files:       File[] (required, one or more) — bundled into a single ZIP
  *   title:       string (optional)
  *   description: string (optional)
  *   entityType:  string (optional, default 'standalone')
+ *                'standalone' | 'stock_in' | 'stock_in_item' | 'stock_out' |
+ *                'stock_out_item' | 'return' | 'non_returnable' | 'order' |
+ *                'order_item' | 'product'
  *   entityId:    number (optional)
  *   branchId:    number (optional)
- *   warehouseId:number (optional)
+ *   warehouseId: number (optional)
  *   enterpriseId:number (optional, super_admin only)
  *   metaFields:  JSON string of [{key,value,description}] (optional)
+ *
+ * Backward compat: a single field named 'file' is also accepted.
+ *
  * Returns: Attachment
  */
 export async function POST(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
     const form = await req.formData()
-    const file = form.get('file')
-    if (!file || !(file instanceof File)) {
-      return NextResponse.json({ error: 'No file provided' }, { status: 400 })
+
+    // Collect all files: support both 'files' (multiple) and legacy 'file' (single)
+    const files: { name: string; mimeType: string; buffer: Buffer }[] = []
+    const allEntries = form.getAll('files')
+    if (allEntries.length > 0) {
+      for (const entry of allEntries) {
+        if (entry instanceof File) {
+          files.push({ name: entry.name, mimeType: entry.type || 'application/octet-stream', buffer: Buffer.from(await entry.arrayBuffer()) })
+        }
+      }
     }
-    const fileBuffer = Buffer.from(await file.arrayBuffer())
+    const single = form.get('file')
+    if (single instanceof File) {
+      files.push({ name: single.name, mimeType: single.type || 'application/octet-stream', buffer: Buffer.from(await single.arrayBuffer()) })
+    }
+
+    if (files.length === 0) {
+      return NextResponse.json({ error: 'No files provided' }, { status: 400 })
+    }
+
     let metaFields: { key: string; value: string; description: string }[] = []
     const metaRaw = form.get('metaFields')
     if (metaRaw && typeof metaRaw === 'string') {
@@ -62,9 +89,7 @@ export async function POST(req: Request) {
     }
     const enterpriseIdRaw = form.get('enterpriseId')
     const data = await attachments.create(ctx, {
-      fileName: file.name,
-      mimeType: file.type || 'application/octet-stream',
-      fileBuffer,
+      files,
       title: (form.get('title') as string) || '',
       description: (form.get('description') as string) || '',
       entityType: (form.get('entityType') as string) || 'standalone',

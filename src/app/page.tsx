@@ -26,6 +26,7 @@ import {
   Sun, Moon, Phone, Mail, MapPin, FileText, Hash, ChevronLeft, Sparkles, ChevronRight as ChevronRightIcon, SkipBack, SkipForward, Printer, Filter, CalendarDays,
   MessageSquare, Send, Ban, ClipboardCheck,
   Paperclip, Download, Upload, Image as ImageIcon, File as FileIcon, FileImage,
+  Table as TableIcon, Presentation, Video, Music, Archive, Code, Files,
 } from 'lucide-react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -80,10 +81,12 @@ interface ReturnableItem extends StockOutItem { returnedQty: number; remainingQt
 
 // ─── Attachments ────────────────────────────────────────────
 interface AttachmentMetaField { id: number; attachmentId: number; key: string; value: string; description: string; createdAt: string; updatedAt: string }
+interface AttachmentFileEntry { name: string; size: number; mimeType: string }
 interface AttachmentRecord {
   id: number; enterpriseId: number; branchId: number | null; warehouseId: number | null
   fileName: string; storedName: string; mimeType: string; originalSize: number; storedSize: number
-  isImage: boolean; previewData: string
+  isImage: boolean; isMultiFile: boolean; fileCount: number; fileCategory: string; fileListJson: string
+  previewData: string
   entityType: string; entityId: number | null
   title: string; description: string; uploadedById: number | null
   metaFields?: AttachmentMetaField[]
@@ -93,12 +96,27 @@ interface AttachmentRecord {
 const ATTACHMENT_ENTITY_TYPES = [
   { key: 'standalone', label: 'Standalone' },
   { key: 'stock_in', label: 'Stock In' },
+  { key: 'stock_in_item', label: 'Stock In Item' },
   { key: 'stock_out', label: 'Stock Out' },
+  { key: 'stock_out_item', label: 'Stock Out Item' },
   { key: 'return', label: 'Return' },
   { key: 'non_returnable', label: 'Non-Returnable' },
   { key: 'order', label: 'Order' },
+  { key: 'order_item', label: 'Order Item' },
   { key: 'product', label: 'Product' },
 ] as const
+const ATTACHMENT_FILE_CATEGORIES: { key: string; label: string; icon: string }[] = [
+  { key: 'image', label: 'Images', icon: 'ImageIcon' },
+  { key: 'pdf', label: 'PDFs', icon: 'FileText' },
+  { key: 'document', label: 'Documents', icon: 'FileText' },
+  { key: 'spreadsheet', label: 'Spreadsheets', icon: 'Table' },
+  { key: 'presentation', label: 'Presentations', icon: 'Presentation' },
+  { key: 'video', label: 'Videos', icon: 'Video' },
+  { key: 'audio', label: 'Audio', icon: 'Music' },
+  { key: 'archive', label: 'Archives', icon: 'Archive' },
+  { key: 'code', label: 'Code', icon: 'Code' },
+  { key: 'other', label: 'Other', icon: 'FileIcon' },
+]
 
 // ─── Non-Returnable reasons catalogue ────────────────────────────
 // Curated list of why a "should-be-returned" item cannot be returned.
@@ -488,11 +506,14 @@ export default function IMSApp() {
   const [stockCategoryFilter, setStockCategoryFilter] = useState<number | ''>('')
   // "Has Attachments" filter for Stock In / Stock Out list pages
   const [stockInHasAttachments, setStockInHasAttachments] = useState(false)
+  const [stockInAttSearch, setStockInAttSearch] = useState('')
   const [stockOutHasAttachments, setStockOutHasAttachments] = useState(false)
+  const [stockOutAttSearch, setStockOutAttSearch] = useState('')
   // Orders advanced filters
   const [orderSearch, setOrderSearch] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState('')
   const [orderTypeFilter, setOrderTypeFilter] = useState<'' | 'purchase' | 'sales'>('')
+  const [orderAttSearch, setOrderAttSearch] = useState('')
   const [orderWarehouseFilter, setOrderWarehouseFilter] = useState<number | ''>('')
   const [orders, setOrders] = useState<Order[]>([])
   const [auditData, setAuditData] = useState<AuditEntry[]>([])
@@ -514,17 +535,25 @@ export default function IMSApp() {
   const [attFilterMetaValue, setAttFilterMetaValue] = useState('')
   const [attFilterDateFrom, setAttFilterDateFrom] = useState('')
   const [attFilterDateTo, setAttFilterDateTo] = useState('')
+  // Tab state: 'all' or a fileCategory key (image/pdf/document/...)
+  const [attTab, setAttTab] = useState<string>('all')
+  // Secondary tab: metadata-key grouping — '_all' or a specific key
+  const [attMetaTab, setAttMetaTab] = useState<string>('_all')
+  // Distinct metadata keys + category counts (loaded from API)
+  const [attMetaKeys, setAttMetaKeys] = useState<string[]>([])
+  const [attCategoryCounts, setAttCategoryCounts] = useState<Record<string, number>>({})
   const [attPage, setAttPage] = useState(1)
-  const ATTACHMENTS_PER_PAGE = 12
-  // Upload dialog
+  const [attPerPage, setAttPerPage] = useState(20)
+  // Upload dialog — supports MULTIPLE files (zipped together as one attachment)
   const [attUpload, setAttUpload] = useState<{
     open: boolean; submitting: boolean
-    file: File | null
+    files: File[]
     title: string; description: string
     entityType: string; entityId: string
     branchId: string; warehouseId: string
+    enterpriseId: string  // super_admin picks the owning enterprise
     metaFields: { key: string; value: string; description: string }[]
-  }>({ open: false, submitting: false, file: null, title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', metaFields: [] })
+  }>({ open: false, submitting: false, files: [], title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', enterpriseId: '', metaFields: [] })
   // Edit dialog
   const [attEdit, setAttEdit] = useState<{
     open: boolean; submitting: boolean; attachment: AttachmentRecord | null
@@ -532,7 +561,7 @@ export default function IMSApp() {
     metaFields: { key: string; value: string; description: string }[]
   }>({ open: false, submitting: false, attachment: null, title: '', description: '', entityType: 'standalone', entityId: '', metaFields: [] })
   // Preview dialog (full-size image)
-  const [attPreview, setAttPreview] = useState<{ open: boolean; attachment: AttachmentRecord | null }>({ open: false, attachment: null })
+  const [attPreview, setAttPreview] = useState<{ open: boolean; attachment: AttachmentRecord | null; fileIndex: number }>({ open: false, attachment: null, fileIndex: 0 })
 
   // Lots dialog state (Change 2)
   const [lotsData, setLotsData] = useState<Lot[]>([])
@@ -580,9 +609,10 @@ export default function IMSApp() {
   const [returnsFilterProgress, setReturnsFilterProgress] = useState<'' | 'none' | 'partial' | 'full'>('')
   const [returnsFilterCategory, setReturnsFilterCategory] = useState<number | ''>('')
   const [returnsFilterCondition, setReturnsFilterCondition] = useState<number | ''>('')
+  const [returnsAttSearch, setReturnsAttSearch] = useState('')
   const [returnsFilterPerson, setReturnsFilterPerson] = useState('')
   // Single-item return dialog
-  const [returnDlg, setReturnDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; notes: string; submitting: boolean }>({ open: false, item: null, qty: 0, notes: '', submitting: false })
+  const [returnDlg, setReturnDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; notes: string; submitting: boolean; pendingFiles: File[] }>({ open: false, item: null, qty: 0, notes: '', submitting: false, pendingFiles: [] })
   // Source-record dialog (shows the StockOutRecorder that this item belongs to + return history)
   const [returnSourceDlg, setReturnSourceDlg] = useState<{ open: boolean; loading: boolean; item: ReturnableItem | null }>({ open: false, loading: false, item: null })
   // Group return dialog (mirrors Stock-In recorder creation: person header + warehouse + items)
@@ -641,8 +671,9 @@ export default function IMSApp() {
   const [nonRetFilterCondition, setNonRetFilterCondition] = useState<number | ''>('')
   const [nonRetFilterPerson, setNonRetFilterPerson] = useState('')
   const [nonRetFilterReason, setNonRetFilterReason] = useState<string>('')
+  const [nonRetAttSearch, setNonRetAttSearch] = useState('')
   // Single-item "mark as non-returnable" dialog (mirrors returnDlg)
-  const [nonRetDlg, setNonRetDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; reason: string; reasonDetail: string; notes: string; submitting: boolean }>({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false })
+  const [nonRetDlg, setNonRetDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; reason: string; reasonDetail: string; notes: string; submitting: boolean; pendingFiles: File[] }>({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [] })
   // Group "mark as non-returnable" dialog (mirrors groupReturnDlg)
   // mode='prefilled' → opened from a person button (items pre-filled from that person)
   // mode='new'       → opened from the "New Group Non-Returnable" button (empty person + item picker)
@@ -931,7 +962,7 @@ export default function IMSApp() {
 
   // ─── Returns: open single-item return dialog (qty defaults to full remaining) ────
   const openReturnDlg = (item: ReturnableItem) => {
-    setReturnDlg({ open: true, item, qty: item.remainingQty, notes: '', submitting: false })
+    setReturnDlg({ open: true, item, qty: item.remainingQty, notes: '', submitting: false, pendingFiles: [] })
   }
   // ─── Returns: submit single-item return ────
   const submitReturn = async () => {
@@ -941,9 +972,13 @@ export default function IMSApp() {
     if (returnDlg.qty > it.remainingQty) { toast({ title: `Only ${it.remainingQty} remaining to return`, variant: 'destructive' }); return }
     setReturnDlg(s => ({ ...s, submitting: true }))
     try {
-      await apiFetch(`/returns`, { method: 'POST', body: JSON.stringify({ stockOutItemId: it.id, quantity: returnDlg.qty, notes: returnDlg.notes || undefined }) })
+      const createdReturn = await apiFetch(`/returns`, { method: 'POST', body: JSON.stringify({ stockOutItemId: it.id, quantity: returnDlg.qty, notes: returnDlg.notes || undefined }) })
+      // Upload return-level attachments (entityType='return', entityId=createdReturn.id)
+      if (returnDlg.pendingFiles?.length && createdReturn?.id) {
+        await uploadAttachmentsFor('return', createdReturn.id, it.warehouseId, returnDlg.pendingFiles)
+      }
       toast({ title: `Returned ${returnDlg.qty} ${it.unit} of ${it.product.name}` })
-      setReturnDlg({ open: false, item: null, qty: 0, notes: '', submitting: false })
+      setReturnDlg({ open: false, item: null, qty: 0, notes: '', submitting: false, pendingFiles: [] })
       await loadReturns(returnsTab)
       await loadData(false) // refresh dashboard + stock to reflect the stock-in
     } catch (e: any) {
@@ -1097,7 +1132,7 @@ export default function IMSApp() {
 
   // ─── Non-Returnables: open single-item dialog (qty defaults to full remaining; reason unselected) ──
   const openNonRetDlg = (item: ReturnableItem) => {
-    setNonRetDlg({ open: true, item, qty: item.remainingQty, reason: '', reasonDetail: '', notes: '', submitting: false })
+    setNonRetDlg({ open: true, item, qty: item.remainingQty, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [] })
   }
   // ─── Non-Returnables: submit single-item decision ──
   const submitNonReturnable = async () => {
@@ -1109,7 +1144,7 @@ export default function IMSApp() {
     if (nonRetDlg.reason === 'other' && !nonRetDlg.reasonDetail.trim()) { toast({ title: 'For "Other", specify the reason in the detail field', variant: 'destructive' }); return }
     setNonRetDlg(s => ({ ...s, submitting: true }))
     try {
-      await apiFetch(`/non-returnables`, {
+      const created = await apiFetch(`/non-returnables`, {
         method: 'POST',
         body: JSON.stringify({
           stockOutItemId: it.id,
@@ -1119,8 +1154,12 @@ export default function IMSApp() {
           notes: nonRetDlg.notes || undefined,
         }),
       })
+      // Upload non-returnable-level attachments (entityType='non_returnable', entityId=created.id)
+      if (nonRetDlg.pendingFiles?.length && created?.id) {
+        await uploadAttachmentsFor('non_returnable', created.id, it.warehouseId, nonRetDlg.pendingFiles)
+      }
       toast({ title: `Marked ${nonRetDlg.qty} ${it.unit} of ${it.product.name} as non-returnable (${REASON_LABELS[nonRetDlg.reason] || nonRetDlg.reason})` })
-      setNonRetDlg({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false })
+      setNonRetDlg({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [] })
       await loadNonReturnables(nonRetTab)
       await loadReturns(returnsTab) // refresh the Returns page too (remaining qty changed)
       await loadGroupNonRetRecords()
@@ -1243,6 +1282,14 @@ export default function IMSApp() {
       setStockData(Array.isArray(st) ? st : []); setOrders(Array.isArray(o) ? o : []); setAuditData(Array.isArray(a) ? a : []); setFeatures(Array.isArray(feat) ? feat : [])
       setStockOutData(Array.isArray(so) ? so : []); setStockInData(Array.isArray(si) ? si : []); setAnalyticsData(safeAnalytics)
       setAttachmentsData(Array.isArray(att) ? att : [])
+      // Fetch attachment tabs data (meta-keys + category counts) in parallel
+      Promise.all([
+        fetch(`${BASE}/api/attachments/meta-keys`, { headers: auth.getAuthHeaders() }).then(r => r.ok ? r.json() : { keys: [] }).catch(() => ({ keys: [] })),
+        fetch(`${BASE}/api/attachments/counts`, { headers: auth.getAuthHeaders() }).then(r => r.ok ? r.json() : { counts: {} }).catch(() => ({ counts: {} })),
+      ]).then(([mk, cc]) => {
+        setAttMetaKeys(Array.isArray(mk.keys) ? mk.keys : [])
+        setAttCategoryCounts(cc.counts && typeof cc.counts === 'object' ? cc.counts : {})
+      })
     } catch (e: any) { console.error('loadData error:', e) }
     if (showGlobalLoading) setLoading(false)
   }, [auth.isLoggedIn, auth.userId, auth.role, auth.enterpriseId, auth.branchId, auth.warehouseId])
@@ -1261,22 +1308,31 @@ export default function IMSApp() {
   }
 
   // Upload attachments linked to a newly-created record (entityType + entityId).
-  // Used by the Stock In / Stock Out recorder dialogs when files are selected.
-  const uploadAttachmentsFor = async (entityType: string, entityId: number, warehouseId: number | undefined, files: File[]) => {
+  // Used by the Stock In / Stock Out recorder dialogs AND item-level forms when files are selected.
+  // Files are bundled into a single ZIP archive server-side; multiple File objects become one Attachment row.
+  const uploadAttachmentsFor = async (entityType: string, entityId: number, warehouseId: number | undefined, files: File[], opts?: { branchId?: number; metaFields?: { key: string; value: string; description: string }[]; title?: string; description?: string }) => {
     const h = useAuthStore.getState().getAuthHeaders()
-    let ok = 0
-    for (const file of files) {
-      try {
-        const fd = new FormData()
-        fd.append('file', file)
-        fd.append('entityType', entityType)
-        fd.append('entityId', String(entityId))
-        if (warehouseId) fd.append('warehouseId', String(warehouseId))
-        const res = await fetch(`${BASE}/api/attachments`, { method: 'POST', headers: h, body: fd })
-        if (res.ok) ok++
-      } catch { /* skip failed file */ }
+    if (!files || files.length === 0) return
+    try {
+      const fd = new FormData()
+      for (const f of files) fd.append('files', f)
+      if (opts?.title) fd.append('title', opts.title)
+      if (opts?.description) fd.append('description', opts.description)
+      fd.append('entityType', entityType)
+      fd.append('entityId', String(entityId))
+      if (warehouseId) fd.append('warehouseId', String(warehouseId))
+      if (opts?.branchId) fd.append('branchId', String(opts.branchId))
+      if (opts?.metaFields && opts.metaFields.length > 0) fd.append('metaFields', JSON.stringify(opts.metaFields.filter(m => m.key.trim())))
+      const res = await fetch(`${BASE}/api/attachments`, { method: 'POST', headers: h, body: fd })
+      if (res.ok) {
+        toast({ title: `${files.length} file(s) zipped + linked to ${entityType} #${entityId}` })
+      } else {
+        const err = await res.json().catch(() => ({}))
+        toast({ title: `Attachment upload failed: ${err.error || res.status}`, variant: 'destructive' })
+      }
+    } catch (e: any) {
+      toast({ title: `Attachment upload failed: ${e.message}`, variant: 'destructive' })
     }
-    if (ok > 0) toast({ title: `${ok} attachment(s) linked to ${entityType} #${entityId}` })
   }
 
   const openCreate = (type: string) => { setDlgType(type); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }
@@ -1394,6 +1450,19 @@ export default function IMSApp() {
       if (orderStatusFilter && o.status !== orderStatusFilter) return false
       if (orderTypeFilter && o.type !== orderTypeFilter) return false
       if (orderWarehouseFilter !== '' && o.warehouseId !== orderWarehouseFilter) return false
+      if (orderAttSearch) {
+        const aq = orderAttSearch.toLowerCase()
+        const matches = attachmentsData.some(a => {
+          if (a.entityType !== 'order' || a.entityId !== o.id) return false
+          if (a.title?.toLowerCase().includes(aq)) return true
+          if (a.fileName?.toLowerCase().includes(aq)) return true
+          if (a.description?.toLowerCase().includes(aq)) return true
+          if (a.mimeType?.toLowerCase().includes(aq)) return true
+          if ((a.metaFields || []).some(m => m.key.toLowerCase().includes(aq) || m.value.toLowerCase().includes(aq) || m.description.toLowerCase().includes(aq))) return true
+          return false
+        })
+        if (!matches) return false
+      }
       return true
     })
 
@@ -1863,8 +1932,8 @@ export default function IMSApp() {
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navOrders')}</h1>
           {hasPermission(role!, 'orders:create') && <Button onClick={() => openCreate('order')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newOrder')}</Button>}</div>
         <FilterPanel
-          activeCount={(orderSearch ? 1 : 0) + (orderStatusFilter ? 1 : 0) + (orderTypeFilter ? 1 : 0) + (orderWarehouseFilter !== '' ? 1 : 0)}
-          onClear={() => { setOrderSearch(''); setOrderStatusFilter(''); setOrderTypeFilter(''); setOrderWarehouseFilter('') }}
+          activeCount={(orderSearch ? 1 : 0) + (orderStatusFilter ? 1 : 0) + (orderTypeFilter ? 1 : 0) + (orderWarehouseFilter !== '' ? 1 : 0) + (orderAttSearch ? 1 : 0)}
+          onClear={() => { setOrderSearch(''); setOrderStatusFilter(''); setOrderTypeFilter(''); setOrderWarehouseFilter(''); setOrderAttSearch('') }}
           resultLabel={`${filteredOrders.length} orders`}
         >
           <FilterField label="Search" width="w-48">
@@ -1891,6 +1960,7 @@ export default function IMSApp() {
               <SelectContent><SelectItem value="_all">All Types</SelectItem><SelectItem value="purchase">Purchase</SelectItem><SelectItem value="sales">Sales</SelectItem></SelectContent>
             </Select>
           </FilterField>
+          <FilterField label="Attachment Content" width="w-48"><div className="relative"><Paperclip className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Title, file name, meta key/value..." value={orderAttSearch} onChange={e => setOrderAttSearch(e.target.value)} className="h-8 text-xs pl-7" /></div></FilterField>
         </FilterPanel>
         <div className="grid gap-3">{filteredOrders.map(o => { const wh = warehouses.find(w => w.id === o.warehouseId)
           return (<Card key={o.id} className="shadow-sm"><CardContent className="p-4">
@@ -1960,12 +2030,51 @@ export default function IMSApp() {
     // ─── ATTACHMENTS (files zipped + uploaded, image preview, custom metadata, tenant-isolated)
     if (page === 'attachments' && hasPermission(role!, 'stock:view')) return (
       <div className="space-y-3">
+        {/* A. Header row */}
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><Paperclip className="w-4 h-4 text-violet-500" />Attachments</h1>
-          <p className="text-xs text-muted-foreground">Files are gzipped on upload. Images preview inline. Attach to any record or keep standalone. Never shared across enterprises / branches / warehouses.</p></div>
-          <Button size="sm" onClick={() => setAttUpload({ open: true, submitting: false, file: null, title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', metaFields: [] })} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-7 text-xs"><Upload className="w-3 h-3 mr-1" />Upload</Button>
+          <div>
+            <h1 className="text-lg font-bold flex items-center gap-1.5"><Paperclip className="w-4 h-4 text-violet-500" />Attachments</h1>
+            <p className="text-xs text-muted-foreground">Files are zipped on upload. Multi-file uploads become a single ZIP archive. Images preview inline. Attach to any record or keep standalone. Never shared across enterprises / branches / warehouses.</p>
+          </div>
+          <Button size="sm" onClick={() => setAttUpload({ open: true, submitting: false, files: [], title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', enterpriseId: '', metaFields: [] })} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-7 text-xs"><Upload className="w-3 h-3 mr-1" />Upload</Button>
         </div>
 
+        {/* B. Primary tabs (file-type categories) */}
+        <Tabs value={attTab} onValueChange={v => { setAttTab(v); setAttPage(1) }}>
+          <TabsList className="flex w-full overflow-x-auto h-9 justify-start gap-1 bg-muted/40">
+            <TabsTrigger value="all" className="text-xs gap-1 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700 dark:data-[state=active]:bg-violet-500/20 dark:data-[state=active]:text-violet-300">
+              All
+              <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300 border-0 text-[9px] h-4 px-1.5">{attachmentsData.length}</Badge>
+            </TabsTrigger>
+            {ATTACHMENT_FILE_CATEGORIES.filter(c => (attCategoryCounts[c.key] || 0) > 0).map(c => {
+              const CatIcon = ((): React.ComponentType<any> => {
+                const m: Record<string, React.ComponentType<any>> = { ImageIcon, FileText, Table: TableIcon, Presentation, Video, Music, Archive, Code, FileIcon }
+                return m[c.icon] || FileIcon
+              })()
+              return (
+                <TabsTrigger key={c.key} value={c.key} className="text-xs gap-1 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700 dark:data-[state=active]:bg-violet-500/20 dark:data-[state=active]:text-violet-300">
+                  <CatIcon className="w-3 h-3" />
+                  {c.label}
+                  <Badge className="bg-muted text-muted-foreground border-0 text-[9px] h-4 px-1.5">{attCategoryCounts[c.key] || 0}</Badge>
+                </TabsTrigger>
+              )
+            })}
+          </TabsList>
+        </Tabs>
+
+        {/* C. Secondary tabs (metadata-key) */}
+        {attMetaKeys.length > 0 && (
+          <Tabs value={attMetaTab} onValueChange={v => { setAttMetaTab(v); setAttPage(1) }}>
+            <TabsList className="flex w-full overflow-x-auto h-7 justify-start gap-1 bg-muted/20">
+              <TabsTrigger value="_all" className="text-[11px] gap-1 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700 dark:data-[state=active]:bg-violet-500/20 dark:data-[state=active]:text-violet-300">All Metadata</TabsTrigger>
+              {attMetaKeys.map(k => (
+                <TabsTrigger key={k} value={k} className="text-[11px] font-mono data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700 dark:data-[state=active]:bg-violet-500/20 dark:data-[state=active]:text-violet-300">{k}</TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        )}
+
+        {/* D. FilterPanel */}
         <FilterPanel
           activeCount={(attFilterSearch ? 1 : 0) + (attFilterEntityType ? 1 : 0) + (attFilterBranchId !== '' ? 1 : 0) + (attFilterWarehouseId !== '' ? 1 : 0) + (attFilterIsImage ? 1 : 0) + (attFilterMetaKey ? 1 : 0) + (attFilterMetaValue ? 1 : 0) + (attFilterDateFrom ? 1 : 0) + (attFilterDateTo ? 1 : 0)}
           onClear={() => { setAttFilterSearch(''); setAttFilterEntityType(''); setAttFilterBranchId(''); setAttFilterWarehouseId(''); setAttFilterIsImage(''); setAttFilterMetaKey(''); setAttFilterMetaValue(''); setAttFilterDateFrom(''); setAttFilterDateTo(''); setAttPage(1) }}
@@ -1985,7 +2094,22 @@ export default function IMSApp() {
         </FilterPanel>
 
         {(() => {
+          const getCatIcon = (cat: string): React.ComponentType<any> => {
+            const m: Record<string, React.ComponentType<any>> = { ImageIcon, FileText, Table: TableIcon, Presentation, Video, Music, Archive, Code, FileIcon }
+            const catDef = ATTACHMENT_FILE_CATEGORIES.find(c => c.key === cat)
+            return m[catDef?.icon || 'FileIcon'] || FileIcon
+          }
+          const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)$/i
+          const parseFileList = (json: string): AttachmentFileEntry[] => {
+            try { const v = JSON.parse(json || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
+          }
+          const fmtSize = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`
+          const entityLabel = (et: string) => ATTACHMENT_ENTITY_TYPES.find(e => e.key === et)?.label || et
+          const attHeaders = useAuthStore.getState().getAuthHeaders()
+
           const filtered = attachmentsData.filter(a => {
+            if (attTab !== 'all' && a.fileCategory !== attTab) return false
+            if (attMetaTab !== '_all' && !(a.metaFields || []).some(m => m.key === attMetaTab)) return false
             if (attFilterSearch) { const q = attFilterSearch.toLowerCase(); if (!a.title.toLowerCase().includes(q) && !a.fileName.toLowerCase().includes(q) && !a.description.toLowerCase().includes(q)) return false }
             if (attFilterEntityType && a.entityType !== attFilterEntityType) return false
             if (attFilterBranchId !== '' && a.branchId !== attFilterBranchId) return false
@@ -1998,65 +2122,133 @@ export default function IMSApp() {
             if (attFilterDateTo && new Date(a.createdAt) > new Date(attFilterDateTo + 'T23:59:59')) return false
             return true
           })
-          const totalPages = Math.ceil(filtered.length / ATTACHMENTS_PER_PAGE) || 1
+          const totalPages = Math.ceil(filtered.length / attPerPage) || 1
           const safePage = Math.min(attPage, totalPages)
-          const paged = filtered.slice((safePage - 1) * ATTACHMENTS_PER_PAGE, safePage * ATTACHMENTS_PER_PAGE)
-          const fmtSize = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`
-          const entityLabel = (et: string) => ATTACHMENT_ENTITY_TYPES.find(e => e.key === et)?.label || et
-          const attHeaders = useAuthStore.getState().getAuthHeaders()
+          const paged = filtered.slice((safePage - 1) * attPerPage, safePage * attPerPage)
 
-          if (filtered.length === 0) return <Card className="shadow-sm border-dashed"><CardContent className="p-8 text-center text-sm text-muted-foreground">No attachments found. Click <span className="font-semibold text-violet-600">Upload</span> to add one.</CardContent></Card>
+          const downloadAttachment = (a: AttachmentRecord) => {
+            fetch(`${BASE}/api/attachments/${a.id}/download`, { headers: attHeaders }).then(r => r.blob()).then(b => {
+              const u = URL.createObjectURL(b); const link = document.createElement('a'); link.href = u; link.download = a.fileName; link.click(); URL.revokeObjectURL(u)
+            })
+          }
+          const deleteAttachment = async (a: AttachmentRecord) => {
+            if (!confirm(`Delete "${a.title || a.fileName}"? This cannot be undone.`)) return
+            try { await apiFetch(`/attachments/${a.id}`, { method: 'DELETE' }); toast({ title: 'Attachment deleted' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
+          }
+          const openEdit = (a: AttachmentRecord) => setAttEdit({ open: true, submitting: false, attachment: a, title: a.title, description: a.description, entityType: a.entityType, entityId: a.entityId ? String(a.entityId) : '', metaFields: (a.metaFields || []).map(m => ({ key: m.key, value: m.value, description: m.description })) })
+
+          if (filtered.length === 0) {
+            return (
+              <Card className="shadow-sm border-dashed">
+                <CardContent className="p-8 text-center text-sm text-muted-foreground">
+                  <div>No attachments found. Click <span className="font-semibold text-violet-600">Upload</span> to add one.</div>
+                  {(attTab !== 'all' || attMetaTab !== '_all') && <div className="text-[11px] mt-1">Try the &lsquo;All&rsquo; tab.</div>}
+                </CardContent>
+              </Card>
+            )
+          }
 
           return (<>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-              {paged.map(a => {
-                const wh = warehouses.find(w => w.id === a.warehouseId)
-                const br = branches.find(b => b.id === a.branchId)
-                return (
-                  <Card key={a.id} className="shadow-sm hover:shadow-md transition-shadow overflow-hidden flex flex-col">
-                    <div className="relative bg-muted/40 h-32 flex items-center justify-center overflow-hidden">
-                      {a.isImage ? (
-                        <img src={`${BASE}/api/attachments/${a.id}/download?inline=1`} alt={a.title || a.fileName} className="w-full h-full object-cover" loading="lazy" onClick={() => setAttPreview({ open: true, attachment: a })} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                      ) : (
-                        <FileIcon className="w-10 h-10 text-muted-foreground/50" />
-                      )}
-                      <div className="absolute top-1.5 left-1.5 flex gap-1">
-                        {a.isImage && <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px]"><ImageIcon className="w-2.5 h-2.5 mr-0.5" />IMG</Badge>}
-                        <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-0 text-[9px]">{entityLabel(a.entityType)}{a.entityId ? ` #${a.entityId}` : ''}</Badge>
+            {/* E. List rendering — contacts-list style */}
+            <Card className="shadow-sm overflow-hidden">
+              <CardContent className="p-0">
+                {paged.map(a => {
+                  const wh = warehouses.find(w => w.id === a.warehouseId)
+                  const br = branches.find(b => b.id === a.branchId)
+                  const CatIcon = getCatIcon(a.fileCategory)
+                  const entries = a.isMultiFile ? parseFileList(a.fileListJson) : []
+                  const hasImages = entries.some(e => IMAGE_EXT.test(e.name))
+                  const inlineUrl = (fileIndex = 0) => `${BASE}/api/attachments/${a.id}/download?inline=1&fileIndex=${fileIndex}`
+                  const metaFields = a.metaFields || []
+                  return (
+                    <div key={a.id} className="flex items-start gap-3 p-3 border-b last:border-b-0 hover:bg-muted/30 transition-colors">
+                      {/* Avatar (48x48) */}
+                      <div className="flex-shrink-0 w-12 h-12 rounded-md overflow-hidden bg-muted/40 flex items-center justify-center">
+                        {a.isImage ? (
+                          <img src={inlineUrl(0)} alt={a.title || a.fileName} className="w-full h-full object-cover cursor-pointer" loading="lazy" onClick={() => setAttPreview({ open: true, attachment: a, fileIndex: 0 })} onError={(e) => { const t = e.target as HTMLImageElement; t.style.display = 'none' }} />
+                        ) : (
+                          <CatIcon className="w-5 h-5 text-muted-foreground/70" />
+                        )}
+                      </div>
+
+                      {/* Body (middle) */}
+                      <div className="flex-1 min-w-0 space-y-0.5">
+                        {/* Line 1: title + badges */}
+                        <div className="font-medium text-sm truncate flex items-center gap-1.5">
+                          <span className="truncate">{a.title || a.fileName}</span>
+                          {a.isMultiFile && <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px] h-4 px-1.5 flex items-center gap-0.5"><Layers className="w-2.5 h-2.5" />{a.fileCount} files</Badge>}
+                          {a.entityType !== 'standalone' && <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-0 text-[9px] h-4 px-1.5">{entityLabel(a.entityType)}{a.entityId ? ` #${a.entityId}` : ''}</Badge>}
+                        </div>
+                        {/* Line 2: mime • size • date (+ ZIP archive) */}
+                        <div className="text-[11px] text-muted-foreground truncate flex items-center gap-2 flex-wrap">
+                          <span className="truncate max-w-[200px]">{a.mimeType || 'unknown'}</span>
+                          <span>•</span>
+                          <span>{fmtSize(a.originalSize)}</span>
+                          <span>•</span>
+                          <span>{new Date(a.createdAt).toLocaleDateString()}</span>
+                          {a.isMultiFile && <><span>•</span><span className="text-violet-600 dark:text-violet-400">ZIP archive</span></>}
+                        </div>
+                        {/* Line 3: meta fields inline */}
+                        {metaFields.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {metaFields.slice(0, 4).map(m => (
+                              <Tooltip key={m.id}>
+                                <TooltipTrigger asChild>
+                                  <Badge className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border-0 text-[9px] font-mono cursor-help">{m.key}: {m.value}</Badge>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="text-xs">
+                                  <div><span className="font-semibold">{m.key}</span>: {m.value}</div>
+                                  {m.description && <div className="text-muted-foreground">{m.description}</div>}
+                                </TooltipContent>
+                              </Tooltip>
+                            ))}
+                            {metaFields.length > 4 && <Badge className="bg-muted text-muted-foreground border-0 text-[9px]">+{metaFields.length - 4}</Badge>}
+                          </div>
+                        )}
+                        {/* Line 4: warehouse / branch (tiny) */}
+                        {(wh || br) && (
+                          <div className="text-[10px] text-muted-foreground/70 truncate">
+                            {wh ? `W: ${wh.name}` : ''}{wh && br ? ' • ' : ''}{br ? `B: ${br.name}` : ''}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions (right) */}
+                      <div className="flex-shrink-0 flex items-center gap-0.5">
+                        {(a.isImage || (a.isMultiFile && hasImages)) && (
+                          <Button size="sm" variant="ghost" onClick={() => setAttPreview({ open: true, attachment: a, fileIndex: 0 })} className="h-7 w-7 p-0" title="Preview"><Eye className="w-3.5 h-3.5" /></Button>
+                        )}
+                        <Button size="sm" variant="ghost" onClick={() => downloadAttachment(a)} className="h-7 w-7 p-0" title="Download"><Download className="w-3.5 h-3.5" /></Button>
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(a)} className="h-7 w-7 p-0" title="Edit"><Pencil className="w-3.5 h-3.5" /></Button>
+                        <Button size="sm" variant="ghost" onClick={() => deleteAttachment(a)} className="h-7 w-7 p-0 text-red-500 hover:text-red-600" title="Delete"><Trash2 className="w-3.5 h-3.5" /></Button>
                       </div>
                     </div>
-                    <CardContent className="p-2.5 flex-1 flex flex-col gap-1">
-                      <div className="font-semibold text-sm truncate">{a.title || a.fileName}</div>
-                      <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1"><FileText className="w-2.5 h-2.5" />{a.fileName}</div>
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                        <span>{fmtSize(a.originalSize)}</span>
-                        {a.storedSize < a.originalSize && <span className="text-emerald-600">→ {fmtSize(a.storedSize)} gz</span>}
-                      </div>
-                      {(a.metaFields || []).length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-0.5">
-                          {(a.metaFields || []).slice(0, 3).map(m => <Tooltip key={m.id}><TooltipTrigger asChild><Badge className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border-0 text-[9px] font-mono">{m.key}: {m.value}</Badge></TooltipTrigger><TooltipContent side="top" className="text-xs"><div><span className="font-semibold">{m.key}</span>: {m.value}</div>{m.description && <div className="text-muted-foreground">{m.description}</div>}</TooltipContent></Tooltip>)}
-                          {(a.metaFields || []).length > 3 && <Badge className="bg-muted text-muted-foreground border-0 text-[9px]">+{(a.metaFields || []).length - 3}</Badge>}
-                        </div>
-                      )}
-                      {(wh || br) && <div className="text-[9px] text-muted-foreground/70">{wh ? `W: ${wh.name}` : ''}{br ? ` • B: ${br.name}` : ''}</div>}
-                      <div className="text-[9px] text-muted-foreground/50">{new Date(a.createdAt).toLocaleDateString()}</div>
-                      <div className="flex gap-1 mt-auto pt-1.5">
-                        <Button size="sm" variant="outline" onClick={() => { const url = `${BASE}/api/attachments/${a.id}/download`; fetch(url, { headers: attHeaders }).then(r => r.blob()).then(b => { const u = URL.createObjectURL(b); const link = document.createElement('a'); link.href = u; link.download = a.fileName; link.click(); URL.revokeObjectURL(u) }) }} className="h-6 text-xs flex-1"><Download className="w-3 h-3 mr-1" />Save</Button>
-                        <Button size="sm" variant="ghost" onClick={() => setAttEdit({ open: true, submitting: false, attachment: a, title: a.title, description: a.description, entityType: a.entityType, entityId: a.entityId ? String(a.entityId) : '', metaFields: (a.metaFields || []).map(m => ({ key: m.key, value: m.value, description: m.description })) })} className="h-6 w-6 p-0"><Pencil className="w-3 h-3" /></Button>
-                        <Button size="sm" variant="ghost" onClick={async () => { if (!confirm(`Delete "${a.fileName}"? This cannot be undone.`)) return; try { await apiFetch(`/attachments/${a.id}`, { method: 'DELETE' }); toast({ title: 'Attachment deleted' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } }} className="text-red-500 h-6 w-6 p-0"><Trash2 className="w-3 h-3" /></Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
-            {totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 pt-2">
-                <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setAttPage(p => Math.max(1, p - 1))} className="h-7"><ChevronLeft className="w-3.5 h-3.5" /></Button>
-                <span className="text-xs text-muted-foreground">Page {safePage} of {totalPages}</span>
-                <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setAttPage(p => Math.min(totalPages, p + 1))} className="h-7"><ChevronRight className="w-3.5 h-3.5" /></Button>
+                  )
+                })}
+              </CardContent>
+            </Card>
+
+            {/* F. Pagination with per-page selector (Pager component lacks perPage support) */}
+            <div className="flex items-center justify-between pt-2 gap-2 flex-wrap">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-[11px] text-muted-foreground">Page {safePage} of {totalPages} • {filtered.length} total</span>
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span>Per page:</span>
+                  <Select value={String(attPerPage)} onValueChange={v => { setAttPerPage(parseInt(v)); setAttPage(1) }}>
+                    <SelectTrigger className="h-7 w-[72px] text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[10, 20, 50, 100].map(n => <SelectItem key={n} value={String(n)}>{n}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            )}
+              <div className="flex items-center gap-1">
+                <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setAttPage(1)} className="h-7 w-7 p-0"><SkipBack className="w-3 h-3" /></Button>
+                <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setAttPage(p => Math.max(1, p - 1))} className="h-7 w-7 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+                <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setAttPage(p => Math.min(totalPages, p + 1))} className="h-7 w-7 p-0"><ChevronRight className="w-3 h-3" /></Button>
+                <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setAttPage(totalPages)} className="h-7 w-7 p-0"><SkipForward className="w-3 h-3" /></Button>
+              </div>
+            </div>
           </>)
         })()}
       </div>
@@ -2073,8 +2265,8 @@ export default function IMSApp() {
 
         {/* ── Filters ── */}
         <FilterPanel
-          activeCount={(stockInFilterSearch ? 1 : 0) + (stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0) + (stockInFilterCondition !== '' ? 1 : 0) + (stockInHasAttachments ? 1 : 0)}
-          onClear={() => { setStockInFilterSearch(''); setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInFilterCondition(''); setStockInHasAttachments(false); setStockInRecPage(1) }}
+          activeCount={(stockInFilterSearch ? 1 : 0) + (stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0) + (stockInFilterCondition !== '' ? 1 : 0) + (stockInHasAttachments ? 1 : 0) + (stockInAttSearch ? 1 : 0)}
+          onClear={() => { setStockInFilterSearch(''); setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInFilterCondition(''); setStockInHasAttachments(false); setStockInAttSearch(''); setStockInRecPage(1) }}
           resultLabel={`${stockInData.length} recorders`}
         >
           <FilterField label="Search" width="w-48">
@@ -2101,6 +2293,7 @@ export default function IMSApp() {
             />
           </FilterField>
           <FilterField label="Has Attachments" width="w-36"><div className="flex items-center gap-1.5 h-8"><Switch checked={stockInHasAttachments} onCheckedChange={v => { setStockInHasAttachments(v); setStockInRecPage(1) }} /><span className="text-xs text-muted-foreground">{stockInHasAttachments ? 'Yes' : 'Any'}</span></div></FilterField>
+          <FilterField label="Attachment Content" width="w-48"><div className="relative"><Paperclip className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Title, file name, meta key/value..." value={stockInAttSearch} onChange={e => { setStockInAttSearch(e.target.value); setStockInRecPage(1) }} className="h-8 text-xs pl-7" /></div></FilterField>
         </FilterPanel>
 
         {(() => {
@@ -2112,7 +2305,23 @@ export default function IMSApp() {
           if (stockInFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockInFilterWarehouse)
           if (stockInFilterCondition !== '') filtered = filtered.filter(r => (r.items || []).some((it: any) => it.conditionId === stockInFilterCondition))
           if (stockInFilterSearch) { const q = stockInFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
-          if (stockInHasAttachments) filtered = filtered.filter(r => attachmentsData.some(a => a.entityType === 'stock_in' && a.entityId === r.id))
+          if (stockInHasAttachments) filtered = filtered.filter(r => attachmentsData.some(a => (a.entityType === 'stock_in' || a.entityType === 'stock_in_item') && (a.entityId === r.id || (r.items || []).some((it: any) => it.id === a.entityId))))
+          if (stockInAttSearch) {
+            const q = stockInAttSearch.toLowerCase()
+            filtered = filtered.filter(r => attachmentsData.some(a => {
+              // Match record-level OR any item-level attachment on this recorder's items
+              const matchesRecorder = a.entityType === 'stock_in' && a.entityId === r.id
+              const matchesItem = a.entityType === 'stock_in_item' && (r.items || []).some((it: any) => it.id === a.entityId)
+              if (!matchesRecorder && !matchesItem) return false
+              // Content match: title, fileName, description, mime, or any metaField key/value/description
+              if (a.title?.toLowerCase().includes(q)) return true
+              if (a.fileName?.toLowerCase().includes(q)) return true
+              if (a.description?.toLowerCase().includes(q)) return true
+              if (a.mimeType?.toLowerCase().includes(q)) return true
+              if ((a.metaFields || []).some(m => m.key.toLowerCase().includes(q) || m.value.toLowerCase().includes(q) || m.description.toLowerCase().includes(q))) return true
+              return false
+            }))
+          }
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
           const recPaged = filtered.slice((stockInRecPage - 1) * STOCK_IN_REC_PER_PAGE, stockInRecPage * STOCK_IN_REC_PER_PAGE)
@@ -2306,8 +2515,8 @@ export default function IMSApp() {
 
         {/* ── Filters ── */}
         <FilterPanel
-          activeCount={(stockOutFilterSearch ? 1 : 0) + (stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0) + (stockOutFilterCondition !== '' ? 1 : 0) + (stockOutHasAttachments ? 1 : 0)}
-          onClear={() => { setStockOutFilterSearch(''); setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutFilterCondition(''); setStockOutHasAttachments(false); setStockOutRecPage(1) }}
+          activeCount={(stockOutFilterSearch ? 1 : 0) + (stockOutFilterDateFrom ? 1 : 0) + (stockOutFilterDateTo ? 1 : 0) + (stockOutFilterStatus ? 1 : 0) + (stockOutFilterPerson ? 1 : 0) + (stockOutFilterWarehouse !== '' ? 1 : 0) + (stockOutFilterCondition !== '' ? 1 : 0) + (stockOutHasAttachments ? 1 : 0) + (stockOutAttSearch ? 1 : 0)}
+          onClear={() => { setStockOutFilterSearch(''); setStockOutFilterDateFrom(''); setStockOutFilterDateTo(''); setStockOutFilterStatus(''); setStockOutFilterPerson(''); setStockOutFilterWarehouse(''); setStockOutFilterCondition(''); setStockOutHasAttachments(false); setStockOutAttSearch(''); setStockOutRecPage(1) }}
           resultLabel={`${stockOutData.length} recorders`}
         >
           <FilterField label="Search" width="w-48">
@@ -2334,6 +2543,7 @@ export default function IMSApp() {
             />
           </FilterField>
           <FilterField label="Has Attachments" width="w-36"><div className="flex items-center gap-1.5 h-8"><Switch checked={stockOutHasAttachments} onCheckedChange={v => { setStockOutHasAttachments(v); setStockOutRecPage(1) }} /><span className="text-xs text-muted-foreground">{stockOutHasAttachments ? 'Yes' : 'Any'}</span></div></FilterField>
+          <FilterField label="Attachment Content" width="w-48"><div className="relative"><Paperclip className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Title, file name, meta key/value..." value={stockOutAttSearch} onChange={e => { setStockOutAttSearch(e.target.value); setStockOutRecPage(1) }} className="h-8 text-xs pl-7" /></div></FilterField>
         </FilterPanel>
 
         {(() => {
@@ -2346,7 +2556,21 @@ export default function IMSApp() {
           if (stockOutFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockOutFilterWarehouse)
           if (stockOutFilterCondition !== '') filtered = filtered.filter(r => (r.items || []).some((it: any) => it.conditionId === stockOutFilterCondition))
           if (stockOutFilterSearch) { const q = stockOutFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
-          if (stockOutHasAttachments) filtered = filtered.filter(r => attachmentsData.some(a => a.entityType === 'stock_out' && a.entityId === r.id))
+          if (stockOutHasAttachments) filtered = filtered.filter(r => attachmentsData.some(a => (a.entityType === 'stock_out' || a.entityType === 'stock_out_item') && (a.entityId === r.id || (r.items || []).some((it: any) => it.id === a.entityId))))
+          if (stockOutAttSearch) {
+            const q = stockOutAttSearch.toLowerCase()
+            filtered = filtered.filter(r => attachmentsData.some(a => {
+              const matchesRecorder = a.entityType === 'stock_out' && a.entityId === r.id
+              const matchesItem = a.entityType === 'stock_out_item' && (r.items || []).some((it: any) => it.id === a.entityId)
+              if (!matchesRecorder && !matchesItem) return false
+              if (a.title?.toLowerCase().includes(q)) return true
+              if (a.fileName?.toLowerCase().includes(q)) return true
+              if (a.description?.toLowerCase().includes(q)) return true
+              if (a.mimeType?.toLowerCase().includes(q)) return true
+              if ((a.metaFields || []).some(m => m.key.toLowerCase().includes(q) || m.value.toLowerCase().includes(q) || m.description.toLowerCase().includes(q))) return true
+              return false
+            }))
+          }
 
           const recTotalPages = Math.ceil(filtered.length / STOCK_OUT_REC_PER_PAGE)
           const recPaged = filtered.slice((stockOutRecPage - 1) * STOCK_OUT_REC_PER_PAGE, stockOutRecPage * STOCK_OUT_REC_PER_PAGE)
@@ -2561,8 +2785,8 @@ export default function IMSApp() {
           <div className="mt-3 space-y-3">
             {/* Advanced Filters */}
             <FilterPanel
-              activeCount={(returnsSearch ? 1 : 0) + (returnsWarehouseFilter !== '' ? 1 : 0) + (returnsFilterDateFrom ? 1 : 0) + (returnsFilterDateTo ? 1 : 0) + (returnsFilterRecorder ? 1 : 0) + (returnsFilterProgress ? 1 : 0) + (returnsFilterCategory !== '' ? 1 : 0) + (returnsFilterPerson.trim() ? 1 : 0) + (returnsFilterCondition !== '' ? 1 : 0)}
-              onClear={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsFilterDateFrom(''); setReturnsFilterDateTo(''); setReturnsFilterRecorder(''); setReturnsFilterProgress(''); setReturnsFilterCategory(''); setReturnsFilterPerson(''); setReturnsFilterCondition(''); setReturnsPage(1) }}
+              activeCount={(returnsSearch ? 1 : 0) + (returnsWarehouseFilter !== '' ? 1 : 0) + (returnsFilterDateFrom ? 1 : 0) + (returnsFilterDateTo ? 1 : 0) + (returnsFilterRecorder ? 1 : 0) + (returnsFilterProgress ? 1 : 0) + (returnsFilterCategory !== '' ? 1 : 0) + (returnsFilterPerson.trim() ? 1 : 0) + (returnsFilterCondition !== '' ? 1 : 0) + (returnsAttSearch ? 1 : 0)}
+              onClear={() => { setReturnsSearch(''); setReturnsWarehouseFilter(''); setReturnsFilterDateFrom(''); setReturnsFilterDateTo(''); setReturnsFilterRecorder(''); setReturnsFilterProgress(''); setReturnsFilterCategory(''); setReturnsFilterPerson(''); setReturnsFilterCondition(''); setReturnsAttSearch(''); setReturnsPage(1) }}
               resultLabel={`${returnsData.length} item(s)`}
             >
               <FilterField label="Search" width="w-56">
@@ -2620,6 +2844,7 @@ export default function IMSApp() {
                   <SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="none">Not started</SelectItem><SelectItem value="partial">Partial</SelectItem><SelectItem value="full">Fully returned</SelectItem></SelectContent>
                 </Select>
               </FilterField>
+              <FilterField label="Attachment Content" width="w-48"><div className="relative"><Paperclip className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Title, file name, meta key/value..." value={returnsAttSearch} onChange={e => { setReturnsAttSearch(e.target.value); setReturnsPage(1) }} className="h-8 text-xs pl-7" /></div></FilterField>
             </FilterPanel>
 
             {returnsLoading ? (
@@ -2641,6 +2866,28 @@ export default function IMSApp() {
                   if (returnsFilterProgress === 'none' && it.returnedQty > 0) return false
                   if (returnsFilterProgress === 'partial' && !(it.returnedQty > 0 && it.remainingQty > 0)) return false
                   if (returnsFilterProgress === 'full' && it.remainingQty > 0) return false
+                }
+                if (returnsAttSearch) {
+                  const aq = returnsAttSearch.toLowerCase()
+                  // Collect all attachment IDs relevant to this returnable item:
+                  //   - stock_out_item attachments on this item
+                  //   - return attachments on any Return row linked to this item
+                  //   - non_returnable attachments on any NonReturnable row linked to this item
+                  const returnIds = (it.returns || []).map(r => r.id)
+                  const nonRetIds = (it.nonReturnables || []).map(n => n.id)
+                  const matches = attachmentsData.some(a => {
+                    const linked = (a.entityType === 'stock_out_item' && a.entityId === it.id)
+                      || (a.entityType === 'return' && returnIds.includes(a.entityId as number))
+                      || (a.entityType === 'non_returnable' && nonRetIds.includes(a.entityId as number))
+                    if (!linked) return false
+                    if (a.title?.toLowerCase().includes(aq)) return true
+                    if (a.fileName?.toLowerCase().includes(aq)) return true
+                    if (a.description?.toLowerCase().includes(aq)) return true
+                    if (a.mimeType?.toLowerCase().includes(aq)) return true
+                    if ((a.metaFields || []).some(m => m.key.toLowerCase().includes(aq) || m.value.toLowerCase().includes(aq) || m.description.toLowerCase().includes(aq))) return true
+                    return false
+                  })
+                  if (!matches) return false
                 }
                 if (!q) return true
                 return (it.product?.name || '').toLowerCase().includes(q)
@@ -2854,8 +3101,8 @@ export default function IMSApp() {
           <div className="mt-3 space-y-3">
             {/* Advanced Filters (rose theme) */}
             <FilterPanel
-              activeCount={(nonRetSearch ? 1 : 0) + (nonRetWarehouseFilter !== '' ? 1 : 0) + (nonRetFilterDateFrom ? 1 : 0) + (nonRetFilterDateTo ? 1 : 0) + (nonRetFilterRecorder ? 1 : 0) + (nonRetFilterProgress ? 1 : 0) + (nonRetFilterCategory !== '' ? 1 : 0) + (nonRetFilterPerson.trim() ? 1 : 0) + (nonRetFilterReason ? 1 : 0) + (nonRetFilterCondition !== '' ? 1 : 0)}
-              onClear={() => { setNonRetSearch(''); setNonRetWarehouseFilter(''); setNonRetFilterDateFrom(''); setNonRetFilterDateTo(''); setNonRetFilterRecorder(''); setNonRetFilterProgress(''); setNonRetFilterCategory(''); setNonRetFilterPerson(''); setNonRetFilterReason(''); setNonRetFilterCondition(''); setNonRetPage(1) }}
+              activeCount={(nonRetSearch ? 1 : 0) + (nonRetWarehouseFilter !== '' ? 1 : 0) + (nonRetFilterDateFrom ? 1 : 0) + (nonRetFilterDateTo ? 1 : 0) + (nonRetFilterRecorder ? 1 : 0) + (nonRetFilterProgress ? 1 : 0) + (nonRetFilterCategory !== '' ? 1 : 0) + (nonRetFilterPerson.trim() ? 1 : 0) + (nonRetFilterReason ? 1 : 0) + (nonRetFilterCondition !== '' ? 1 : 0) + (nonRetAttSearch ? 1 : 0)}
+              onClear={() => { setNonRetSearch(''); setNonRetWarehouseFilter(''); setNonRetFilterDateFrom(''); setNonRetFilterDateTo(''); setNonRetFilterRecorder(''); setNonRetFilterProgress(''); setNonRetFilterCategory(''); setNonRetFilterPerson(''); setNonRetFilterReason(''); setNonRetFilterCondition(''); setNonRetAttSearch(''); setNonRetPage(1) }}
               resultLabel={`${nonRetData.length} item(s)`}
             >
               <FilterField label="Search" width="w-56">
@@ -2923,6 +3170,7 @@ export default function IMSApp() {
                   perPage={12}
                 />
               </FilterField>
+              <FilterField label="Attachment Content" width="w-48"><div className="relative"><Paperclip className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Title, file name, meta key/value..." value={nonRetAttSearch} onChange={e => { setNonRetAttSearch(e.target.value); setNonRetPage(1) }} className="h-8 text-xs pl-7" /></div></FilterField>
             </FilterPanel>
 
             {nonRetLoading ? (
@@ -2947,6 +3195,24 @@ export default function IMSApp() {
                 }
                 // Reason filter: match if any of the item's nonReturnables has this reason
                 if (nonRetFilterReason && !(it.nonReturnables || []).some(n => n.reason === nonRetFilterReason)) return false
+                if (nonRetAttSearch) {
+                  const aq = nonRetAttSearch.toLowerCase()
+                  const returnIds = (it.returns || []).map(r => r.id)
+                  const nonRetIds = (it.nonReturnables || []).map(n => n.id)
+                  const matches = attachmentsData.some(a => {
+                    const linked = (a.entityType === 'stock_out_item' && a.entityId === it.id)
+                      || (a.entityType === 'return' && returnIds.includes(a.entityId as number))
+                      || (a.entityType === 'non_returnable' && nonRetIds.includes(a.entityId as number))
+                    if (!linked) return false
+                    if (a.title?.toLowerCase().includes(aq)) return true
+                    if (a.fileName?.toLowerCase().includes(aq)) return true
+                    if (a.description?.toLowerCase().includes(aq)) return true
+                    if (a.mimeType?.toLowerCase().includes(aq)) return true
+                    if ((a.metaFields || []).some(m => m.key.toLowerCase().includes(aq) || m.value.toLowerCase().includes(aq) || m.description.toLowerCase().includes(aq))) return true
+                    return false
+                  })
+                  if (!matches) return false
+                }
                 if (!q) return true
                 return (it.product?.name || '').toLowerCase().includes(q)
                   || (it.product?.sku || '').toLowerCase().includes(q)
@@ -3419,6 +3685,12 @@ export default function IMSApp() {
                   <div className="space-y-1"><IconLabel icon={ArrowUpFromLine}>Initial Quantity</IconLabel><Input type="number" min="0" value={dlgData.quantity||''} onChange={e=>setDlgData({...dlgData,quantity:parseInt(e.target.value)||0})} placeholder="Enter quantity..." className="h-8 text-sm rounded-md" /></div>
                   <div className="space-y-1"><IconLabel icon={ClipboardCheck}>Condition</IconLabel><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={dlgData.conditionId ? String(dlgData.conditionId) : ''} onChange={v=>setDlgData({...dlgData,conditionId:parseInt(v)})} placeholder="Condition —" /></div>
                 </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Paperclip}>Attachments (product-level)</SectionHeader>
+                  <div className="text-[10px] text-muted-foreground">Attach product photos, spec sheets, or manuals. Files are zipped on upload and linked to this product.</div>
+                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-emerald-100 file:text-emerald-700 file:text-xs file:font-medium hover:file:bg-emerald-200 dark:file:bg-emerald-500/20 dark:file:text-emerald-300" />
+                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
+                </div>
               </>}
 
               {/* ─── Stock ─── */}
@@ -3471,6 +3743,12 @@ export default function IMSApp() {
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Paperclip}>Attachments (order-level)</SectionHeader>
+                  <div className="text-[10px] text-muted-foreground">Attach purchase agreements, sales contracts, or delivery specs. Files are zipped on upload and linked to this order.</div>
+                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-blue-100 file:text-blue-700 file:text-xs file:font-medium hover:file:bg-blue-200 dark:file:bg-blue-500/20 dark:file:text-blue-300" />
+                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
                 </div>
               </>}
 
@@ -3529,6 +3807,12 @@ export default function IMSApp() {
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Input value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="h-8 text-sm rounded-md" /></div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Paperclip}>Attachments (item-level)</SectionHeader>
+                  <div className="text-[10px] text-muted-foreground">Attach photos, serial numbers, or documents to THIS item. Files are zipped on upload and linked to this specific item (not the whole dispatch).</div>
+                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-blue-100 file:text-blue-700 file:text-xs file:font-medium hover:file:bg-blue-200 dark:file:bg-blue-500/20 dark:file:text-blue-300" />
+                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
                 </div>
               </>}
 
@@ -3648,6 +3932,10 @@ export default function IMSApp() {
                   } catch (e: any) {
                     toast({ title: `Product created but stock-in failed: ${e.message}. Add stock manually.`, variant: 'destructive' })
                   }
+                  // Product-level attachments (entityType='product', entityId=prodRes.id)
+                  if (dlgData.pendingFiles?.length && prodRes.id) {
+                    await uploadAttachmentsFor('product', prodRes.id, dlgData.warehouseId, dlgData.pendingFiles)
+                  }
                   await loadData()
                 }
                 else if (dlgType==='stockIn') {
@@ -3666,13 +3954,25 @@ export default function IMSApp() {
                   const recorderId = sd.recorderId
                   if (!recorderId) { toast({ title: 'No recorder selected', variant: 'destructive' }); return }
                   if (!sd.enterpriseId) sd.enterpriseId = eid
-                  await crud.create(`/stock-out/${recorderId}/item`, sd)
+                  // Capture created item ID so we can attach files at the item level (stock_out_item)
+                  const createdItem = await apiFetch(`/stock-out/${recorderId}/item`, { method: 'POST', body: JSON.stringify(sd) })
+                  if (dlgData.pendingFiles?.length && createdItem?.id) {
+                    await uploadAttachmentsFor('stock_out_item', createdItem.id, dlgData.warehouseId, dlgData.pendingFiles)
+                  }
+                  await loadData()
                 }
                 else if (dlgEdit && dlgType==='stockInRecorder') { await crud.update(`/stock-in/${dlgEdit.id}`, sd); if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_in', dlgEdit.id, dlgData.warehouseId, dlgData.pendingFiles) }
                 else if (dlgType==='stockInRecorder') {
                   const rec = await apiFetch('/stock-in', { method: 'POST', body: JSON.stringify(sd) })
                   toast({ title: 'Created successfully' })
                   if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_in', rec.id, dlgData.warehouseId, dlgData.pendingFiles)
+                  await loadData()
+                }
+                else if (dlgEdit && dlgType==='order') { await crud.update(`/orders/${dlgEdit.id}`, sd); if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('order', dlgEdit.id, dlgData.warehouseId, dlgData.pendingFiles) }
+                else if (dlgType==='order') {
+                  const ord = await apiFetch('/orders', { method: 'POST', body: JSON.stringify(sd) })
+                  toast({ title: 'Order created' })
+                  if (dlgData.pendingFiles?.length && ord?.id) await uploadAttachmentsFor('order', ord.id, dlgData.warehouseId, dlgData.pendingFiles)
                   await loadData()
                 }
                 else if (dlgEdit) await crud.update(dlgType==='stockOut' ? `/stock-out/${dlgEdit.id}` : `/${dlgType}s/${dlgEdit.id}`,sd)
@@ -3779,6 +4079,12 @@ export default function IMSApp() {
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes (optional)</IconLabel>
                     <Textarea value={returnDlg.notes} onChange={e => setReturnDlg(s => ({ ...s, notes: e.target.value }))} placeholder="Reason for return, condition, etc." className="rounded-md min-h-[60px]" />
                   </div>
+                </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Paperclip}>Attachments (return-level)</SectionHeader>
+                  <div className="text-[10px] text-muted-foreground">Attach return receipts, photos of the returned item, or condition evidence. Files are zipped on upload and linked to this return.</div>
+                  <input type="file" multiple onChange={e => setReturnDlg(s => ({ ...s, pendingFiles: Array.from(e.target.files || []) }))} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-violet-100 file:text-violet-700 file:text-xs file:font-medium hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300" />
+                  {returnDlg.pendingFiles && returnDlg.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{returnDlg.pendingFiles.length} file(s) selected: {returnDlg.pendingFiles.map(f => f.name).join(', ')}</div>}
                 </div>
                 <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2 text-[11px] text-violet-700 dark:text-violet-400 flex items-start gap-1.5">
                   <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
@@ -4194,6 +4500,12 @@ export default function IMSApp() {
                     <Textarea value={nonRetDlg.notes} onChange={e => setNonRetDlg(s => ({ ...s, notes: e.target.value }))} placeholder="Additional context, condition, inspector notes, etc." className="rounded-md min-h-[60px]" />
                   </div>
                 </div>
+                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
+                  <SectionHeader icon={Paperclip}>Attachments (decision-level)</SectionHeader>
+                  <div className="text-[10px] text-muted-foreground">Attach evidence photos (damage, alteration, etc.) or inspector notes. Files are zipped on upload and linked to this non-returnable decision.</div>
+                  <input type="file" multiple onChange={e => setNonRetDlg(s => ({ ...s, pendingFiles: Array.from(e.target.files || []) }))} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-rose-100 file:text-rose-700 file:text-xs file:font-medium hover:file:bg-rose-200 dark:file:bg-rose-500/20 dark:file:text-rose-300" />
+                  {nonRetDlg.pendingFiles && nonRetDlg.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{nonRetDlg.pendingFiles.length} file(s) selected: {nonRetDlg.pendingFiles.map(f => f.name).join(', ')}</div>}
+                </div>
                 <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-md p-2 text-[11px] text-rose-700 dark:text-rose-400 flex items-start gap-1.5">
                   <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                   <span>This will mark <span className="font-mono font-semibold">{nonRetDlg.qty || 0} {it.unit}</span> of <span className="font-semibold">{it.product?.name}</span> as non-returnable with reason <span className="font-semibold">{REASON_LABELS[nonRetDlg.reason] || nonRetDlg.reason || '(none selected)'}</span>. Inventory is NOT restocked — the units are simply recorded as non-returnable.</span>
@@ -4474,9 +4786,22 @@ export default function IMSApp() {
             <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Upload className="w-4 h-4 text-violet-500" />Upload Attachment</DialogTitle></DialogHeader>
             <div className="space-y-2.5 max-h-[65vh] overflow-y-auto pr-1">
               <div className="space-y-1">
-                <Label className="text-xs font-medium">File *</Label>
-                <input type="file" onChange={e => setAttUpload(s => ({ ...s, file: e.target.files?.[0] || null }))} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-violet-100 file:text-violet-700 file:text-xs file:font-medium hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300" />
-                {attUpload.file && <div className="text-[10px] text-muted-foreground">{attUpload.file.name} — {(attUpload.file.size / 1024).toFixed(1)} KB{attUpload.file.type.startsWith('image/') && <Badge className="ml-1 bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px]"><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />image</Badge>}</div>}
+                <Label className="text-xs font-medium">Files *</Label>
+                <input type="file" multiple onChange={e => setAttUpload(s => ({ ...s, files: Array.from(e.target.files || []) }))} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-violet-100 file:text-violet-700 file:text-xs file:font-medium hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300" />
+                <p className="text-[10px] text-muted-foreground">Select one or more files — they'll be zipped into a single archive. Images will be previewable.</p>
+                {attUpload.files.length > 0 && (
+                  <div className="space-y-1 mt-1">
+                    <div className="text-[10px] text-muted-foreground">{attUpload.files.length} file(s), total size {(attUpload.files.reduce((s, f) => s + f.size, 0) / 1024).toFixed(1)} KB</div>
+                    {attUpload.files.map((f, i) => (
+                      <div key={i} className="flex items-center gap-1.5 bg-muted/30 rounded-md px-2 py-1 text-[11px]">
+                        <span className="flex-1 truncate">{f.name}</span>
+                        <span className="text-muted-foreground">{(f.size / 1024).toFixed(1)} KB</span>
+                        {f.type.startsWith('image/') && <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px]"><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />IMG</Badge>}
+                        <Button size="sm" variant="ghost" onClick={() => setAttUpload(s => ({ ...s, files: s.files.filter((_, j) => j !== i) }))} className="text-red-500 h-5 w-5 p-0"><X className="w-3 h-3" /></Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="space-y-1"><Label className="text-xs font-medium">Title</Label><Input value={attUpload.title} onChange={e => setAttUpload(s => ({ ...s, title: e.target.value }))} placeholder="Optional title..." className="h-8 text-sm" /></div>
               <div className="space-y-1"><Label className="text-xs font-medium">Description</Label><Textarea value={attUpload.description} onChange={e => setAttUpload(s => ({ ...s, description: e.target.value }))} placeholder="Optional description..." className="h-8 text-sm min-h-[50px]" /></div>
@@ -4484,9 +4809,14 @@ export default function IMSApp() {
                 <div className="space-y-1"><Label className="text-xs font-medium">Entity Type</Label><Select value={attUpload.entityType} onValueChange={v => setAttUpload(s => ({ ...s, entityType: v }))}><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent>{ATTACHMENT_ENTITY_TYPES.map(et => <SelectItem key={et.key} value={et.key}>{et.label}</SelectItem>)}</SelectContent></Select></div>
                 <div className="space-y-1"><Label className="text-xs font-medium">Entity ID {attUpload.entityType === 'standalone' && '(n/a)'}</Label><Input value={attUpload.entityId} onChange={e => setAttUpload(s => ({ ...s, entityId: e.target.value }))} placeholder="Record ID..." disabled={attUpload.entityType === 'standalone'} className="h-8 text-sm" /></div>
               </div>
+              {role === 'super_admin' && (
+                <div className="space-y-1"><Label className="text-xs font-medium">Owning Enterprise <span className="text-rose-500">*</span></Label>
+                  <PaginatedCombobox items={enterprises.map(e => ({ value: String(e.id), label: e.name, sublabel: e.code }))} value={attUpload.enterpriseId} onChange={v => setAttUpload(s => ({ ...s, enterpriseId: v }))} placeholder="Select enterprise (required for super admin)..." perPage={10} />
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1"><Label className="text-xs font-medium">Branch (scope)</Label><PaginatedCombobox items={branches.map(br => ({ value: String(br.id), label: br.name, sublabel: br.code }))} value={attUpload.branchId || '_all'} onChange={v => setAttUpload(s => ({ ...s, branchId: v === '_all' ? '' : v }))} allLabel="Enterprise-wide" placeholder="Enterprise-wide" /></div>
-                <div className="space-y-1"><Label className="text-xs font-medium">Warehouse (scope)</Label><PaginatedCombobox items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))} value={attUpload.warehouseId || '_all'} onChange={v => setAttUpload(s => ({ ...s, warehouseId: v === '_all' ? '' : v }))} allLabel="Branch-wide" placeholder="Branch-wide" /></div>
+                <div className="space-y-1"><Label className="text-xs font-medium">Branch (scope)</Label><PaginatedCombobox items={branches.filter(br => !attUpload.enterpriseId || br.enterpriseId === parseInt(attUpload.enterpriseId)).map(br => ({ value: String(br.id), label: br.name, sublabel: br.code }))} value={attUpload.branchId || '_all'} onChange={v => setAttUpload(s => ({ ...s, branchId: v === '_all' ? '' : v }))} allLabel="Enterprise-wide" placeholder="Enterprise-wide" /></div>
+                <div className="space-y-1"><Label className="text-xs font-medium">Warehouse (scope)</Label><PaginatedCombobox items={warehouses.filter(w => !attUpload.enterpriseId || w.enterpriseId === parseInt(attUpload.enterpriseId)).map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))} value={attUpload.warehouseId || '_all'} onChange={v => setAttUpload(s => ({ ...s, warehouseId: v === '_all' ? '' : v }))} allLabel="Branch-wide" placeholder="Branch-wide" /></div>
               </div>
               <div className="bg-muted/30 rounded-lg p-2.5 space-y-1.5">
                 <div className="flex items-center justify-between"><Label className="text-xs font-semibold flex items-center gap-1"><Paperclip className="w-3 h-3" />Custom Metadata</Label><Button size="sm" variant="ghost" onClick={() => setAttUpload(s => ({ ...s, metaFields: [...s.metaFields, { key: '', value: '', description: '' }] }))} className="h-6 text-xs text-violet-600"><Plus className="w-3 h-3 mr-0.5" />Add Field</Button></div>
@@ -4506,12 +4836,13 @@ export default function IMSApp() {
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setAttUpload(s => ({ ...s, open: false }))} disabled={attUpload.submitting} className="text-muted-foreground">Cancel</Button>
-              <Button disabled={attUpload.submitting || !attUpload.file} onClick={async () => {
-                if (!attUpload.file) { toast({ title: 'Select a file first', variant: 'destructive' }); return }
+              <Button disabled={attUpload.submitting || attUpload.files.length === 0 || (role === 'super_admin' && !attUpload.enterpriseId)} onClick={async () => {
+                if (attUpload.files.length === 0) { toast({ title: 'Select at least one file', variant: 'destructive' }); return }
+                if (role === 'super_admin' && !attUpload.enterpriseId) { toast({ title: 'Select an owning enterprise', variant: 'destructive' }); return }
                 setAttUpload(s => ({ ...s, submitting: true }))
                 try {
                   const fd = new FormData()
-                  fd.append('file', attUpload.file)
+                  for (const f of attUpload.files) fd.append('files', f)
                   if (attUpload.title) fd.append('title', attUpload.title)
                   if (attUpload.description) fd.append('description', attUpload.description)
                   fd.append('entityType', attUpload.entityType)
@@ -4520,11 +4851,12 @@ export default function IMSApp() {
                   if (attUpload.warehouseId) fd.append('warehouseId', attUpload.warehouseId)
                   const cleanMeta = attUpload.metaFields.filter(m => m.key.trim())
                   if (cleanMeta.length > 0) fd.append('metaFields', JSON.stringify(cleanMeta))
-                  if (role === 'super_admin' && eid) fd.append('enterpriseId', String(eid))
+                  // For super_admin, send the picked enterpriseId; for everyone else, the server derives it from ctx
+                  if (role === 'super_admin' && attUpload.enterpriseId) fd.append('enterpriseId', attUpload.enterpriseId)
                   const res = await fetch(`${BASE}/api/attachments`, { method: 'POST', headers: useAuthStore.getState().getAuthHeaders(), body: fd })
                   if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `Upload failed (${res.status})`) }
-                  toast({ title: `Uploaded: ${attUpload.file.name}` })
-                  setAttUpload(s => ({ ...s, open: false, submitting: false, file: null, title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', metaFields: [] }))
+                  toast({ title: `Uploaded: ${attUpload.files.length} file(s) zipped` })
+                  setAttUpload(s => ({ ...s, open: false, submitting: false, files: [], title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', enterpriseId: '', metaFields: [] }))
                   await loadData()
                 } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setAttUpload(s => ({ ...s, submitting: false })) }
               }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">{attUpload.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Upload className="w-4 h-4 mr-1.5" />}Upload</Button>
@@ -4583,26 +4915,59 @@ export default function IMSApp() {
         {/* ─── ATTACHMENT IMAGE PREVIEW DIALOG ─── */}
         <Dialog open={attPreview.open} onOpenChange={o => setAttPreview(s => ({ ...s, open: o }))}>
           <DialogContent className="max-w-2xl w-[95vw]">
-            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><ImageIcon className="w-4 h-4 text-violet-500" />{attPreview.attachment?.title || attPreview.attachment?.fileName || 'Image Preview'}</DialogTitle></DialogHeader>
-            {attPreview.attachment && (
-              <div className="space-y-2">
-                <div className="bg-muted/30 rounded-lg overflow-hidden flex items-center justify-center max-h-[60vh]">
-                  <img src={`${BASE}/api/attachments/${attPreview.attachment.id}/download?inline=1`} alt={attPreview.attachment.fileName} className="max-w-full max-h-[60vh] object-contain" />
-                </div>
-                <div className="text-xs text-muted-foreground flex flex-wrap gap-2">
-                  <span>{attPreview.attachment.fileName}</span>
-                  <span>•</span>
-                  <span>{attPreview.attachment.mimeType}</span>
-                  <span>•</span>
-                  <span>{(attPreview.attachment.originalSize / 1024).toFixed(1)} KB</span>
-                </div>
-                {(attPreview.attachment.metaFields || []).length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {(attPreview.attachment.metaFields || []).map(m => <Badge key={m.id} className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border-0 text-[10px] font-mono"><span className="font-semibold">{m.key}</span>: {m.value}</Badge>)}
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><ImageIcon className="w-4 h-4 text-violet-500" />{attPreview.attachment?.title || attPreview.attachment?.fileName || 'Preview'}</DialogTitle></DialogHeader>
+            {attPreview.attachment && (() => {
+              const a = attPreview.attachment
+              const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)$/i
+              let entries: AttachmentFileEntry[] = []
+              try { const v = JSON.parse(a.fileListJson || '[]'); if (Array.isArray(v)) entries = v } catch {}
+              const imageEntries = a.isMultiFile ? entries.map((e, i) => ({ name: e.name, size: e.size, mimeType: e.mimeType, idx: i })).filter(e => IMAGE_EXT.test(e.name)) : []
+              const currentEntry = a.isMultiFile ? entries[attPreview.fileIndex] : null
+              const entryName = a.isMultiFile ? (currentEntry?.name || `Entry #${attPreview.fileIndex + 1}`) : a.fileName
+              const entryMime = a.isMultiFile ? (currentEntry?.mimeType || 'unknown') : a.mimeType
+              const entrySize = a.isMultiFile ? (currentEntry?.size || 0) : a.originalSize
+              const isCurrentImage = a.isImage || (a.isMultiFile && IMAGE_EXT.test(entryName))
+              const fmtSize = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`
+              return (
+                <div className="space-y-2">
+                  {/* Thumbnail strip for multi-file image entries */}
+                  {a.isMultiFile && imageEntries.length > 0 && (
+                    <div className="flex gap-1.5 overflow-x-auto pb-1">
+                      {imageEntries.map(e => (
+                        <button key={e.idx} onClick={() => setAttPreview(s => ({ ...s, fileIndex: e.idx }))} title={e.name} className={`flex-shrink-0 w-14 h-14 rounded-md overflow-hidden border-2 transition ${attPreview.fileIndex === e.idx ? 'border-violet-500' : 'border-transparent hover:border-muted-foreground/30'}`}>
+                          <img src={`${BASE}/api/attachments/${a.id}/download?inline=1&fileIndex=${e.idx}`} alt={e.name} className="w-full h-full object-cover" loading="lazy" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* Main preview area */}
+                  <div className="bg-muted/30 rounded-lg overflow-hidden flex items-center justify-center max-h-[60vh]">
+                    {isCurrentImage ? (
+                      <img src={`${BASE}/api/attachments/${a.id}/download?inline=1&fileIndex=${attPreview.fileIndex}`} alt={entryName} className="max-w-full max-h-[60vh] object-contain" />
+                    ) : (
+                      <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
+                        <FileIcon className="w-10 h-10 text-muted-foreground/50" />
+                        <span>Download to view this file.</span>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+                  {/* File info — entry name from fileListJson when multi-file */}
+                  <div className="text-xs text-muted-foreground flex flex-wrap gap-2">
+                    <span className="truncate max-w-[300px]" title={entryName}>{entryName}</span>
+                    <span>•</span>
+                    <span>{entryMime}</span>
+                    <span>•</span>
+                    <span>{fmtSize(entrySize)}</span>
+                  </div>
+                  {/* Meta fields badges */}
+                  {(a.metaFields || []).length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {(a.metaFields || []).map(m => <Badge key={m.id} className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border-0 text-[10px] font-mono"><span className="font-semibold">{m.key}</span>: {m.value}</Badge>)}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
             <DialogFooter>
               <Button variant="ghost" onClick={() => setAttPreview(s => ({ ...s, open: false }))}>Close</Button>
               {attPreview.attachment && <Button onClick={() => { const a = attPreview.attachment!; const url = `${BASE}/api/attachments/${a.id}/download`; fetch(url, { headers: useAuthStore.getState().getAuthHeaders() }).then(r => r.blob()).then(b => { const u = URL.createObjectURL(b); const link = document.createElement('a'); link.href = u; link.download = a.fileName; link.click(); URL.revokeObjectURL(u) }) }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white"><Download className="w-4 h-4 mr-1.5" />Download</Button>}

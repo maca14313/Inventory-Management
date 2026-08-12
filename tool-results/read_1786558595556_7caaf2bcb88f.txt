@@ -1,0 +1,222 @@
+     1→  2002→    // ─── ATTACHMENTS (files zipped + uploaded, image preview, custom metadata, tenant-isolated)
+     2→  2003→    if (page === 'attachments' && hasPermission(role!, 'stock:view')) return (
+     3→  2004→      <div className="space-y-3">
+     4→  2005→        <div className="flex items-center justify-between flex-wrap gap-2">
+     5→  2006→          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><Paperclip className="w-4 h-4 text-violet-500" />Attachments</h1>
+     6→  2007→          <p className="text-xs text-muted-foreground">Files are gzipped on upload. Images preview inline. Attach to any record or keep standalone. Never shared across enterprises / branches / warehouses.</p></div>
+     7→  2008→          <Button size="sm" onClick={() => setAttUpload({ open: true, submitting: false, file: null, title: '', description: '', entityType: 'standalone', entityId: '', branchId: '', warehouseId: '', metaFields: [] })} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white h-7 text-xs"><Upload className="w-3 h-3 mr-1" />Upload</Button>
+     8→  2009→        </div>
+     9→  2010→
+    10→  2011→        <FilterPanel
+    11→  2012→          activeCount={(attFilterSearch ? 1 : 0) + (attFilterEntityType ? 1 : 0) + (attFilterBranchId !== '' ? 1 : 0) + (attFilterWarehouseId !== '' ? 1 : 0) + (attFilterIsImage ? 1 : 0) + (attFilterMetaKey ? 1 : 0) + (attFilterMetaValue ? 1 : 0) + (attFilterDateFrom ? 1 : 0) + (attFilterDateTo ? 1 : 0)}
+    12→  2013→          onClear={() => { setAttFilterSearch(''); setAttFilterEntityType(''); setAttFilterBranchId(''); setAttFilterWarehouseId(''); setAttFilterIsImage(''); setAttFilterMetaKey(''); setAttFilterMetaValue(''); setAttFilterDateFrom(''); setAttFilterDateTo(''); setAttPage(1) }}
+    13→  2014→          resultLabel={`${attachmentsData.length} file(s)`}
+    14→  2015→        >
+    15→  2016→          <FilterField label="Search" width="w-48">
+    16→  2017→            <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Title, file name, desc..." value={attFilterSearch} onChange={e => { setAttFilterSearch(e.target.value); setAttPage(1) }} className="h-8 text-xs pl-7" /></div>
+    17→  2018→          </FilterField>
+    18→  2019→          <FilterField label="Entity Type" width="w-40"><Select value={attFilterEntityType || '_all'} onValueChange={v => { setAttFilterEntityType(v === '_all' ? '' : v); setAttPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Types</SelectItem>{ATTACHMENT_ENTITY_TYPES.map(et => <SelectItem key={et.key} value={et.key}>{et.label}</SelectItem>)}</SelectContent></Select></FilterField>
+    19→  2020→          <FilterField label="Branch" width="w-40"><PaginatedCombobox items={branches.map(br => ({ value: String(br.id), label: br.name, sublabel: br.code }))} value={attFilterBranchId === '' ? '_all' : String(attFilterBranchId)} onChange={v => { setAttFilterBranchId(v === '_all' ? '' : parseInt(v)); setAttPage(1) }} allLabel="All Branches" placeholder="All" /></FilterField>
+    20→  2021→          <FilterField label="Warehouse" width="w-40"><PaginatedCombobox items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))} value={attFilterWarehouseId === '' ? '_all' : String(attFilterWarehouseId)} onChange={v => { setAttFilterWarehouseId(v === '_all' ? '' : parseInt(v)); setAttPage(1) }} allLabel="All Warehouses" placeholder="All" /></FilterField>
+    21→  2022→          <FilterField label="File Kind" width="w-32"><Select value={attFilterIsImage || '_all'} onValueChange={v => { setAttFilterIsImage(v === '_all' ? '' : v as 'true' | 'false'); setAttPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All Files</SelectItem><SelectItem value="true">Images Only</SelectItem><SelectItem value="false">Non-Images</SelectItem></SelectContent></Select></FilterField>
+    22→  2023→          <FilterField label="Meta Key" width="w-36"><Input value={attFilterMetaKey} onChange={e => { setAttFilterMetaKey(e.target.value); setAttPage(1) }} placeholder="e.g. batch" className="h-8 text-xs" /></FilterField>
+    23→  2024→          <FilterField label="Meta Value" width="w-36"><Input value={attFilterMetaValue} onChange={e => { setAttFilterMetaValue(e.target.value); setAttPage(1) }} placeholder="e.g. B-001" className="h-8 text-xs" /></FilterField>
+    24→  2025→          <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={attFilterDateFrom} onChange={v => { setAttFilterDateFrom(v); setAttPage(1) }} /></FilterField>
+    25→  2026→          <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={attFilterDateTo} onChange={v => { setAttFilterDateTo(v); setAttPage(1) }} /></FilterField>
+    26→  2027→        </FilterPanel>
+    27→  2028→
+    28→  2029→        {(() => {
+    29→  2030→          const filtered = attachmentsData.filter(a => {
+    30→  2031→            if (attFilterSearch) { const q = attFilterSearch.toLowerCase(); if (!a.title.toLowerCase().includes(q) && !a.fileName.toLowerCase().includes(q) && !a.description.toLowerCase().includes(q)) return false }
+    31→  2032→            if (attFilterEntityType && a.entityType !== attFilterEntityType) return false
+    32→  2033→            if (attFilterBranchId !== '' && a.branchId !== attFilterBranchId) return false
+    33→  2034→            if (attFilterWarehouseId !== '' && a.warehouseId !== attFilterWarehouseId) return false
+    34→  2035→            if (attFilterIsImage === 'true' && !a.isImage) return false
+    35→  2036→            if (attFilterIsImage === 'false' && a.isImage) return false
+    36→  2037→            if (attFilterMetaKey) { const k = attFilterMetaKey.toLowerCase(); if (!(a.metaFields || []).some(m => m.key.toLowerCase().includes(k))) return false }
+    37→  2038→            if (attFilterMetaValue) { const v = attFilterMetaValue.toLowerCase(); if (!(a.metaFields || []).some(m => m.value.toLowerCase().includes(v))) return false }
+    38→  2039→            if (attFilterDateFrom && new Date(a.createdAt) < new Date(attFilterDateFrom + 'T00:00:00')) return false
+    39→  2040→            if (attFilterDateTo && new Date(a.createdAt) > new Date(attFilterDateTo + 'T23:59:59')) return false
+    40→  2041→            return true
+    41→  2042→          })
+    42→  2043→          const totalPages = Math.ceil(filtered.length / ATTACHMENTS_PER_PAGE) || 1
+    43→  2044→          const safePage = Math.min(attPage, totalPages)
+    44→  2045→          const paged = filtered.slice((safePage - 1) * ATTACHMENTS_PER_PAGE, safePage * ATTACHMENTS_PER_PAGE)
+    45→  2046→          const fmtSize = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`
+    46→  2047→          const entityLabel = (et: string) => ATTACHMENT_ENTITY_TYPES.find(e => e.key === et)?.label || et
+    47→  2048→          const attHeaders = useAuthStore.getState().getAuthHeaders()
+    48→  2049→
+    49→  2050→          if (filtered.length === 0) return <Card className="shadow-sm border-dashed"><CardContent className="p-8 text-center text-sm text-muted-foreground">No attachments found. Click <span className="font-semibold text-violet-600">Upload</span> to add one.</CardContent></Card>
+    50→  2051→
+    51→  2052→          return (<>
+    52→  2053→            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+    53→  2054→              {paged.map(a => {
+    54→  2055→                const wh = warehouses.find(w => w.id === a.warehouseId)
+    55→  2056→                const br = branches.find(b => b.id === a.branchId)
+    56→  2057→                return (
+    57→  2058→                  <Card key={a.id} className="shadow-sm hover:shadow-md transition-shadow overflow-hidden flex flex-col">
+    58→  2059→                    <div className="relative bg-muted/40 h-32 flex items-center justify-center overflow-hidden">
+    59→  2060→                      {a.isImage ? (
+    60→  2061→                        <img src={`${BASE}/api/attachments/${a.id}/download?inline=1`} alt={a.title || a.fileName} className="w-full h-full object-cover" loading="lazy" onClick={() => setAttPreview({ open: true, attachment: a })} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+    61→  2062→                      ) : (
+    62→  2063→                        <FileIcon className="w-10 h-10 text-muted-foreground/50" />
+    63→  2064→                      )}
+    64→  2065→                      <div className="absolute top-1.5 left-1.5 flex gap-1">
+    65→  2066→                        {a.isImage && <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px]"><ImageIcon className="w-2.5 h-2.5 mr-0.5" />IMG</Badge>}
+    66→  2067→                        <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border-0 text-[9px]">{entityLabel(a.entityType)}{a.entityId ? ` #${a.entityId}` : ''}</Badge>
+    67→  2068→                      </div>
+    68→  2069→                    </div>
+    69→  2070→                    <CardContent className="p-2.5 flex-1 flex flex-col gap-1">
+    70→  2071→                      <div className="font-semibold text-sm truncate">{a.title || a.fileName}</div>
+    71→  2072→                      <div className="text-[10px] text-muted-foreground truncate flex items-center gap-1"><FileText className="w-2.5 h-2.5" />{a.fileName}</div>
+    72→  2073→                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+    73→  2074→                        <span>{fmtSize(a.originalSize)}</span>
+    74→  2075→                        {a.storedSize < a.originalSize && <span className="text-emerald-600">→ {fmtSize(a.storedSize)} gz</span>}
+    75→  2076→                      </div>
+    76→  2077→                      {(a.metaFields || []).length > 0 && (
+    77→  2078→                        <div className="flex flex-wrap gap-1 mt-0.5">
+    78→  2079→                          {(a.metaFields || []).slice(0, 3).map(m => <Tooltip key={m.id}><TooltipTrigger asChild><Badge className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border-0 text-[9px] font-mono">{m.key}: {m.value}</Badge></TooltipTrigger><TooltipContent side="top" className="text-xs"><div><span className="font-semibold">{m.key}</span>: {m.value}</div>{m.description && <div className="text-muted-foreground">{m.description}</div>}</TooltipContent></Tooltip>)}
+    79→  2080→                          {(a.metaFields || []).length > 3 && <Badge className="bg-muted text-muted-foreground border-0 text-[9px]">+{(a.metaFields || []).length - 3}</Badge>}
+    80→  2081→                        </div>
+    81→  2082→                      )}
+    82→  2083→                      {(wh || br) && <div className="text-[9px] text-muted-foreground/70">{wh ? `W: ${wh.name}` : ''}{br ? ` • B: ${br.name}` : ''}</div>}
+    83→  2084→                      <div className="text-[9px] text-muted-foreground/50">{new Date(a.createdAt).toLocaleDateString()}</div>
+    84→  2085→                      <div className="flex gap-1 mt-auto pt-1.5">
+    85→  2086→                        <Button size="sm" variant="outline" onClick={() => { const url = `${BASE}/api/attachments/${a.id}/download`; fetch(url, { headers: attHeaders }).then(r => r.blob()).then(b => { const u = URL.createObjectURL(b); const link = document.createElement('a'); link.href = u; link.download = a.fileName; link.click(); URL.revokeObjectURL(u) }) }} className="h-6 text-xs flex-1"><Download className="w-3 h-3 mr-1" />Save</Button>
+    86→  2087→                        <Button size="sm" variant="ghost" onClick={() => setAttEdit({ open: true, submitting: false, attachment: a, title: a.title, description: a.description, entityType: a.entityType, entityId: a.entityId ? String(a.entityId) : '', metaFields: (a.metaFields || []).map(m => ({ key: m.key, value: m.value, description: m.description })) })} className="h-6 w-6 p-0"><Pencil className="w-3 h-3" /></Button>
+    87→  2088→                        <Button size="sm" variant="ghost" onClick={async () => { if (!confirm(`Delete "${a.fileName}"? This cannot be undone.`)) return; try { await apiFetch(`/attachments/${a.id}`, { method: 'DELETE' }); toast({ title: 'Attachment deleted' }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } }} className="text-red-500 h-6 w-6 p-0"><Trash2 className="w-3 h-3" /></Button>
+    88→  2089→                      </div>
+    89→  2090→                    </CardContent>
+    90→  2091→                  </Card>
+    91→  2092→                )
+    92→  2093→              })}
+    93→  2094→            </div>
+    94→  2095→            {totalPages > 1 && (
+    95→  2096→              <div className="flex items-center justify-center gap-2 pt-2">
+    96→  2097→                <Button size="sm" variant="outline" disabled={safePage <= 1} onClick={() => setAttPage(p => Math.max(1, p - 1))} className="h-7"><ChevronLeft className="w-3.5 h-3.5" /></Button>
+    97→  2098→                <span className="text-xs text-muted-foreground">Page {safePage} of {totalPages}</span>
+    98→  2099→                <Button size="sm" variant="outline" disabled={safePage >= totalPages} onClick={() => setAttPage(p => Math.min(totalPages, p + 1))} className="h-7"><ChevronRight className="w-3.5 h-3.5" /></Button>
+    99→  2100→              </div>
+   100→  2101→            )}
+   101→  2102→          </>)
+   102→  2103→        })()}
+   103→  2104→      </div>
+   104→  2105→    )
+   105→  2106→
+   106→  2107→    // ─── STOCK OUT RECORDER
+   107→  2108→    // ─── STOCK IN (Task 1-b + Task 6: mirrors Stock Out, emerald theme)
+   108→  2109→    if (page === 'stockIn') return (
+   109→  2110→      <div className="space-y-3">
+   110→  2111→        <div className="flex items-center justify-between flex-wrap gap-2">
+   111→  2112→          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><ArrowDownToLine className="w-4 h-4 text-emerald-500" />Stock In</h1></div>
+   112→  2113→          <Button size="sm" onClick={() => openCreate('stockInRecorder')} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Receipt</Button>
+   113→  2114→        </div>
+   114→  2115→
+   115→  2116→        {/* ── Filters ── */}
+   116→  2117→        <FilterPanel
+   117→  2118→          activeCount={(stockInFilterSearch ? 1 : 0) + (stockInFilterDateFrom ? 1 : 0) + (stockInFilterDateTo ? 1 : 0) + (stockInFilterStatus ? 1 : 0) + (stockInFilterPerson ? 1 : 0) + (stockInFilterWarehouse !== '' ? 1 : 0) + (stockInFilterCondition !== '' ? 1 : 0) + (stockInHasAttachments ? 1 : 0)}
+   118→  2119→          onClear={() => { setStockInFilterSearch(''); setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInFilterWarehouse(''); setStockInFilterCondition(''); setStockInHasAttachments(false); setStockInRecPage(1) }}
+   119→  2120→          resultLabel={`${stockInData.length} recorders`}
+   120→  2121→        >
+   121→  2122→          <FilterField label="Search" width="w-48">
+   122→  2123→            <div className="relative"><Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Code, supplier, notes..." value={stockInFilterSearch} onChange={e => { setStockInFilterSearch(e.target.value); setStockInRecPage(1) }} className="h-8 text-xs pl-7" /></div>
+   123→  2124→          </FilterField>
+   124→  2125→          <FilterField label="Date From" width="w-32"><CustomDatePicker compact value={stockInFilterDateFrom} onChange={v => { setStockInFilterDateFrom(v); setStockInRecPage(1) }} /></FilterField>
+   125→  2126→          <FilterField label="Date To" width="w-32"><CustomDatePicker compact value={stockInFilterDateTo} onChange={v => { setStockInFilterDateTo(v); setStockInRecPage(1) }} /></FilterField>
+   126→  2127→          <FilterField label="Warehouse" width="w-44"><PaginatedCombobox
+   127→  2128→            items={warehouses.map(w => ({ value: String(w.id), label: w.name, sublabel: w.code }))}
+   128→  2129→            value={stockInFilterWarehouse === '' ? '_all' : String(stockInFilterWarehouse)}
+   129→  2130→            onChange={v => { setStockInFilterWarehouse(v === '_all' ? '' : parseInt(v)); setStockInRecPage(1) }}
+   130→  2131→            allLabel="All Warehouses"
+   131→  2132→            placeholder="All"
+   132→  2133→          /></FilterField>
+   133→  2134→          <FilterField label="Status" width="w-32"><Select value={stockInFilterStatus || '_all'} onValueChange={v => { setStockInFilterStatus(v === '_all' ? '' : v); setStockInRecPage(1) }}><SelectTrigger className="h-8 text-xs"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="submitted">Submitted</SelectItem></SelectContent></Select></FilterField>
+   134→  2135→          <FilterField label="Supplier" width="w-40"><Input value={stockInFilterPerson} onChange={e => { setStockInFilterPerson(e.target.value); setStockInRecPage(1) }} placeholder="Search name..." className="h-8 text-xs" /></FilterField>
+   135→  2136→          <FilterField label="Condition" width="w-44">
+   136→  2137→            <PaginatedCombobox
+   137→  2138→              items={conditions.filter(c => role === 'super_admin' || c.enterpriseId === eid).map(c => ({ value: String(c.id), label: c.name }))}
+   138→  2139→              value={stockInFilterCondition === '' ? '_all' : String(stockInFilterCondition)}
+   139→  2140→              onChange={v => { setStockInFilterCondition(v === '_all' ? '' : parseInt(v)); setStockInRecPage(1) }}
+   140→  2141→              allLabel="All Conditions"
+   141→  2142→              placeholder="All"
+   142→  2143→            />
+   143→  2144→          </FilterField>
+   144→  2145→          <FilterField label="Has Attachments" width="w-36"><div className="flex items-center gap-1.5 h-8"><Switch checked={stockInHasAttachments} onCheckedChange={v => { setStockInHasAttachments(v); setStockInRecPage(1) }} /><span className="text-xs text-muted-foreground">{stockInHasAttachments ? 'Yes' : 'Any'}</span></div></FilterField>
+   145→  2146→        </FilterPanel>
+   146→  2147→
+   147→  2148→        {(() => {
+   148→  2149→          let filtered = [...stockInData].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+   149→  2150→          if (stockInFilterDateFrom) filtered = filtered.filter(r => new Date(r.createdAt) >= new Date(stockInFilterDateFrom + 'T00:00:00'))
+   150→  2151→          if (stockInFilterDateTo) filtered = filtered.filter(r => new Date(r.createdAt) <= new Date(stockInFilterDateTo + 'T23:59:59'))
+   151→  2152→          if (stockInFilterStatus) filtered = filtered.filter(r => r.status === stockInFilterStatus)
+   152→  2153→          if (stockInFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockInFilterPerson.toLowerCase()))
+   153→  2154→          if (stockInFilterWarehouse !== '') filtered = filtered.filter(r => r.warehouseId === stockInFilterWarehouse)
+   154→  2155→          if (stockInFilterCondition !== '') filtered = filtered.filter(r => (r.items || []).some((it: any) => it.conditionId === stockInFilterCondition))
+   155→  2156→          if (stockInFilterSearch) { const q = stockInFilterSearch.toLowerCase(); filtered = filtered.filter(r => (r.recorderCode || '').toLowerCase().includes(q) || (r.personName || '').toLowerCase().includes(q) || (r.notes || '').toLowerCase().includes(q)) }
+   156→  2157→          if (stockInHasAttachments) filtered = filtered.filter(r => attachmentsData.some(a => a.entityType === 'stock_in' && a.entityId === r.id))
+   157→  2158→
+   158→  2159→          const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
+   159→  2160→          const recPaged = filtered.slice((stockInRecPage - 1) * STOCK_IN_REC_PER_PAGE, stockInRecPage * STOCK_IN_REC_PER_PAGE)
+   160→  2161→
+   161→  2162→          return (<>
+   162→  2163→            {recPaged.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No receipts found</div>}
+   163→  2164→            {recPaged.map(r => { const isExp = expandedIn === r.id; const isExpanding = expandingInId === r.id; const pendingItems = getPendingInItems(r.id); const totalItems = r.items.length + pendingItems.length
+   164→  2165→              return (<Card key={r.id} className="shadow-sm"><CardContent className="p-2.5">
+   165→  2166→                <div className="flex items-center justify-between cursor-pointer" onClick={() => { if (isExp) { setExpandedIn(null) } else { setExpandingInId(r.id); setTimeout(() => { setExpandedIn(r.id); setExpandingInId(null) }, 200) } }}>
+   166→  2167→                  <div className="flex items-center gap-1.5">{isExpanding ? <Loader2 className="w-3 h-3 animate-spin text-emerald-500" /> : <ChevronRight className={`w-3.5 h-3.5 text-emerald-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />}
+   167→  2168→                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
+   168→  2169→                    {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
+   169→  2170→                  <div className="flex items-center gap-1">
+   170→  2171→                    <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+   171→  2172→                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openEdit('stockInRecorder', r) }} className="h-5 w-5 p-0 text-muted-foreground"><Pencil className="w-2.5 h-2.5" /></Button>}
+   172→  2173→                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); crud.remove(`/stock-in/${r.id}`) }} disabled={isCrudLoading('remove', `/stock-in/${r.id}`)} className="h-5 w-5 p-0 text-red-500">{isCrudLoading('remove', `/stock-in/${r.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button>}
+   173→  2174→                  </div>
+   174→  2175→                </div>
+   175→  2176→                {isExp && (<div className="mt-2 space-y-2 border-t pt-2">
+   176→  2177→                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+   177→  2178→                    {r.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5" />{r.personPhone}</span>}
+   178→  2179→                    {r.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5" />{r.personEmail}</span>}
+   179→  2180→                    {r.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" />{r.personAddress}</span>}
+   180→  2181→                    {r.notes && <span className="flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{r.notes}</span>}
+   181→  2182→                  </div>
+   182→  2183→
+   183→  2184→                  {/* ── Items Table (saved + pending) with pagination ── */}
+   184→  2185→                  {(() => { const allItems = [...r.items.map(i => ({ ...i, _pending: false })), ...pendingItems.map(i => ({ ...i, id: i.tempId, _pending: true }))] as any[]
+   185→  2186→                    const totalPages = Math.ceil(allItems.length / STOCK_IN_ITEMS_PER_PAGE); const paged = allItems.slice((stockInItemPage - 1) * STOCK_IN_ITEMS_PER_PAGE, stockInItemPage * STOCK_IN_ITEMS_PER_PAGE)
+   186→  2187→                    const totalQty = allItems.reduce((sum: number, i: any) => sum + i.quantity, 0)
+   187→  2188→                    const totalValue = allItems.reduce((sum: number, i: any) => sum + (i.quantity * (i.costPerUnit || 0)), 0)
+   188→  2189→                    return (<div id={`stockin-print-${r.id}`}>
+   189→  2190→                      <div className="flex items-center justify-between mb-1">
+   190→  2191→                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Items ({totalItems}) · Total Qty: {totalQty} · Value: {fmt(totalValue)}</span>
+   191→  2192→                        <Button size="sm" variant="outline" onClick={() => { const w = window.open('', '_blank', 'width=800,height=600'); if (!w) return; w.document.write('<html><head><title>Stock In - ' + r.recorderCode + '</title><style>body{font-family:system-ui,sans-serif;padding:24px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}th{background:#f1f5f9;font-weight:600}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.saved{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}h2{font-size:18px;margin:0}p{color:#64748b;font-size:13px;margin:4px 0}.summary{margin-top:8px;font-size:13px;color:#334155;font-weight:600}</style></head><body>'); w.document.write('<h2>' + r.recorderCode + '</h2>'); w.document.write('<p>Date: ' + new Date(r.createdAt).toLocaleString() + '</p>'); w.document.write('<p>Supplier: ' + r.personName + (r.personPhone ? ' | Phone: ' + r.personPhone : '') + (r.personEmail ? ' | Email: ' + r.personEmail : '') + '</p>'); if (r.personAddress) w.document.write('<p>Address: ' + r.personAddress + '</p>'); if (r.notes) w.document.write('<p>Notes: ' + r.notes + '</p>'); w.document.write('<table><thead><tr><th>Product</th><th style="text-align:right">Qty</th><th>Unit</th><th style="text-align:right">Cost/Unit</th><th style="text-align:right">Total</th><th>Status</th></tr></thead><tbody>'); allItems.forEach((item: any) => { const prod = products.find((p: any) => p.id === item.productId); w.document.write('<tr><td>' + (prod?.name || '#'+item.productId) + '</td><td style="text-align:right">' + item.quantity + '</td><td>' + item.unit + '</td><td style="text-align:right">' + (item.costPerUnit || 0).toFixed(2) + '</td><td style="text-align:right">' + ((item.costPerUnit || 0) * item.quantity).toFixed(2) + '</td><td><span class="badge ' + (item._pending ? 'pending' : 'saved') + '">' + (item._pending ? 'Pending' : 'Saved') + '</span></td></tr>') }); w.document.write('</tbody></table>'); w.document.write('<p class="summary">Total Items: ' + totalItems + ' · Total Qty: ' + totalQty + ' · Total Value: $' + totalValue.toFixed(2) + '</p>'); w.document.write('</body></html>'); w.document.close(); w.print() }} className="h-5 text-[10px] gap-0.5"><Printer className="w-2.5 h-2.5" />Print</Button>
+   192→  2193→                      </div>
+   193→  2194→                      {totalItems > 0 ? (<>
+   194→  2195→                        {/* Mobile: stacked cards */}
+   195→  2196→                        <div className="sm:hidden space-y-1.5">
+   196→  2197→                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId); const cond = conditions.find(c => c.id === item.conditionId)
+   197→  2198→                            return (<div key={item.id} className={`rounded-md border p-2 space-y-1 ${item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed border-amber-300 dark:border-amber-600' : ''}`}>
+   198→  2199→                              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium truncate flex items-center gap-1">{prod?.name || `#${item.productId}`}{cond && <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4 shrink-0">{cond.name}</Badge>}</span>{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400 shrink-0">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400 shrink-0">Saved</Badge>}</div>
+   199→  2200→                              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+   200→  2201→                                <div><span className="text-muted-foreground">Qty: </span><span className="font-mono">{item.quantity}</span></div>
+   201→  2202→                                <div><span className="text-muted-foreground">Unit: </span>{item.unit}</div>
+   202→  2203→                                <div><span className="text-muted-foreground">Cost/U: </span><span className="font-mono">{fmt(item.costPerUnit || 0)}</span></div>
+   203→  2204→                                <div><span className="text-muted-foreground">Total: </span><span className="font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</span></div>
+   204→  2205→                              </div>
+   205→  2206→                              <div className="flex justify-end pt-0.5 border-t"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-5 w-5 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div>
+   206→  2207→                            </div>)})}
+   207→  2208→                        </div>
+   208→  2209→                        {/* Desktop: table */}
+   209→  2210→                        <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+   210→  2211→                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-6 text-[10px] text-right w-24">Total</TableHead><TableHead className="h-6 text-[10px] w-20">Condition</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
+   211→  2212→                        </TableRow></TableHeader><TableBody>
+   212→  2213→                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId); const cond = conditions.find(c => c.id === item.conditionId)
+   213→  2214→                            return (<TableRow key={item.id} className={item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed' : ''}>
+   214→  2215→                              <TableCell className="py-1 text-[11px] font-medium">{prod?.name || `#${item.productId}`}</TableCell>
+   215→  2216→                              <TableCell className="py-1 text-[11px] text-right font-mono">{item.quantity}</TableCell>
+   216→  2217→                              <TableCell className="py-1 text-[11px] text-muted-foreground">{item.unit}</TableCell>
+   217→  2218→                              <TableCell className="py-1 text-[11px] text-right font-mono">{fmt(item.costPerUnit || 0)}</TableCell>
+   218→  2219→                              <TableCell className="py-1 text-[11px] text-right font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</TableCell>
+   219→  2220→                              <TableCell className="py-1">{cond ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{cond.name}</Badge> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
+   220→  2221→                              <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
+   221→
+   222→[showing lines 2002-2221 of 4684; use offset=2222 with limit to continue reading]

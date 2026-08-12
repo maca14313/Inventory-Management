@@ -519,23 +519,30 @@ model Feature {
 }
 
 // ─── 18. Attachment ────────────────────────────────────────
-// A file (any type) stored gzipped on disk. Can be standalone (entityType='standalone',
-// entityId=null) OR linked to any record (stock_in, stock_out, return, non_returnable,
-// order, product). Supports unlimited custom metadata key-value-description fields.
+// A file (any type) or a bundle of files stored as a ZIP archive on disk.
+// Can be standalone (entityType='standalone', entityId=null) OR linked to ANY record
+// or even an individual line-item:
+//   'standalone' | 'stock_in' | 'stock_in_item' | 'stock_out' | 'stock_out_item'
+//   | 'return' | 'non_returnable' | 'order' | 'order_item' | 'product'
+// Supports unlimited custom metadata key-value-description fields (AttachmentMeta).
 // Tenant-isolated: never crosses enterprise/branch/warehouse boundaries.
 model Attachment {
   id            Int      @id @default(autoincrement())
   enterpriseId  Int
   branchId      Int?
   warehouseId   Int?
-  fileName      String   // original file name
-  storedName    String   // on-disk gzipped file name (e.g. "att_1700000000_abc.gz")
-  mimeType      String   // original mime type
-  originalSize  Int      // bytes before compression
-  storedSize    Int      // bytes after gzip
-  isImage       Boolean  @default(false)
-  previewData   String   @default("")  // base64 data URL thumbnail for images ("" for non-images)
-  entityType    String   @default("standalone")  // 'standalone' | 'stock_in' | 'stock_out' | 'return' | 'non_returnable' | 'order' | 'product'
+  fileName      String   // primary file name (first file, or zip name for multi-file)
+  storedName    String   // on-disk ZIP file name (e.g. "att_1700000000_abc.zip")
+  mimeType      String   // primary mime type (first file's mime)
+  originalSize  Int      // total bytes before compression (sum of all files)
+  storedSize    Int      // bytes after zip compression
+  isImage       Boolean  @default(false)  // true if primary file is an image
+  isMultiFile   Boolean  @default(false)  // true if archive contains >1 file
+  fileCount     Int      @default(1)      // number of files inside the zip
+  fileCategory  String   @default("other") // 'image' | 'pdf' | 'document' | 'spreadsheet' | 'presentation' | 'archive' | 'video' | 'audio' | 'code' | 'other'
+  fileListJson  String   @default("[]")   // JSON array of [{name,size,mimeType}] for zip contents
+  previewData   String   @default("")     // reserved (legacy); previews served via inline download
+  entityType    String   @default("standalone")
   entityId      Int?
   title         String   @default("")
   description   String   @default("")
@@ -555,6 +562,7 @@ model Attachment {
   @@index([entityType, entityId])
   @@index([uploadedById])
   @@index([isImage])
+  @@index([fileCategory])
 }
 
 // ─── 19. AttachmentMeta ────────────────────────────────────
