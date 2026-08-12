@@ -263,6 +263,97 @@ function SectionHeader({ icon: Icon, children }: { icon: React.ComponentType<any
   return <div className="flex items-center gap-2 pb-1"><Icon className="w-4 h-4 text-blue-500" /><span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{children}</span></div>
 }
 
+// ─── Reusable Attachment Picker ───────────────────────────
+// Used inside EVERY record/item form dialog (Stock In, Stock Out, StockOutItem,
+// Order, Register/Product, Return, NonReturnable) so the user can:
+//   • pick multiple files at once  → zipped server-side into one archive
+//   • preview selected files with size + IMG badge + per-file remove button
+//   • attach unlimited key-value-description metadata fields to the SAME attachment
+//   • set an optional title + description
+// This is the SAME feature set as the standalone Upload dialog on the Attachments
+// page, so behaviour is consistent everywhere an attachment can be created.
+const ATT_PICKER_ACCENTS: Record<string, { ring: string; btn: string; chip: string; file: string; meta: string }> = {
+  violet:  { ring: 'border-violet-200 dark:border-violet-500/30',  btn: 'bg-violet-100 text-violet-700 hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-300',          chip: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400',         file: 'file:bg-violet-100 file:text-violet-700 hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300',         meta: 'bg-violet-50 dark:bg-violet-500/10' },
+  blue:    { ring: 'border-blue-200 dark:border-blue-500/30',      btn: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-500/20 dark:text-blue-300',              chip: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400',                 file: 'file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200 dark:file:bg-blue-500/20 dark:file:text-blue-300',                 meta: 'bg-blue-50 dark:bg-blue-500/10' },
+  emerald: { ring: 'border-emerald-200 dark:border-emerald-500/30',btn: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300',  chip: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400',     file: 'file:bg-emerald-100 file:text-emerald-700 hover:file:bg-emerald-200 dark:file:bg-emerald-500/20 dark:file:text-emerald-300', meta: 'bg-emerald-50 dark:bg-emerald-500/10' },
+  rose:    { ring: 'border-rose-200 dark:border-rose-500/30',     btn: 'bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-500/20 dark:text-rose-300',              chip: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400',                 file: 'file:bg-rose-100 file:text-rose-700 hover:file:bg-rose-200 dark:file:bg-rose-500/20 dark:file:text-rose-300',                 meta: 'bg-rose-50 dark:bg-rose-500/10' },
+}
+
+function AttachmentPicker({
+  files, onFilesChange,
+  metaFields, onMetaChange,
+  title, onTitleChange,
+  description, onDescChange,
+  accent = 'violet',
+  hint,
+}: {
+  files: File[]
+  onFilesChange: (f: File[]) => void
+  metaFields: { key: string; value: string; description: string }[]
+  onMetaChange: (m: { key: string; value: string; description: string }[]) => void
+  title: string
+  onTitleChange: (s: string) => void
+  description: string
+  onDescChange: (s: string) => void
+  accent?: 'violet' | 'blue' | 'emerald' | 'rose'
+  hint?: string
+}) {
+  const a = ATT_PICKER_ACCENTS[accent] || ATT_PICKER_ACCENTS.violet
+  const totalKB = files.reduce((s, f) => s + f.size, 0) / 1024
+  return (
+    <div className={`bg-muted/30 rounded-lg p-2.5 space-y-2 border ${a.ring}`}>
+      <SectionHeader icon={Paperclip}>Attachments</SectionHeader>
+      {hint && <div className="text-[10px] text-muted-foreground">{hint}</div>}
+
+      {/* File picker (multi) */}
+      <input type="file" multiple onChange={e => onFilesChange(Array.from(e.target.files || []))} className={`w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-medium ${a.file}`} />
+      <p className="text-[10px] text-muted-foreground">Select one or more files — they'll be zipped into a single archive on upload. Images will be previewable.</p>
+
+      {/* Selected files list with per-file remove */}
+      {files.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-[10px] text-muted-foreground font-medium">{files.length} file(s) selected · {totalKB.toFixed(1)} KB total</div>
+          {files.map((f, i) => (
+            <div key={i} className="flex items-center gap-1.5 bg-card rounded-md px-2 py-1 text-[11px] border">
+              <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
+              <span className="flex-1 truncate" title={f.name}>{f.name}</span>
+              <span className="text-muted-foreground text-[10px]">{(f.size / 1024).toFixed(1)} KB</span>
+              {f.type.startsWith('image/') && <Badge className={`${a.chip} border-0 text-[9px] px-1 py-0`}><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />IMG</Badge>}
+              <Button size="sm" variant="ghost" onClick={() => onFilesChange(files.filter((_, j) => j !== i))} className="text-red-500 h-5 w-5 p-0"><X className="w-3 h-3" /></Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Optional title + description for the attachment record */}
+      <div className="grid grid-cols-1 gap-2">
+        <div className="space-y-1"><Label className="text-[10px] font-medium text-muted-foreground">Attachment title (optional)</Label><Input value={title} onChange={e => onTitleChange(e.target.value)} placeholder="e.g. Delivery photos, Invoice scan..." className="h-7 text-xs" /></div>
+        <div className="space-y-1"><Label className="text-[10px] font-medium text-muted-foreground">Attachment description (optional)</Label><Input value={description} onChange={e => onDescChange(e.target.value)} placeholder="Short note about this attachment..." className="h-7 text-xs" /></div>
+      </div>
+
+      {/* Custom metadata key-value-description editor (unlimited rows) */}
+      <div className={`${a.meta} rounded-md p-2 space-y-1.5`}>
+        <div className="flex items-center justify-between">
+          <Label className="text-[10px] font-semibold flex items-center gap-1 text-muted-foreground uppercase tracking-wider"><Tags className="w-3 h-3" />Custom Metadata</Label>
+          <Button size="sm" variant="ghost" onClick={() => onMetaChange([...metaFields, { key: '', value: '', description: '' }])} className="h-6 text-[11px] px-2 text-violet-600 hover:bg-violet-100 dark:hover:bg-violet-500/20"><Plus className="w-3 h-3 mr-0.5" />Add Field</Button>
+        </div>
+        <p className="text-[10px] text-muted-foreground">Add unlimited key-value-description fields. These power the advanced content-based filters on every list page.</p>
+        {metaFields.length === 0 && <div className="text-[10px] text-muted-foreground italic">No custom fields yet. Click "Add Field" to add key-value-description metadata.</div>}
+        {metaFields.map((m, i) => (
+          <div key={i} className="space-y-1 bg-card rounded-md p-1.5 border">
+            <div className="flex gap-1">
+              <Input value={m.key} onChange={e => onMetaChange(metaFields.map((x, j) => j === i ? { ...x, key: e.target.value } : x))} placeholder="Key (e.g. batch)" className="h-7 text-xs flex-1" />
+              <Input value={m.value} onChange={e => onMetaChange(metaFields.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} placeholder="Value (e.g. B-001)" className="h-7 text-xs flex-1" />
+              <Button size="sm" variant="ghost" onClick={() => onMetaChange(metaFields.filter((_, j) => j !== i))} className="text-red-500 h-7 w-7 p-0"><X className="w-3 h-3" /></Button>
+            </div>
+            <Input value={m.description} onChange={e => onMetaChange(metaFields.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} placeholder="Description (optional) — what this field means..." className="h-7 text-xs" />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ─── Pagination helper
 function Pager({ page, totalPages, onPageChange }: { page: number; totalPages: number; onPageChange: (p: number) => void }) {
   if (totalPages <= 1) return null
