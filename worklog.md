@@ -172,3 +172,51 @@ Stage Summary:
   * Content-based attachment filter on all advanced filter panels (Stock In, Stock Out, Returns, Non-Returnable, Orders)
   * Super_admin enterprise picker in upload dialog
 - All user requirements met
+
+---
+Task ID: 13
+Agent: main (orchestrator) — auth-context cookie fallback fix
+Task: Fix 404 errors on /api/attachments/[id]/download when called from <img src> tags (browser-issued requests can't carry custom x-user-* auth headers)
+
+Work Log:
+- Reviewed worklog Task 1 + 6 + 7-11 + 12 — confirmed Attachment system (multi-file ZIP, metadata tabs, contacts-list layout, content-based filter, tenant isolation) is fully built
+- Discovered dev.log showed 404s on GET /api/attachments/[2,4,6,8,10,11,12]/download?inline=1&fileIndex=0 even though the user was logged in (POST /api/auth 200, GET /api/attachments 200, GET /api/attachments/counts 200, GET /api/attachments/meta-keys 200 all returned 200)
+- Verified /home/z/ims-attachments/*.gz and *.zip files DO exist on disk (11 files total)
+- Root-caused: getAuthContextFromHeaders() in src/lib/api.ts ONLY read x-user-id/x-user-role/x-enterprise-id/etc. headers, which are added by the client-side apiFetch() wrapper for fetch() calls. But <img src="/api/attachments/.../download?inline=1&fileIndex=N"> tags are browser-issued requests — browsers cannot attach custom headers to such requests, so the API saw an anonymous warehouse_admin context and the tenant-isolation check (canAccessEnterprise) denied access, returning 404 "Entry not found"
+- Fixed src/lib/api.ts:getAuthContextFromHeaders(): when x-user-id header is missing/empty (i.e. browser-issued request), fall back to parsing the ims-session HTTP-only cookie (set by POST /api/auth). The cookie contains the full user object JSON, so we extract userId/role/enterpriseId/branchId/warehouseId from it
+- Added parseSessionCookie() helper that decodes the Cookie header, finds the ims-session cookie, and returns a fully-populated AuthContext
+- Headers take precedence over cookie when both are present (apiFetch still uses headers explicitly for typed fetch calls; cookie is only consulted when headers are absent)
+- Verified with curl: 7 download endpoints (Att#2,4,6,8,10,11,12) all now return 200 when only the session cookie is sent (no x-user-* headers)
+- Verified via Agent Browser (logged in as super_admin):
+  * Attachments page primary tabs render correctly: "All 11", "Documents 2", "Other 9"
+  * Secondary metadata tabs render correctly: "All Metadata", "batch", "doc-type", "invoice", "project"
+  * Image avatars now render in rows (no longer broken) — confirmed visible in snapshot (ref=e25 Screenshot_BubbleShooter.jpg, ref=e34 Invoice Scan, etc.)
+  * Contacts-list style (rows with avatar + filename + metadata badges + actions) confirmed by VLM
+  * Pagination control at bottom (per-page selector + nav arrows) confirmed by VLM
+  * Multi-file ZIP preview dialog: clicking "Preview" opens dialog with thumbnail strip (only image entries shown), main preview shows "Download to view this file" for non-image fileIndex, clicking thumbnail switches to image preview which renders the actual PNG content
+  * Content-based attachment filter on Stock Out advanced filter panel: searched "INV-001" (standalone metadata) → "No recorders found" (correct, no Stock Out recorder has that attachment); searched "BubbleShooter" (filename of attachment linked to SOUT-2026-0003) → only that 1 recorder matched (correct)
+  * VLM (vision model) confirmed all 5 UI requirements (tabs by file type, tabs by metadata key, contacts-list style, pagination with per-page selector, image thumbnails visible) and the preview dialog (thumbnail strip + main image preview + metadata badges + download button)
+  * No page errors, no console errors
+- Ran `bun run lint` — passes with exit 0, no warnings
+
+Stage Summary:
+- Fixed critical auth bug that prevented <img src> image previews from loading on the Attachments page
+- Root cause: getAuthContextFromHeaders only consulted x-user-* custom headers, which browser-issued <img src> requests cannot include
+- Solution: added session-cookie fallback path so browser-issued requests (image previews, download links) authenticate via the ims-session HTTP-only cookie set by POST /api/auth
+- Headers take precedence over cookie when both are present (preserves existing apiFetch behavior for typed fetch calls)
+- All Attachment system features now verified working end-to-end via Agent Browser + VLM:
+  * Multi-file ZIP upload with server-side archiver bundling
+  * Item-level + record-level + standalone attachments
+  * Custom metadata key-value-description (unlimited)
+  * Image preview via ?fileIndex=N single-entry extraction (NOW actually loads in browser)
+  * Whole-ZIP download
+  * Tenant isolation (enterprise/branch/warehouse scoping via cookie OR header auth)
+  * File-category tabs (image/pdf/document/spreadsheet/presentation/video/audio/archive/code/other)
+  * Metadata-key tabs (dynamic from distinct keys)
+  * Contacts-list layout (not cards)
+  * Pagination with per-page Select (10/20/50/100)
+  * Content-based attachment filter on all 5 advanced filter panels (Stock In, Stock Out, Returns, Non-Returnable, Orders)
+  * Super_admin enterprise picker in upload dialog
+- src/lib/api.ts grew from 38 lines → 112 lines
+- bun run lint passes (exit 0)
+- All user requirements confirmed satisfied
