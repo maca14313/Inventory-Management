@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
@@ -26,7 +26,7 @@ import {
   Sun, Moon, Phone, Mail, MapPin, FileText, Hash, ChevronLeft, Sparkles, ChevronRight as ChevronRightIcon, SkipBack, SkipForward, Printer, Filter, CalendarDays,
   MessageSquare, Send, Ban, ClipboardCheck,
   Paperclip, Download, Upload, Image as ImageIcon, File as FileIcon, FileImage,
-  Table as TableIcon, Presentation, Video, Music, Archive, Code, Files,
+  Table as TableIcon, Presentation, Video, Music, Archive, Code, Files, Tags,
 } from 'lucide-react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -653,6 +653,20 @@ export default function IMSApp() {
   }>({ open: false, submitting: false, attachment: null, title: '', description: '', entityType: 'standalone', entityId: '', metaFields: [] })
   // Preview dialog (full-size image)
   const [attPreview, setAttPreview] = useState<{ open: boolean; attachment: AttachmentRecord | null; fileIndex: number }>({ open: false, attachment: null, fileIndex: 0 })
+  // "Attach to existing record" dialog — lets the user attach files to ANY existing
+  // record or item (stock_in, stock_in_item, stock_out, stock_out_item, return,
+  // non_returnable, order, order_item, product) after it has been created. This is
+  // critical for stock_in_item and order_item which are created inline (no create
+  // dialog) so they had no way to receive attachments otherwise.
+  const [attLink, setAttLink] = useState<{
+    open: boolean; submitting: boolean
+    entityType: string; entityId: number
+    entityLabel: string; warehouseId?: number
+    files: File[]; title: string; description: string
+    metaFields: { key: string; value: string; description: string }[]
+  }>({ open: false, submitting: false, entityType: '', entityId: 0, entityLabel: '', files: [], title: '', description: '', metaFields: [] })
+  const openAttLink = (entityType: string, entityId: number, entityLabel: string, warehouseId?: number) =>
+    setAttLink({ open: true, submitting: false, entityType, entityId, entityLabel, warehouseId, files: [], title: '', description: '', metaFields: [] })
 
   // Lots dialog state (Change 2)
   const [lotsData, setLotsData] = useState<Lot[]>([])
@@ -703,7 +717,7 @@ export default function IMSApp() {
   const [returnsAttSearch, setReturnsAttSearch] = useState('')
   const [returnsFilterPerson, setReturnsFilterPerson] = useState('')
   // Single-item return dialog
-  const [returnDlg, setReturnDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; notes: string; submitting: boolean; pendingFiles: File[] }>({ open: false, item: null, qty: 0, notes: '', submitting: false, pendingFiles: [] })
+  const [returnDlg, setReturnDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; notes: string; submitting: boolean; pendingFiles: File[]; pendingMetaFields: { key: string; value: string; description: string }[]; pendingAttTitle: string; pendingAttDesc: string }>({ open: false, item: null, qty: 0, notes: '', submitting: false, pendingFiles: [], pendingMetaFields: [], pendingAttTitle: '', pendingAttDesc: '' })
   // Source-record dialog (shows the StockOutRecorder that this item belongs to + return history)
   const [returnSourceDlg, setReturnSourceDlg] = useState<{ open: boolean; loading: boolean; item: ReturnableItem | null }>({ open: false, loading: false, item: null })
   // Group return dialog (mirrors Stock-In recorder creation: person header + warehouse + items)
@@ -764,7 +778,7 @@ export default function IMSApp() {
   const [nonRetFilterReason, setNonRetFilterReason] = useState<string>('')
   const [nonRetAttSearch, setNonRetAttSearch] = useState('')
   // Single-item "mark as non-returnable" dialog (mirrors returnDlg)
-  const [nonRetDlg, setNonRetDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; reason: string; reasonDetail: string; notes: string; submitting: boolean; pendingFiles: File[] }>({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [] })
+  const [nonRetDlg, setNonRetDlg] = useState<{ open: boolean; item: ReturnableItem | null; qty: number; reason: string; reasonDetail: string; notes: string; submitting: boolean; pendingFiles: File[]; pendingMetaFields: { key: string; value: string; description: string }[]; pendingAttTitle: string; pendingAttDesc: string }>({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [], pendingMetaFields: [], pendingAttTitle: '', pendingAttDesc: '' })
   // Group "mark as non-returnable" dialog (mirrors groupReturnDlg)
   // mode='prefilled' → opened from a person button (items pre-filled from that person)
   // mode='new'       → opened from the "New Group Non-Returnable" button (empty person + item picker)
@@ -1053,7 +1067,7 @@ export default function IMSApp() {
 
   // ─── Returns: open single-item return dialog (qty defaults to full remaining) ────
   const openReturnDlg = (item: ReturnableItem) => {
-    setReturnDlg({ open: true, item, qty: item.remainingQty, notes: '', submitting: false, pendingFiles: [] })
+    setReturnDlg({ open: true, item, qty: item.remainingQty, notes: '', submitting: false, pendingFiles: [], pendingMetaFields: [], pendingAttTitle: '', pendingAttDesc: '' })
   }
   // ─── Returns: submit single-item return ────
   const submitReturn = async () => {
@@ -1066,10 +1080,10 @@ export default function IMSApp() {
       const createdReturn = await apiFetch(`/returns`, { method: 'POST', body: JSON.stringify({ stockOutItemId: it.id, quantity: returnDlg.qty, notes: returnDlg.notes || undefined }) })
       // Upload return-level attachments (entityType='return', entityId=createdReturn.id)
       if (returnDlg.pendingFiles?.length && createdReturn?.id) {
-        await uploadAttachmentsFor('return', createdReturn.id, it.warehouseId, returnDlg.pendingFiles)
+        await uploadAttachmentsFor('return', createdReturn.id, it.warehouseId, returnDlg.pendingFiles, { metaFields: returnDlg.pendingMetaFields, title: returnDlg.pendingAttTitle, description: returnDlg.pendingAttDesc })
       }
       toast({ title: `Returned ${returnDlg.qty} ${it.unit} of ${it.product.name}` })
-      setReturnDlg({ open: false, item: null, qty: 0, notes: '', submitting: false, pendingFiles: [] })
+      setReturnDlg({ open: false, item: null, qty: 0, notes: '', submitting: false, pendingFiles: [], pendingMetaFields: [], pendingAttTitle: '', pendingAttDesc: '' })
       await loadReturns(returnsTab)
       await loadData(false) // refresh dashboard + stock to reflect the stock-in
     } catch (e: any) {
@@ -1223,7 +1237,7 @@ export default function IMSApp() {
 
   // ─── Non-Returnables: open single-item dialog (qty defaults to full remaining; reason unselected) ──
   const openNonRetDlg = (item: ReturnableItem) => {
-    setNonRetDlg({ open: true, item, qty: item.remainingQty, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [] })
+    setNonRetDlg({ open: true, item, qty: item.remainingQty, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [], pendingMetaFields: [], pendingAttTitle: '', pendingAttDesc: '' })
   }
   // ─── Non-Returnables: submit single-item decision ──
   const submitNonReturnable = async () => {
@@ -1247,10 +1261,10 @@ export default function IMSApp() {
       })
       // Upload non-returnable-level attachments (entityType='non_returnable', entityId=created.id)
       if (nonRetDlg.pendingFiles?.length && created?.id) {
-        await uploadAttachmentsFor('non_returnable', created.id, it.warehouseId, nonRetDlg.pendingFiles)
+        await uploadAttachmentsFor('non_returnable', created.id, it.warehouseId, nonRetDlg.pendingFiles, { metaFields: nonRetDlg.pendingMetaFields, title: nonRetDlg.pendingAttTitle, description: nonRetDlg.pendingAttDesc })
       }
       toast({ title: `Marked ${nonRetDlg.qty} ${it.unit} of ${it.product.name} as non-returnable (${REASON_LABELS[nonRetDlg.reason] || nonRetDlg.reason})` })
-      setNonRetDlg({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [] })
+      setNonRetDlg({ open: false, item: null, qty: 0, reason: '', reasonDetail: '', notes: '', submitting: false, pendingFiles: [], pendingMetaFields: [], pendingAttTitle: '', pendingAttDesc: '' })
       await loadNonReturnables(nonRetTab)
       await loadReturns(returnsTab) // refresh the Returns page too (remaining qty changed)
       await loadGroupNonRetRecords()
@@ -1426,8 +1440,11 @@ export default function IMSApp() {
     }
   }
 
-  const openCreate = (type: string) => { setDlgType(type); setDlgEdit(null); setDlgData({}); setDlgOpen(true) }
-  const openEdit = (type: string, item: any) => { setDlgType(type); setDlgEdit(item); setDlgData({ ...item }); setDlgOpen(true) }
+  // Default attachment-picker state injected into every form dialog so the
+  // AttachmentPicker component always has well-defined props (files/meta/title/desc).
+  const EMPTY_ATT_STATE = { pendingFiles: [] as File[], pendingMetaFields: [] as { key: string; value: string; description: string }[], pendingAttTitle: '', pendingAttDesc: '' }
+  const openCreate = (type: string) => { setDlgType(type); setDlgEdit(null); setDlgData({ ...EMPTY_ATT_STATE }); setDlgOpen(true) }
+  const openEdit = (type: string, item: any) => { setDlgType(type); setDlgEdit(item); setDlgData({ ...item, ...EMPTY_ATT_STATE }); setDlgOpen(true) }
 
   const fmt = (n: number) => new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD' }).format(n)
   const fmtN = (n: number) => new Intl.NumberFormat(locale).format(n)
@@ -2059,7 +2076,10 @@ export default function IMSApp() {
               <Badge className={`${o.type === 'purchase' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'} border-0 text-[11px]`}>{o.type}</Badge></div>
               <span className="text-sm font-bold">{fmt(o.totalAmount)}</span></div>
             <div className="text-xs text-muted-foreground">{wh?.name || '—'} · {o.notes}</div>
-            {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('order', o)} className="mt-2 text-xs"><Pencil className="w-3 h-3 mr-1" />Edit</Button>}
+            <div className="flex gap-1 mt-2">
+              {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('order', o)} className="text-xs"><Pencil className="w-3 h-3 mr-1" />Edit</Button>}
+              <Button size="sm" variant="ghost" onClick={() => openAttLink('order', o.id, `Order #${o.id} (${o.type}, ${o.status})`, o.warehouseId || undefined)} className="text-xs text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-500/20"><Paperclip className="w-3 h-3 mr-1" />Attach</Button>
+            </div>
           </CardContent></Card>)})}
           {filteredOrders.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No orders match the current filters</div>}
         </div>
@@ -2427,6 +2447,7 @@ export default function IMSApp() {
                     {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+                    <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openAttLink('stock_in', r.id, `${r.recorderCode} — ${r.personName || 'Receipt'}`, r.warehouseId) }} className="h-5 w-5 p-0 text-violet-600" title="Attach files to this receipt"><Paperclip className="w-2.5 h-2.5" /></Button>
                     {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openEdit('stockInRecorder', r) }} className="h-5 w-5 p-0 text-muted-foreground"><Pencil className="w-2.5 h-2.5" /></Button>}
                     {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); crud.remove(`/stock-in/${r.id}`) }} disabled={isCrudLoading('remove', `/stock-in/${r.id}`)} className="h-5 w-5 p-0 text-red-500">{isCrudLoading('remove', `/stock-in/${r.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button>}
                   </div>
@@ -2461,7 +2482,7 @@ export default function IMSApp() {
                                 <div><span className="text-muted-foreground">Cost/U: </span><span className="font-mono">{fmt(item.costPerUnit || 0)}</span></div>
                                 <div><span className="text-muted-foreground">Total: </span><span className="font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</span></div>
                               </div>
-                              <div className="flex justify-end pt-0.5 border-t"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-5 w-5 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div>
+                              <div className="flex justify-end pt-0.5 border-t gap-1">{!item._pending && <Button size="sm" variant="ghost" onClick={() => openAttLink('stock_in_item', item.id, `${prod?.name || `#${item.productId}`} — Qty ${item.quantity} ${item.unit}`, r.warehouseId)} className="text-violet-600 h-5 w-5 p-0" title="Attach files to this item"><Paperclip className="w-2.5 h-2.5" /></Button>}<Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-5 w-5 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div>
                             </div>)})}
                         </div>
                         {/* Desktop: table */}
@@ -2477,7 +2498,7 @@ export default function IMSApp() {
                               <TableCell className="py-1 text-[11px] text-right font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</TableCell>
                               <TableCell className="py-1">{cond ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{cond.name}</Badge> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
                               <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
-                              <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></TableCell>
+                              <TableCell className="py-1 text-right"><div className="flex items-center justify-end gap-0.5">{!item._pending && <Button size="sm" variant="ghost" onClick={() => openAttLink('stock_in_item', item.id, `${prod?.name || `#${item.productId}`} — Qty ${item.quantity} ${item.unit}`, r.warehouseId)} className="text-violet-600 h-4 w-4 p-0" title="Attach files to this item"><Paperclip className="w-2.5 h-2.5" /></Button>}<Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div></TableCell>
                             </TableRow>)})}
                         </TableBody></Table></div>
                         <Pager page={stockInItemPage} totalPages={totalPages} onPageChange={setStockInItemPage} />
@@ -2676,6 +2697,7 @@ export default function IMSApp() {
                     {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+                    <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openAttLink('stock_out', r.id, `${r.recorderCode} — ${r.personName || 'Dispatch'}`, r.warehouseId) }} className="h-5 w-5 p-0 text-violet-600" title="Attach files to this dispatch"><Paperclip className="w-2.5 h-2.5" /></Button>
                     {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openEdit('stockOut', r) }} className="h-5 w-5 p-0 text-muted-foreground"><Pencil className="w-2.5 h-2.5" /></Button>}
                     {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); crud.remove(`/stock-out/${r.id}`) }} disabled={isCrudLoading('remove', `/stock-out/${r.id}`)} className="h-5 w-5 p-0 text-red-500">{isCrudLoading('remove', `/stock-out/${r.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button>}
                   </div>
@@ -2709,7 +2731,7 @@ export default function IMSApp() {
                                 <div><span className="text-muted-foreground">Returnable: </span>{item.isReturnable ? <span className="text-emerald-600">Yes</span> : <span className="text-red-400">No</span>}</div>
                                 <div><span className="text-muted-foreground">Deadline: </span>{item.returnDeadline || '—'}</div>
                               </div>
-                              <div className="flex justify-end pt-0.5 border-t"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingItem(r.id, item.tempId) : crud.remove(`/stock-out/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`)} className="text-red-500 h-5 w-5 p-0">{!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div>
+                              <div className="flex justify-end pt-0.5 border-t gap-1">{!item._pending && <Button size="sm" variant="ghost" onClick={() => openAttLink('stock_out_item', item.id, `${prod?.name || `#${item.productId}`} — Qty ${item.quantity} ${item.unit}`, r.warehouseId)} className="text-violet-600 h-5 w-5 p-0" title="Attach files to this item"><Paperclip className="w-2.5 h-2.5" /></Button>}<Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingItem(r.id, item.tempId) : crud.remove(`/stock-out/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`)} className="text-red-500 h-5 w-5 p-0">{!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div>
                             </div>)})}
                         </div>
                         {/* Desktop: table */}
@@ -2725,7 +2747,7 @@ export default function IMSApp() {
                               <TableCell className="py-1 text-[11px] text-muted-foreground">{item.returnDeadline || '—'}</TableCell>
                               <TableCell className="py-1">{cond ? <Badge className="bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-400 border-0 text-[9px] h-4">{cond.name}</Badge> : <span className="text-[10px] text-muted-foreground">—</span>}</TableCell>
                               <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
-                              <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingItem(r.id, item.tempId) : crud.remove(`/stock-out/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></TableCell>
+                              <TableCell className="py-1 text-right"><div className="flex items-center justify-end gap-0.5">{!item._pending && <Button size="sm" variant="ghost" onClick={() => openAttLink('stock_out_item', item.id, `${prod?.name || `#${item.productId}`} — Qty ${item.quantity} ${item.unit}`, r.warehouseId)} className="text-violet-600 h-4 w-4 p-0" title="Attach files to this item"><Paperclip className="w-2.5 h-2.5" /></Button>}<Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingItem(r.id, item.tempId) : crud.remove(`/stock-out/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-out/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div></TableCell>
                             </TableRow>)})}
                         </TableBody></Table></div>
                         <Pager page={stockOutItemPage} totalPages={totalPages} onPageChange={setStockOutItemPage} />
@@ -3777,10 +3799,18 @@ export default function IMSApp() {
                   <div className="space-y-1"><IconLabel icon={ClipboardCheck}>Condition</IconLabel><PaginatedCombobox items={conditions.filter(c=>c.enterpriseId===eid||role==='super_admin').map(c=>({value:String(c.id),label:c.name}))} value={dlgData.conditionId ? String(dlgData.conditionId) : ''} onChange={v=>setDlgData({...dlgData,conditionId:parseInt(v)})} placeholder="Condition —" /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Paperclip}>Attachments (product-level)</SectionHeader>
-                  <div className="text-[10px] text-muted-foreground">Attach product photos, spec sheets, or manuals. Files are zipped on upload and linked to this product.</div>
-                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-emerald-100 file:text-emerald-700 file:text-xs file:font-medium hover:file:bg-emerald-200 dark:file:bg-emerald-500/20 dark:file:text-emerald-300" />
-                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
+                  <AttachmentPicker
+                    files={dlgData.pendingFiles || []}
+                    onFilesChange={f => setDlgData({ ...dlgData, pendingFiles: f })}
+                    metaFields={dlgData.pendingMetaFields || []}
+                    onMetaChange={m => setDlgData({ ...dlgData, pendingMetaFields: m })}
+                    title={dlgData.pendingAttTitle || ''}
+                    onTitleChange={s => setDlgData({ ...dlgData, pendingAttTitle: s })}
+                    description={dlgData.pendingAttDesc || ''}
+                    onDescChange={s => setDlgData({ ...dlgData, pendingAttDesc: s })}
+                    accent="emerald"
+                    hint="Attach product photos, spec sheets, or manuals. Linked to THIS product (entityType=product)."
+                  />
                 </div>
               </>}
 
@@ -3835,12 +3865,18 @@ export default function IMSApp() {
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
                 </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Paperclip}>Attachments (order-level)</SectionHeader>
-                  <div className="text-[10px] text-muted-foreground">Attach purchase agreements, sales contracts, or delivery specs. Files are zipped on upload and linked to this order.</div>
-                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-blue-100 file:text-blue-700 file:text-xs file:font-medium hover:file:bg-blue-200 dark:file:bg-blue-500/20 dark:file:text-blue-300" />
-                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
-                </div>
+                <AttachmentPicker
+                    files={dlgData.pendingFiles || []}
+                    onFilesChange={f => setDlgData({ ...dlgData, pendingFiles: f })}
+                    metaFields={dlgData.pendingMetaFields || []}
+                    onMetaChange={m => setDlgData({ ...dlgData, pendingMetaFields: m })}
+                    title={dlgData.pendingAttTitle || ''}
+                    onTitleChange={s => setDlgData({ ...dlgData, pendingAttTitle: s })}
+                    description={dlgData.pendingAttDesc || ''}
+                    onDescChange={s => setDlgData({ ...dlgData, pendingAttDesc: s })}
+                    accent="blue"
+                    hint="Attach purchase agreements, sales contracts, or delivery specs. Linked to THIS order (entityType=order)."
+                  />
               </>}
 
               {/* ─── StockOut ─── */}
@@ -3868,12 +3904,18 @@ export default function IMSApp() {
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="rounded-md" /></div>
                 </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Paperclip}>Attachments</SectionHeader>
-                  <div className="text-[10px] text-muted-foreground">Attach delivery notes, photos, or documents. Files are zipped on upload and linked to this dispatch.</div>
-                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-blue-100 file:text-blue-700 file:text-xs file:font-medium hover:file:bg-blue-200 dark:file:bg-blue-500/20 dark:file:text-blue-300" />
-                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
-                </div>
+                <AttachmentPicker
+                    files={dlgData.pendingFiles || []}
+                    onFilesChange={f => setDlgData({ ...dlgData, pendingFiles: f })}
+                    metaFields={dlgData.pendingMetaFields || []}
+                    onMetaChange={m => setDlgData({ ...dlgData, pendingMetaFields: m })}
+                    title={dlgData.pendingAttTitle || ''}
+                    onTitleChange={s => setDlgData({ ...dlgData, pendingAttTitle: s })}
+                    description={dlgData.pendingAttDesc || ''}
+                    onDescChange={s => setDlgData({ ...dlgData, pendingAttDesc: s })}
+                    accent="blue"
+                    hint="Attach delivery notes, photos, or documents. Linked to THIS dispatch recorder (entityType=stock_out)."
+                  />
               </>}
 
               {/* ─── StockOutItem ─── */}
@@ -3899,12 +3941,18 @@ export default function IMSApp() {
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Input value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="h-8 text-sm rounded-md" /></div>
                 </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Paperclip}>Attachments (item-level)</SectionHeader>
-                  <div className="text-[10px] text-muted-foreground">Attach photos, serial numbers, or documents to THIS item. Files are zipped on upload and linked to this specific item (not the whole dispatch).</div>
-                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-blue-100 file:text-blue-700 file:text-xs file:font-medium hover:file:bg-blue-200 dark:file:bg-blue-500/20 dark:file:text-blue-300" />
-                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
-                </div>
+                <AttachmentPicker
+                    files={dlgData.pendingFiles || []}
+                    onFilesChange={f => setDlgData({ ...dlgData, pendingFiles: f })}
+                    metaFields={dlgData.pendingMetaFields || []}
+                    onMetaChange={m => setDlgData({ ...dlgData, pendingMetaFields: m })}
+                    title={dlgData.pendingAttTitle || ''}
+                    onTitleChange={s => setDlgData({ ...dlgData, pendingAttTitle: s })}
+                    description={dlgData.pendingAttDesc || ''}
+                    onDescChange={s => setDlgData({ ...dlgData, pendingAttDesc: s })}
+                    accent="blue"
+                    hint="Attach photos, serial numbers, or documents to THIS item (entityType=stock_out_item). Linked to the specific line item, not the whole dispatch."
+                  />
               </>}
 
               {/* ─── Supplier ─── */}
@@ -3974,12 +4022,18 @@ export default function IMSApp() {
                   <SectionHeader icon={FileText}>Notes</SectionHeader>
                   <div className="space-y-1"><IconLabel icon={FileText}>Notes</IconLabel><Textarea value={dlgData.notes||''} onChange={e=>setDlgData({...dlgData,notes:e.target.value})} className="h-8 text-sm rounded-md min-h-[60px]" /></div>
                 </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Paperclip}>Attachments</SectionHeader>
-                  <div className="text-[10px] text-muted-foreground">Attach invoices, photos, or documents. Files are zipped on upload and linked to this receipt.</div>
-                  <input type="file" multiple onChange={e=>setDlgData({...dlgData,pendingFiles:Array.from(e.target.files||[])})} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-emerald-100 file:text-emerald-700 file:text-xs file:font-medium hover:file:bg-emerald-200 dark:file:bg-emerald-500/20 dark:file:text-emerald-300" />
-                  {dlgData.pendingFiles && dlgData.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{dlgData.pendingFiles.length} file(s) selected: {dlgData.pendingFiles.map((f:File)=>f.name).join(', ')}</div>}
-                </div>
+                <AttachmentPicker
+                    files={dlgData.pendingFiles || []}
+                    onFilesChange={f => setDlgData({ ...dlgData, pendingFiles: f })}
+                    metaFields={dlgData.pendingMetaFields || []}
+                    onMetaChange={m => setDlgData({ ...dlgData, pendingMetaFields: m })}
+                    title={dlgData.pendingAttTitle || ''}
+                    onTitleChange={s => setDlgData({ ...dlgData, pendingAttTitle: s })}
+                    description={dlgData.pendingAttDesc || ''}
+                    onDescChange={s => setDlgData({ ...dlgData, pendingAttDesc: s })}
+                    accent="emerald"
+                    hint="Attach invoices, photos, or documents. Linked to THIS receipt (entityType=stock_in)."
+                  />
               </>}
 
             </div>
@@ -4025,7 +4079,7 @@ export default function IMSApp() {
                   }
                   // Product-level attachments (entityType='product', entityId=prodRes.id)
                   if (dlgData.pendingFiles?.length && prodRes.id) {
-                    await uploadAttachmentsFor('product', prodRes.id, dlgData.warehouseId, dlgData.pendingFiles)
+                    await uploadAttachmentsFor('product', prodRes.id, dlgData.warehouseId, dlgData.pendingFiles, { metaFields: dlgData.pendingMetaFields, title: dlgData.pendingAttTitle, description: dlgData.pendingAttDesc })
                   }
                   await loadData()
                 }
@@ -4048,29 +4102,29 @@ export default function IMSApp() {
                   // Capture created item ID so we can attach files at the item level (stock_out_item)
                   const createdItem = await apiFetch(`/stock-out/${recorderId}/item`, { method: 'POST', body: JSON.stringify(sd) })
                   if (dlgData.pendingFiles?.length && createdItem?.id) {
-                    await uploadAttachmentsFor('stock_out_item', createdItem.id, dlgData.warehouseId, dlgData.pendingFiles)
+                    await uploadAttachmentsFor('stock_out_item', createdItem.id, dlgData.warehouseId, dlgData.pendingFiles, { metaFields: dlgData.pendingMetaFields, title: dlgData.pendingAttTitle, description: dlgData.pendingAttDesc })
                   }
                   await loadData()
                 }
-                else if (dlgEdit && dlgType==='stockInRecorder') { await crud.update(`/stock-in/${dlgEdit.id}`, sd); if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_in', dlgEdit.id, dlgData.warehouseId, dlgData.pendingFiles) }
+                else if (dlgEdit && dlgType==='stockInRecorder') { await crud.update(`/stock-in/${dlgEdit.id}`, sd); if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_in', dlgEdit.id, dlgData.warehouseId, dlgData.pendingFiles, { metaFields: dlgData.pendingMetaFields, title: dlgData.pendingAttTitle, description: dlgData.pendingAttDesc }) }
                 else if (dlgType==='stockInRecorder') {
                   const rec = await apiFetch('/stock-in', { method: 'POST', body: JSON.stringify(sd) })
                   toast({ title: 'Created successfully' })
-                  if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_in', rec.id, dlgData.warehouseId, dlgData.pendingFiles)
+                  if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_in', rec.id, dlgData.warehouseId, dlgData.pendingFiles, { metaFields: dlgData.pendingMetaFields, title: dlgData.pendingAttTitle, description: dlgData.pendingAttDesc })
                   await loadData()
                 }
-                else if (dlgEdit && dlgType==='order') { await crud.update(`/orders/${dlgEdit.id}`, sd); if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('order', dlgEdit.id, dlgData.warehouseId, dlgData.pendingFiles) }
+                else if (dlgEdit && dlgType==='order') { await crud.update(`/orders/${dlgEdit.id}`, sd); if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('order', dlgEdit.id, dlgData.warehouseId, dlgData.pendingFiles, { metaFields: dlgData.pendingMetaFields, title: dlgData.pendingAttTitle, description: dlgData.pendingAttDesc }) }
                 else if (dlgType==='order') {
                   const ord = await apiFetch('/orders', { method: 'POST', body: JSON.stringify(sd) })
                   toast({ title: 'Order created' })
-                  if (dlgData.pendingFiles?.length && ord?.id) await uploadAttachmentsFor('order', ord.id, dlgData.warehouseId, dlgData.pendingFiles)
+                  if (dlgData.pendingFiles?.length && ord?.id) await uploadAttachmentsFor('order', ord.id, dlgData.warehouseId, dlgData.pendingFiles, { metaFields: dlgData.pendingMetaFields, title: dlgData.pendingAttTitle, description: dlgData.pendingAttDesc })
                   await loadData()
                 }
                 else if (dlgEdit) await crud.update(dlgType==='stockOut' ? `/stock-out/${dlgEdit.id}` : `/${dlgType}s/${dlgEdit.id}`,sd)
                 else if (dlgType==='stockOut') {
                   const rec = await apiFetch('/stock-out', { method: 'POST', body: JSON.stringify(sd) })
                   toast({ title: 'Created successfully' })
-                  if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_out', rec.id, dlgData.warehouseId, dlgData.pendingFiles)
+                  if (dlgData.pendingFiles?.length) await uploadAttachmentsFor('stock_out', rec.id, dlgData.warehouseId, dlgData.pendingFiles, { metaFields: dlgData.pendingMetaFields, title: dlgData.pendingAttTitle, description: dlgData.pendingAttDesc })
                   await loadData()
                 }
                 else await crud.create(`/${dlgType}s`, sd)
@@ -4171,12 +4225,18 @@ export default function IMSApp() {
                     <Textarea value={returnDlg.notes} onChange={e => setReturnDlg(s => ({ ...s, notes: e.target.value }))} placeholder="Reason for return, condition, etc." className="rounded-md min-h-[60px]" />
                   </div>
                 </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Paperclip}>Attachments (return-level)</SectionHeader>
-                  <div className="text-[10px] text-muted-foreground">Attach return receipts, photos of the returned item, or condition evidence. Files are zipped on upload and linked to this return.</div>
-                  <input type="file" multiple onChange={e => setReturnDlg(s => ({ ...s, pendingFiles: Array.from(e.target.files || []) }))} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-violet-100 file:text-violet-700 file:text-xs file:font-medium hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300" />
-                  {returnDlg.pendingFiles && returnDlg.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{returnDlg.pendingFiles.length} file(s) selected: {returnDlg.pendingFiles.map(f => f.name).join(', ')}</div>}
-                </div>
+                <AttachmentPicker
+                    files={returnDlg.pendingFiles || []}
+                    onFilesChange={f => setReturnDlg(s => ({ ...s, pendingFiles: f }))}
+                    metaFields={returnDlg.pendingMetaFields || []}
+                    onMetaChange={m => setReturnDlg(s => ({ ...s, pendingMetaFields: m }))}
+                    title={returnDlg.pendingAttTitle || ''}
+                    onTitleChange={s2 => setReturnDlg(s => ({ ...s, pendingAttTitle: s2 }))}
+                    description={returnDlg.pendingAttDesc || ''}
+                    onDescChange={s2 => setReturnDlg(s => ({ ...s, pendingAttDesc: s2 }))}
+                    accent="violet"
+                    hint="Attach return receipts, photos of the returned item, or condition evidence. Linked to THIS return (entityType=return)."
+                  />
                 <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2 text-[11px] text-violet-700 dark:text-violet-400 flex items-start gap-1.5">
                   <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                   <span>This will restock <span className="font-mono font-semibold">{returnDlg.qty || 0} {it.unit}</span> of <span className="font-semibold">{it.product?.name}</span> into <span className="font-semibold">{wh?.name || `WH #${it.warehouseId}`}</span> and create a Lot with source=<span className="font-mono">adjustment</span>.</span>
@@ -4591,12 +4651,18 @@ export default function IMSApp() {
                     <Textarea value={nonRetDlg.notes} onChange={e => setNonRetDlg(s => ({ ...s, notes: e.target.value }))} placeholder="Additional context, condition, inspector notes, etc." className="rounded-md min-h-[60px]" />
                   </div>
                 </div>
-                <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
-                  <SectionHeader icon={Paperclip}>Attachments (decision-level)</SectionHeader>
-                  <div className="text-[10px] text-muted-foreground">Attach evidence photos (damage, alteration, etc.) or inspector notes. Files are zipped on upload and linked to this non-returnable decision.</div>
-                  <input type="file" multiple onChange={e => setNonRetDlg(s => ({ ...s, pendingFiles: Array.from(e.target.files || []) }))} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-rose-100 file:text-rose-700 file:text-xs file:font-medium hover:file:bg-rose-200 dark:file:bg-rose-500/20 dark:file:text-rose-300" />
-                  {nonRetDlg.pendingFiles && nonRetDlg.pendingFiles.length > 0 && <div className="text-[10px] text-muted-foreground">{nonRetDlg.pendingFiles.length} file(s) selected: {nonRetDlg.pendingFiles.map(f => f.name).join(', ')}</div>}
-                </div>
+                <AttachmentPicker
+                    files={nonRetDlg.pendingFiles || []}
+                    onFilesChange={f => setNonRetDlg(s => ({ ...s, pendingFiles: f }))}
+                    metaFields={nonRetDlg.pendingMetaFields || []}
+                    onMetaChange={m => setNonRetDlg(s => ({ ...s, pendingMetaFields: m }))}
+                    title={nonRetDlg.pendingAttTitle || ''}
+                    onTitleChange={s2 => setNonRetDlg(s => ({ ...s, pendingAttTitle: s2 }))}
+                    description={nonRetDlg.pendingAttDesc || ''}
+                    onDescChange={s2 => setNonRetDlg(s => ({ ...s, pendingAttDesc: s2 }))}
+                    accent="rose"
+                    hint="Attach evidence photos (damage, alteration, etc.) or inspector notes. Linked to THIS non-returnable decision (entityType=non_returnable)."
+                  />
                 <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-md p-2 text-[11px] text-rose-700 dark:text-rose-400 flex items-start gap-1.5">
                   <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
                   <span>This will mark <span className="font-mono font-semibold">{nonRetDlg.qty || 0} {it.unit}</span> of <span className="font-semibold">{it.product?.name}</span> as non-returnable with reason <span className="font-semibold">{REASON_LABELS[nonRetDlg.reason] || nonRetDlg.reason || '(none selected)'}</span>. Inventory is NOT restocked — the units are simply recorded as non-returnable.</span>
@@ -5062,6 +5128,47 @@ export default function IMSApp() {
             <DialogFooter>
               <Button variant="ghost" onClick={() => setAttPreview(s => ({ ...s, open: false }))}>Close</Button>
               {attPreview.attachment && <Button onClick={() => { const a = attPreview.attachment!; const url = `${BASE}/api/attachments/${a.id}/download`; fetch(url, { headers: useAuthStore.getState().getAuthHeaders() }).then(r => r.blob()).then(b => { const u = URL.createObjectURL(b); const link = document.createElement('a'); link.href = u; link.download = a.fileName; link.click(); URL.revokeObjectURL(u) }) }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white"><Download className="w-4 h-4 mr-1.5" />Download</Button>}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── ATTACHMENT LINK DIALOG (attach files to ANY existing record/item) ─── */}
+        {/* Lets the user attach multi-file + metadata to any already-created record,
+            including stock_in_item and order_item which are created inline (no dialog). */}
+        <Dialog open={attLink.open} onOpenChange={o => setAttLink(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-lg w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Paperclip className="w-4 h-4 text-violet-500" />Attach to {attLink.entityType.replace(/_/g, ' ')} #{attLink.entityId}</DialogTitle>
+              <DialogDescription className="text-xs">{attLink.entityLabel}</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2.5 max-h-[65vh] overflow-y-auto pr-1">
+              <div className="bg-violet-50 dark:bg-violet-500/10 border border-violet-200 dark:border-violet-500/20 rounded-md p-2 text-[11px] text-violet-700 dark:text-violet-400 flex items-start gap-1.5">
+                <Paperclip className="w-3 h-3 mt-0.5 shrink-0" />
+                <span>Files will be zipped into a single archive and linked to <span className="font-mono font-semibold">{attLink.entityType}#{attLink.entityId}</span>. You can attach as many files as you want, and add unlimited metadata fields.</span>
+              </div>
+              <AttachmentPicker
+                files={attLink.files}
+                onFilesChange={f => setAttLink(s => ({ ...s, files: f }))}
+                metaFields={attLink.metaFields}
+                onMetaChange={m => setAttLink(s => ({ ...s, metaFields: m }))}
+                title={attLink.title}
+                onTitleChange={v => setAttLink(s => ({ ...s, title: v }))}
+                description={attLink.description}
+                onDescChange={v => setAttLink(s => ({ ...s, description: v }))}
+                accent="violet"
+                hint="Pick one or more files — they'll be zipped and linked to this record."
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setAttLink(s => ({ ...s, open: false }))} disabled={attLink.submitting} className="text-muted-foreground">Cancel</Button>
+              <Button disabled={attLink.submitting || attLink.files.length === 0} onClick={async () => {
+                if (attLink.files.length === 0) { toast({ title: 'Select at least one file', variant: 'destructive' }); return }
+                setAttLink(s => ({ ...s, submitting: true }))
+                try {
+                  await uploadAttachmentsFor(attLink.entityType, attLink.entityId, attLink.warehouseId, attLink.files, { metaFields: attLink.metaFields, title: attLink.title, description: attLink.description })
+                  setAttLink(s => ({ ...s, open: false, submitting: false, files: [], title: '', description: '', metaFields: [] }))
+                  await loadData()
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setAttLink(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">{attLink.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Upload className="w-4 h-4 mr-1.5" />}Attach</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
