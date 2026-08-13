@@ -279,6 +279,42 @@ const ATT_PICKER_ACCENTS: Record<string, { ring: string; btn: string; chip: stri
   rose:    { ring: 'border-rose-200 dark:border-rose-500/30',     btn: 'bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-500/20 dark:text-rose-300',              chip: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400',                 file: 'file:bg-rose-100 file:text-rose-700 hover:file:bg-rose-200 dark:file:bg-rose-500/20 dark:file:text-rose-300',                 meta: 'bg-rose-50 dark:bg-rose-500/10' },
 }
 
+// ─── File preview thumbnail
+// Renders an actual image thumbnail for image files using URL.createObjectURL().
+// For non-image files, falls back to a FileText icon on a muted tile.
+// The object URL is computed synchronously via useMemo (no cascading renders)
+// and revoked in a useEffect cleanup when the file changes or the component unmounts
+// to prevent memory leaks.
+function FilePreviewThumb({ file, size = 32 }: { file: File; size?: number }) {
+  const isImage = file.type.startsWith('image/')
+  const url = useMemo(() => {
+    if (!isImage) return null
+    return URL.createObjectURL(file)
+  }, [file, isImage])
+  useEffect(() => {
+    if (!url) return
+    return () => URL.revokeObjectURL(url)
+  }, [url])
+  if (!isImage || !url) {
+    return (
+      <div
+        className="flex items-center justify-center bg-muted/60 rounded shrink-0 border"
+        style={{ width: size, height: size }}
+      >
+        <FileText className="text-muted-foreground" style={{ width: Math.max(12, size * 0.5), height: Math.max(12, size * 0.5) }} />
+      </div>
+    )
+  }
+  return (
+    <img
+      src={url}
+      alt={file.name}
+      className="object-cover rounded shrink-0 border bg-muted/40"
+      style={{ width: size, height: size }}
+    />
+  )
+}
+
 function AttachmentPicker({
   files, onFilesChange,
   metaFields, onMetaChange,
@@ -314,11 +350,15 @@ function AttachmentPicker({
         <div className="space-y-1">
           <div className="text-[10px] text-muted-foreground font-medium">{files.length} file(s) selected · {totalKB.toFixed(1)} KB total</div>
           {files.map((f, i) => (
-            <div key={i} className="flex items-center gap-1.5 bg-card rounded-md px-2 py-1 text-[11px] border">
-              <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
-              <span className="flex-1 truncate" title={f.name}>{f.name}</span>
-              <span className="text-muted-foreground text-[10px]">{(f.size / 1024).toFixed(1)} KB</span>
-              {f.type.startsWith('image/') && <Badge className={`${a.chip} border-0 text-[9px] px-1 py-0`}><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />IMG</Badge>}
+            <div key={i} className="flex items-center gap-2 bg-card rounded-md px-2 py-1.5 text-[11px] border">
+              <FilePreviewThumb file={f} size={32} />
+              <div className="flex-1 min-w-0">
+                <div className="truncate" title={f.name}>{f.name}</div>
+                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <span>{(f.size / 1024).toFixed(1)} KB</span>
+                  {f.type.startsWith('image/') && <Badge className={`${a.chip} border-0 text-[9px] px-1 py-0`}><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />IMG</Badge>}
+                </div>
+              </div>
               <Button size="sm" variant="ghost" onClick={() => onFilesChange(files.filter((_, j) => j !== i))} className="text-red-500 h-5 w-5 p-0"><X className="w-3 h-3" /></Button>
             </div>
           ))}
@@ -4950,10 +4990,15 @@ export default function IMSApp() {
                   <div className="space-y-1 mt-1">
                     <div className="text-[10px] text-muted-foreground">{attUpload.files.length} file(s), total size {(attUpload.files.reduce((s, f) => s + f.size, 0) / 1024).toFixed(1)} KB</div>
                     {attUpload.files.map((f, i) => (
-                      <div key={i} className="flex items-center gap-1.5 bg-muted/30 rounded-md px-2 py-1 text-[11px]">
-                        <span className="flex-1 truncate">{f.name}</span>
-                        <span className="text-muted-foreground">{(f.size / 1024).toFixed(1)} KB</span>
-                        {f.type.startsWith('image/') && <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px]"><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />IMG</Badge>}
+                      <div key={i} className="flex items-center gap-2 bg-muted/30 rounded-md px-2 py-1.5 text-[11px]">
+                        <FilePreviewThumb file={f} size={36} />
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate" title={f.name}>{f.name}</div>
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <span>{(f.size / 1024).toFixed(1)} KB</span>
+                            {f.type.startsWith('image/') && <Badge className="bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400 border-0 text-[9px] px-1 py-0"><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />IMG</Badge>}
+                          </div>
+                        </div>
                         <Button size="sm" variant="ghost" onClick={() => setAttUpload(s => ({ ...s, files: s.files.filter((_, j) => j !== i) }))} className="text-red-500 h-5 w-5 p-0"><X className="w-3 h-3" /></Button>
                       </div>
                     ))}

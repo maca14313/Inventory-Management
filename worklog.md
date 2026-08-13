@@ -287,3 +287,34 @@ Stage Summary:
 - page.tsx grew from 5145 → 5204 lines
 - bun run lint passes (exit 0)
 - All user requirements now satisfied: form dialogs have metadata editor + multi-file + image preview; attaches to ANY record including item-level
+
+---
+Task ID: 15
+Agent: main (orchestrator) — image preview thumbnails during file selection
+Task: Add actual image thumbnail previews (using URL.createObjectURL) in the file-selection lists so users can SEE the chosen image while picking files (not just the file name)
+
+Work Log:
+- User reported: "when i upload i cant see the preview the chosen img to upload, i just only see the name" — both the reusable AttachmentPicker (used in 7 form dialogs + attLink dialog) and the standalone Upload dialog on the Attachments page only showed a static FileText icon + filename + size + "IMG" badge — NO actual image thumbnail
+- Built a reusable FilePreviewThumb component (page.tsx lines 282-316) that:
+  * Uses useMemo to synchronously create a blob: URL via URL.createObjectURL(file) when file is an image (file.type.startsWith('image/'))
+  * Uses useEffect with cleanup to call URL.revokeObjectURL(url) when the URL changes or the component unmounts (prevents memory leaks)
+  * Falls back to a FileText icon on a muted tile for non-image files
+  * Accepts a `size` prop (default 32px) so callers can pick thumbnail dimensions
+- Important: avoided the `react-hooks/set-state-in-effect` lint error by NOT using useState+useEffect(setState). Instead computed the URL via useMemo (synchronous, no cascading renders) and only used useEffect for the cleanup return — the only side-effect in the effect body is the cleanup function, which is allowed by the lint rule
+- Replaced the static <FileText> icon in AttachmentPicker's file row with <FilePreviewThumb file={f} size={32} /> (page.tsx ~line 352) — restructured the row to put the thumbnail on the left, with filename+size+IMG badge stacked in a min-w-0 flex-1 column (prevents layout overflow), remove button on the right
+- Replaced the bare filename span in the standalone Upload dialog file row with <FilePreviewThumb file={f} size={36} /> (page.tsx ~line 4992) — same stacked layout structure
+- The attLink "Attach to existing record" dialog uses AttachmentPicker, so it automatically inherits the image previews too — no separate change needed
+- Ran `bun run lint` — passes with exit 0, no warnings
+- Verified via Agent Browser (logged in as super_admin):
+  * Standalone Upload dialog: selected 3 PNG files (git-logo.png, debian-logo.png, armadillo.png) — VLM confirmed actual image thumbnails visible (Git logo, Debian swirl, armadillo graphic), each row has thumbnail + filename + size + IMG badge + remove button
+  * Stock Out "New Recorder" form dialog (uses AttachmentPicker): selected 2 PNG files (git-logo.png, debian-logo.png) — VLM confirmed actual image thumbnails visible (Git logo with red/orange diamond + white branching lines, Debian swirl with red/magenta spiral)
+  * No page errors, no console errors (only pre-existing a11y warning about DialogContent missing Description)
+
+Stage Summary:
+- Image preview thumbnails now render in ALL places where files are selected for upload:
+  * AttachmentPicker (used in 7 form dialogs: Stock In, Stock Out, Order, StockOutItem, Register/Product, Return, NonReturnable)
+  * AttachmentPicker (used in attLink "Attach to existing record" dialog)
+  * Standalone Upload dialog on the Attachments page
+- Implementation: FilePreviewThumb component uses URL.createObjectURL (via useMemo) + URL.revokeObjectURL (via useEffect cleanup) — no memory leaks
+- Lint passes (exit 0); dev server compiles cleanly; VLM-verified in browser that real image content (not generic icons) renders next to each selected file
+- page.tsx grew from 5205 → 5243 lines
