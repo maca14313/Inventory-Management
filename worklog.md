@@ -318,3 +318,37 @@ Stage Summary:
 - Implementation: FilePreviewThumb component uses URL.createObjectURL (via useMemo) + URL.revokeObjectURL (via useEffect cleanup) — no memory leaks
 - Lint passes (exit 0); dev server compiles cleanly; VLM-verified in browser that real image content (not generic icons) renders next to each selected file
 - page.tsx grew from 5205 → 5243 lines
+
+---
+Task ID: 16
+Agent: main (orchestrator) — file append behavior regression fix
+Task: Fix the regression where clicking "Choose Files" again REPLACED the previously selected files instead of APPENDING to them (in both AttachmentPicker and the standalone Upload dialog)
+
+Work Log:
+- User reported the previously-solved bug had regressed: "When the user selects a file, then clicks 'Choose files' button again, the previously selected files get removed and only the new one is kept"
+- Root cause confirmed by grepping both <input type="file" multiple onChange> handlers:
+  * AttachmentPicker (line 345): onFilesChange(Array.from(e.target.files || [])) — REPLACES the array
+  * Standalone Upload dialog (line 4987): setAttUpload(s => ({ ...s, files: Array.from(e.target.files || []) })) — REPLACES the array
+  * Both handlers completely overwrote the existing files list with the newly-picked files
+- Fixed AttachmentPicker onChange (page.tsx line 345-354) to APPEND new files to the existing `files` prop (closure-captured), with deduplication by `${name}|${size}|${lastModified}` so re-selecting the same file doesn't create a duplicate. Also resets `e.target.value = ''` after each selection so the user CAN re-select the same file again (browsers normally don't fire onChange if the same file is picked twice)
+- Fixed standalone Upload dialog onChange (page.tsx line 4996-5007) with the same append + dedupe pattern, using the functional updater `setAttUpload(s => ...)` to read the current `s.files` and merge
+- Important: kept the onFilesChange prop type as `(f: File[]) => void` (flat value, NOT functional updater) because all 8 callers pass flat-value setters like `f => setDlgData({ ...dlgData, pendingFiles: f })` — the append logic reads the current `files` prop from closure inside AttachmentPicker instead of requiring callers to support functional updaters
+- Ran `bun run lint` — passes with exit 0, no warnings
+- Verified via Agent Browser (logged in as super_admin) using 2-batch test:
+  * Standalone Upload dialog:
+    - Batch 1: selected git-logo.png + debian-logo.png → VLM confirmed 2 files listed
+    - Batch 2: clicked Choose Files again, selected armadillo.png + gdal.png → VLM confirmed 4 files listed (NO replacement; all 4 from both batches present)
+  * Stock Out "New Recorder" form dialog (uses AttachmentPicker):
+    - Batch 1: selected git-logo.png → VLM confirmed 1 file listed
+    - Batch 2: clicked Choose Files again, selected debian-logo.png + armadillo.png → VLM confirmed 3 files listed (NO replacement)
+  * Dedupe test: re-selected git-logo.png (already in list) → VLM confirmed still 3 files (no duplicate created; header reads "3 file(s) selected")
+  * No page/console errors (only pre-existing a11y warning about DialogContent missing Description)
+- Observed (unrelated to this task, pre-existing): dev.log shows 404s on GET /api/attachments/[2,4,6,8,10]/download?inline=1&fileIndex=0 when the Attachments page renders image avatars for super_admin — likely tenant-isolation/auth issue with those specific attachment records (out of scope for this task)
+
+Stage Summary:
+- File append behavior restored in BOTH places where files are selected for upload:
+  * AttachmentPicker (used in 7 form dialogs + attLink "Attach to existing record" dialog)
+  * Standalone Upload dialog on the Attachments page
+- Behavior now: clicking "Choose Files" multiple times ADDS new files to the existing list (doesn't replace). Re-selecting the same file is a no-op (deduped by name+size+lastModified). The native input is reset after each pick so the same file CAN be re-picked if desired (dedupe handles it)
+- Lint passes (exit 0); VLM-verified end-to-end in browser that 2-batch selection produces 4 files (not 2), and re-selecting produces no duplicates
+- page.tsx unchanged in line count (replaced 1-line handlers with multi-line append+dedupe handlers)

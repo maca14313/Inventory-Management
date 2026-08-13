@@ -342,7 +342,16 @@ function AttachmentPicker({
       {hint && <div className="text-[10px] text-muted-foreground">{hint}</div>}
 
       {/* File picker (multi) */}
-      <input type="file" multiple onChange={e => onFilesChange(Array.from(e.target.files || []))} className={`w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-medium ${a.file}`} />
+      <input type="file" multiple onChange={e => {
+        const incoming = Array.from(e.target.files || [])
+        if (incoming.length === 0) return
+        // APPEND to existing files (don't replace). Dedupe by name+size+lastModified
+        // so re-selecting the same file doesn't create duplicates.
+        const seen = new Set(files.map(f => `${f.name}|${f.size}|${f.lastModified}`))
+        onFilesChange([...files, ...incoming.filter(f => !seen.has(`${f.name}|${f.size}|${f.lastModified}`))])
+        // Reset the input value so selecting the SAME file again still fires onChange
+        e.target.value = ''
+      }} className={`w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-medium ${a.file}`} />
       <p className="text-[10px] text-muted-foreground">Select one or more files — they'll be zipped into a single archive on upload. Images will be previewable.</p>
 
       {/* Selected files list with per-file remove */}
@@ -4984,7 +4993,18 @@ export default function IMSApp() {
             <div className="space-y-2.5 max-h-[65vh] overflow-y-auto pr-1">
               <div className="space-y-1">
                 <Label className="text-xs font-medium">Files *</Label>
-                <input type="file" multiple onChange={e => setAttUpload(s => ({ ...s, files: Array.from(e.target.files || []) }))} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-violet-100 file:text-violet-700 file:text-xs file:font-medium hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300" />
+                <input type="file" multiple onChange={e => {
+                  const incoming = Array.from(e.target.files || [])
+                  if (incoming.length === 0) return
+                  // APPEND to existing files (don't replace). Dedupe by name+size+lastModified
+                  // so re-selecting the same file doesn't create duplicates.
+                  setAttUpload(s => {
+                    const seen = new Set(s.files.map(f => `${f.name}|${f.size}|${f.lastModified}`))
+                    return { ...s, files: [...s.files, ...incoming.filter(f => !seen.has(`${f.name}|${f.size}|${f.lastModified}`))] }
+                  })
+                  // Reset the input value so selecting the SAME file again still fires onChange
+                  e.target.value = ''
+                }} className="w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:bg-violet-100 file:text-violet-700 file:text-xs file:font-medium hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300" />
                 <p className="text-[10px] text-muted-foreground">Select one or more files — they'll be zipped into a single archive. Images will be previewable.</p>
                 {attUpload.files.length > 0 && (
                   <div className="space-y-1 mt-1">
