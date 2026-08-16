@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 /**
  * PUT /api/features/[id]
@@ -19,6 +20,7 @@ export async function PUT(
   try {
     const { id } = await params
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'features:edit')
     const body = await req.json()
     const { feature, enabled } = body || {}
     if (typeof feature !== 'string' || typeof enabled !== 'boolean') {

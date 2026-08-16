@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 /**
  * DELETE /api/stock-in/[id]/item/[itemId]
@@ -15,6 +16,7 @@ export async function DELETE(
   try {
     const { id, itemId } = await params
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'stock_in:delete')
     await db.stockIn.removeItem(ctx, parseInt(id, 10), parseInt(itemId, 10))
     return NextResponse.json({ ok: true })
   } catch (e) { return handleError(e) }

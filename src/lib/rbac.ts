@@ -163,8 +163,36 @@ export const ABILITY_LABELS: Record<EnterpriseAbility, string> = {
 
 // ─── Check Functions ─────────────────────────────────────────
 
+import { useAuthStore } from './auth-store'
+
+/** Check if a role has a permission.
+ *
+ *  This function checks DB-backed permissions first (loaded into the auth store
+ *  from /api/permissions after login). If the store has permissions loaded,
+ *  those take precedence over the static ROLE_PERMISSIONS map. This means
+ *  the UI reflects the actual per-user permissions granted by the admin,
+ *  not just the role-based defaults.
+ *
+ *  For super_admin, always returns true (implicit all-permissions).
+ *  If the store hasn't loaded permissions yet (e.g. during SSR or before
+ *  the /api/permissions fetch completes), falls back to the static map. */
 export function hasPermission(role: RoleLevel, perm: Permission): boolean {
+  if (role === 'super_admin') return true
+  // Check DB-backed permissions from the auth store (client-side only)
+  const storePerms = useAuthStore.getState().permissions
+  if (storePerms && storePerms.size > 0) {
+    return storePerms.has(perm)
+  }
+  // Fallback to static role-based map (used during initial load / SSR)
   return ROLE_PERMISSIONS[role]?.includes(perm) ?? false
+}
+
+/** Check if the current user can DELEGATE a permission to subordinates.
+ *  Based on DB-backed delegatable permissions in the auth store. */
+export function canDelegatePerm(perm: Permission): boolean {
+  const store = useAuthStore.getState()
+  if (store.role === 'super_admin') return true
+  return store.delegatable?.has(perm) ?? false
 }
 
 export function getPermissions(role: RoleLevel): Permission[] {
@@ -207,6 +235,7 @@ export const ALL_NAV_ITEMS: NavItem[] = [
   { key: 'stock', label: 'Stock', icon: 'Box', href: '/stock', permission: 'stock:view' },
   { key: 'orders', label: 'Orders', icon: 'ShoppingCart', href: '/orders', permission: 'orders:view' },
   { key: 'suppliers', label: 'Suppliers', icon: 'Truck', href: '/suppliers', permission: 'suppliers:view' },
+  { key: 'permissions', label: 'Permission Manager', icon: 'ShieldCheck', href: '/permissions', permission: 'permissions:view' },
   { key: 'audit', label: 'Audit Log', icon: 'Shield', href: '/audit', permission: 'audit:view' },
 ]
 

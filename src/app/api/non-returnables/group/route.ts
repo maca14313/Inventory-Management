@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 /**
  * POST /api/non-returnables/group
@@ -16,6 +17,7 @@ import { handleError } from '@/lib/route-utils'
 export async function POST(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'non_returnables:create')
     const body = await req.json()
     if (!body || !Array.isArray(body.items) || body.items.length === 0) {
       return NextResponse.json({ error: 'Validation: items[] required' }, { status: 400 })

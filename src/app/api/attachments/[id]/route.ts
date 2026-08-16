@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { attachments } from '@/lib/attachments'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 export async function GET(
   req: Request,
@@ -10,6 +11,7 @@ export async function GET(
   try {
     const { id } = await params
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'attachments:view')
     const data = await attachments.findById(ctx, parseInt(id, 10))
     if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     return NextResponse.json(data)
@@ -28,6 +30,7 @@ export async function PUT(
   try {
     const { id } = await params
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'attachments:edit')
     const body = await req.json()
     const data = await attachments.update(ctx, parseInt(id, 10), body)
     return NextResponse.json(data)
@@ -41,6 +44,7 @@ export async function DELETE(
   try {
     const { id } = await params
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'attachments:delete')
     await attachments.remove(ctx, parseInt(id, 10))
     return NextResponse.json({ ok: true })
   } catch (e) { return handleError(e) }

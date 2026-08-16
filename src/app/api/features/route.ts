@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 /**
  * GET /api/features?eid=N — list features (optionally scoped by enterprise).
@@ -14,6 +15,7 @@ import { handleError } from '@/lib/route-utils'
 export async function GET(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'features:view')
     const url = new URL(req.url)
     const eidParam = url.searchParams.get('eid')
     const eid = eidParam ? parseInt(eidParam, 10) : undefined
@@ -25,6 +27,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'features:edit')
     const body = await req.json()
     const { enterpriseId, feature, enabled } = body || {}
     if (typeof enterpriseId !== 'number' || typeof feature !== 'string' || typeof enabled !== 'boolean') {

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { attachments } from '@/lib/attachments'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 /**
  * GET /api/attachments
@@ -15,6 +16,7 @@ import { handleError } from '@/lib/route-utils'
 export async function GET(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'attachments:view')
     const url = new URL(req.url)
     const sp = url.searchParams
     const filters = {
@@ -61,6 +63,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'attachments:create')
     const form = await req.formData()
 
     // Collect all files: support both 'files' (multiple) and legacy 'file' (single)

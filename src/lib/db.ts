@@ -61,7 +61,7 @@ export interface Warehouse {
 export interface User {
   id: number; enterpriseId: number | null; branchId: number | null; warehouseId: number | null
   username: string; email: string; fullName: string; role: Role
-  isActive: boolean
+  isActive: boolean; mustResetPassword: boolean
   createdAt: string; updatedAt: string
 }
 
@@ -835,7 +835,7 @@ export const db = {
         orderBy: { id: 'asc' },
         select: {
           id: true, enterpriseId: true, branchId: true, warehouseId: true,
-          username: true, email: true, fullName: true, role: true, isActive: true,
+          username: true, email: true, fullName: true, role: true, isActive: true, mustResetPassword: true,
           createdAt: true, updatedAt: true,
           // NOTE: passwordHash intentionally omitted from list view
         },
@@ -847,7 +847,7 @@ export const db = {
         where: { id },
         select: {
           id: true, enterpriseId: true, branchId: true, warehouseId: true,
-          username: true, email: true, fullName: true, role: true, isActive: true,
+          username: true, email: true, fullName: true, role: true, isActive: true, mustResetPassword: true,
           createdAt: true, updatedAt: true,
         },
       })
@@ -881,6 +881,9 @@ export const db = {
         if (d.role === 'enterprise_admin') throw new Error('FORBIDDEN: Cannot create peer enterprise_admin')
         if (d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN: Cannot create user in another enterprise')
       }
+      // ENFORCE SINGLE SUPER_ADMIN: no one can create a super_admin via this endpoint.
+      // The only super_admin is the seeded one.
+      if (d.role === 'super_admin') throw new Error('FORBIDDEN: Cannot create super_admin (single super admin policy)')
       const bcrypt = await import('bcryptjs')
       const passwordHash = d.password
         ? await bcrypt.hash(d.password, 10)
@@ -908,6 +911,9 @@ export const db = {
         })
         return u
       })
+      // Seed default permissions for the new user (skips super_admin internally)
+      const { seedDefaultPermissions } = await import('./permissions')
+      await seedDefaultPermissions(created.id, created.role, ctx.userId || undefined)
       const { passwordHash: _ph, ...safe } = created
       return ser(safe) as User
     },
@@ -932,7 +938,8 @@ export const db = {
             ...(d.branchId !== undefined ? { branchId: d.branchId } : {}),
             ...(d.warehouseId !== undefined ? { warehouseId: d.warehouseId } : {}),
             ...(d.role !== undefined && id !== ctx.userId ? { role: d.role as Role } : {}),
-            ...(passwordHash !== undefined ? { passwordHash } : {}),
+            ...(d.mustResetPassword !== undefined ? { mustResetPassword: d.mustResetPassword } : {}),
+            ...(passwordHash !== undefined ? { passwordHash, mustResetPassword: false } : {}),
           },
         })
         await tx.auditLog.create({

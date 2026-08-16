@@ -27,6 +27,7 @@ import {
   MessageSquare, Send, Ban, ClipboardCheck,
   Paperclip, Download, Upload, Image as ImageIcon, File as FileIcon, FileImage,
   Table as TableIcon, Presentation, Video, Music, Archive, Code, Files, Tags,
+  ShieldCheck, KeyRound,
 } from 'lucide-react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -50,7 +51,7 @@ const SORTED_MEASUREMENTS = [...MEASUREMENTS].sort((a, b) => a.localeCompare(b))
 
 const ICONS: Record<string, React.ComponentType<any>> = {
   LayoutDashboard, Package, Warehouse: WHIcon, Users, ShoppingCart, Tag, ClipboardCheck,
-  Box, Truck, Building2, GitBranch, Shield, Globe, ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw,
+  Box, Truck, Building2, GitBranch, Shield, ShieldCheck, Globe, ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw,
   Paperclip,
 }
 
@@ -860,6 +861,16 @@ export default function IMSApp() {
   const [dlgType, setDlgType] = useState('')
   const [dlgData, setDlgData] = useState<any>({})
   const [dlgEdit, setDlgEdit] = useState<any>(null)
+
+  // ─── Permission Manager state (Task 6) ──────────────────────
+  const [permData, setPermData] = useState<any>(null)
+  const [subordinates, setSubordinates] = useState<any[]>([])
+  const [permEditDlg, setPermEditDlg] = useState<{ open: boolean; target: any | null; submitting: boolean }>({ open: false, target: null, submitting: false })
+  // ─── Enterprise super_admin management state (Task 6) ───────
+  const [entAdminDlg, setEntAdminDlg] = useState<{ open: boolean; enterprise: any | null; username: string; fullName: string; email: string; password: string; submitting: boolean }>({ open: false, enterprise: null, username: '', fullName: '', email: '', password: '', submitting: false })
+  const [entResetDlg, setEntResetDlg] = useState<{ open: boolean; enterprise: any | null; newPassword: string; submitting: boolean }>({ open: false, enterprise: null, newPassword: '', submitting: false })
+  const [entLimitsDlg, setEntLimitsDlg] = useState<{ open: boolean; enterprise: any | null; maxBranches: number; maxWarehouses: number; maxUsers: number; submitting: boolean }>({ open: false, enterprise: null, maxBranches: 10, maxWarehouses: 50, maxUsers: 100, submitting: false })
+
   const [stockOutMode, setStockOutMode] = useState<'pic' | 'table'>('pic')
   const [stockInMode, setStockInMode] = useState<'pic' | 'table'>('pic')
   const [expandedOut, setExpandedOut] = useState<number | null>(null)
@@ -1408,7 +1419,17 @@ export default function IMSApp() {
       const res = await fetch(`${BASE}/api/auth`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: loginUser, password: loginPass }) })
       const data = await res.json()
       if (!res.ok) { toast({ title: data.error || 'Login failed', variant: 'destructive' }); setLoginLoading(false); return }
-      auth.login(data); setPage('dashboard'); toast({ title: `Welcome, ${data.fullName}` })
+      auth.login(data)
+      // Fetch DB-backed permissions immediately after login so hasPermission()
+      // reflects the actual per-user grants (not just the static role map)
+      try {
+        const pres = await fetch(`${BASE}/api/permissions`, { headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() } })
+        if (pres.ok) {
+          const pdata = await pres.json()
+          auth.setPermissions(pdata.permissions || [], pdata.delegatable || [])
+        }
+      } catch (e) { console.error('Failed to fetch permissions:', e) }
+      setPage('dashboard'); toast({ title: `Welcome, ${data.fullName}` })
     } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
     setLoginLoading(false)
   }, [loginUser, loginPass, auth])
@@ -1450,6 +1471,20 @@ export default function IMSApp() {
 
   useEffect(() => { setMounted(true) }, [])
   useEffect(() => { if (auth.isLoggedIn) loadData(true) }, [auth.isLoggedIn, auth.userId])
+
+  // ─── Permission Manager: fetch own permissions + subordinates when the page opens ────
+  useEffect(() => {
+    if (!auth.isLoggedIn || page !== 'permissions') return
+    const h = { 'Content-Type': 'application/json', ...auth.getAuthHeaders() }
+    fetch(`${BASE}/api/permissions`, { headers: h })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setPermData(d) })
+      .catch(e => console.error('Failed to load /api/permissions:', e))
+    fetch(`${BASE}/api/permissions/subordinates`, { headers: h })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setSubordinates(Array.isArray(d) ? d : []))
+      .catch(e => console.error('Failed to load /api/permissions/subordinates:', e))
+  }, [auth.isLoggedIn, page, auth.userId])
 
   const [crudLoading, setCrudLoading] = useState<Set<string>>(new Set())
   const crudKey = (action: string, ep: string) => `${action}:${ep}`
@@ -1706,14 +1741,59 @@ export default function IMSApp() {
       <div className="space-y-5">
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navEnterprises')}</h1>
           {hasPermission(role!, 'enterprises:create') && <Button onClick={() => openCreate('enterprise')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newEnterprise')}</Button>}</div>
-        <div className="grid gap-3">{enterprises.map(e => (
-          <Card key={e.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold shrink-0">{e.name.charAt(0)}</div>
-              <div><div className="font-semibold">{e.name}</div><div className="text-xs text-muted-foreground">{e.code} · {e.address}</div></div></div>
-            <div className="flex items-center gap-2"><Badge className="bg-muted text-muted-foreground border-0 text-xs">B:{e.maxBranches} W:{e.maxWarehouses} U:{e.maxUsers}</Badge>
-              {hasPermission(role!, 'enterprises:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('enterprise', e)}><Pencil className="w-3.5 h-3.5" /></Button>}
-              {hasPermission(role!, 'enterprises:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/enterprises/${e.id}`)} disabled={isCrudLoading('remove', `/enterprises/${e.id}`)} className="text-red-500">{isCrudLoading('remove', `/enterprises/${e.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}</div>
-          </CardContent></Card>))}</div>
+        <div className="grid gap-3">{enterprises.map(e => {
+          const entAdmin = allUsers.find(u => u.enterpriseId === e.id && u.role === 'enterprise_admin')
+          const canToggleActive = hasPermission(role!, 'enterprises:toggle_active' as any)
+          const canSetLimits = hasPermission(role!, 'enterprises:set_limits' as any)
+          const canManageAdmin = hasPermission(role!, 'enterprises:manage_admin' as any)
+          const canResetAdmin = hasPermission(role!, 'enterprises:reset_admin' as any)
+          return (
+          <Card key={e.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold shrink-0">{e.name.charAt(0)}</div>
+                <div>
+                  <div className="font-semibold flex items-center gap-2 flex-wrap">
+                    {e.name}
+                    {!e.isActive && <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[9px]">INACTIVE</Badge>}
+                    {canToggleActive && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span><Switch checked={e.isActive} onCheckedChange={async (v) => { try { await apiFetch(`/enterprises/${e.id}`, { method: 'PUT', body: JSON.stringify({ isActive: v }) }); toast({ title: `Enterprise ${v ? 'activated' : 'deactivated'}` }); await loadData() } catch (err: any) { toast({ title: err.message, variant: 'destructive' }) } }} /></span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="text-xs">{e.isActive ? 'Click to deactivate' : 'Click to activate'}</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{e.code} · {e.address}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {canSetLimits ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" className="inline-flex" onClick={() => setEntLimitsDlg({ open: true, enterprise: e, maxBranches: e.maxBranches, maxWarehouses: e.maxWarehouses, maxUsers: e.maxUsers, submitting: false })}>
+                        <Badge className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 text-xs cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-500/25">B:{e.maxBranches} W:{e.maxWarehouses} U:{e.maxUsers}</Badge>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">Click to edit limits</TooltipContent>
+                  </Tooltip>
+                ) : <Badge className="bg-muted text-muted-foreground border-0 text-xs">B:{e.maxBranches} W:{e.maxWarehouses} U:{e.maxUsers}</Badge>}
+                {hasPermission(role!, 'enterprises:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('enterprise', e)}><Pencil className="w-3.5 h-3.5" /></Button>}
+                {hasPermission(role!, 'enterprises:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/enterprises/${e.id}`)} disabled={isCrudLoading('remove', `/enterprises/${e.id}`)} className="text-red-500">{isCrudLoading('remove', `/enterprises/${e.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}
+              </div>
+            </div>
+            {(canManageAdmin || canResetAdmin) && (
+              <div className="flex items-center gap-2 flex-wrap pt-2 border-t">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider mr-1">Admin:</span>
+                {entAdmin ? <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400 border-0 text-[10px]">@{entAdmin.username}</Badge> : <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[10px]">No admin yet</Badge>}
+                {canManageAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEntAdminDlg({ open: true, enterprise: e, username: '', fullName: '', email: '', password: '', submitting: false })}><KeyRound className="w-3 h-3 mr-1" />Create Admin</Button>}
+                {canResetAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!entAdmin} onClick={() => setEntResetDlg({ open: true, enterprise: e, newPassword: '', submitting: false })}><RotateCcw className="w-3 h-3 mr-1" />Reset Password</Button>}
+                {canManageAdmin && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPage('permissions')}><ShieldCheck className="w-3 h-3 mr-1" />Permission Manager</Button>}
+              </div>
+            )}
+          </CardContent></Card>)
+        })}</div>
       </div>
     )
 
@@ -3616,6 +3696,94 @@ export default function IMSApp() {
       </div>
     )
 
+    // ─── PERMISSION MANAGER (Task 6) ───────────────────────────
+    if (page === 'permissions' && hasPermission(role!, 'permissions:view' as any)) return (
+      <div className="space-y-5">
+        <h1 className="text-2xl font-bold flex items-center gap-2"><ShieldCheck className="w-6 h-6 text-blue-500" /> Permission Manager</h1>
+        {permData?.isSuperAdmin && <Card className="border-blue-200 dark:border-blue-500/20 bg-blue-50/50 dark:bg-blue-500/5"><CardContent className="p-3 text-xs text-blue-700 dark:text-blue-400 flex items-center gap-2"><Shield className="w-4 h-4" /> You are a Super Admin — you implicitly hold ALL permissions and can delegate any of them.</CardContent></Card>}
+
+        {/* A. My Permissions */}
+        <Card className="shadow-sm">
+          <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1.5"><Shield className="w-4 h-4 text-blue-500" /> My Permissions</CardTitle>
+          <CardDescription className="text-xs">Green check = granted · Red X = not granted · Amber shield = delegatable</CardDescription></CardHeader>
+          <CardContent>
+            {!permData ? <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div> : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {(permData.groups || []).map((g: any) => (
+                  <div key={g.key} className="rounded-lg border bg-card p-3">
+                    <div className="text-xs font-bold text-foreground mb-2 flex items-center gap-1.5"><Shield className="w-3 h-3 text-blue-500" />{g.label}</div>
+                    <div className="space-y-1">
+                      {g.perms.map((p: string) => {
+                        const has = permData.isSuperAdmin || (permData.permissions || []).includes(p)
+                        const canDel = permData.isSuperAdmin || (permData.delegatable || []).includes(p)
+                        return (
+                          <div key={p} className="flex items-center justify-between gap-2 text-xs">
+                            <span className={`font-mono truncate ${has ? 'text-foreground' : 'text-muted-foreground'}`}>{p}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {canDel && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[9px] gap-0.5 h-4 px-1"><Shield className="w-2.5 h-2.5" />D</Badge>}
+                              {has ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <X className="w-3.5 h-3.5 text-red-400" />}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* B. Delegatable Permissions summary */}
+        {permData && !permData.isSuperAdmin && (
+          <Card className="shadow-sm border-amber-200 dark:border-amber-500/20 bg-amber-50/50 dark:bg-amber-500/5">
+            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1.5"><Shield className="w-4 h-4 text-amber-500" /> Delegatable Permissions ({(permData.delegatable || []).length})</CardTitle></CardHeader>
+            <CardContent>
+              {(permData.delegatable || []).length === 0 ? <div className="text-xs text-muted-foreground">You cannot delegate any permissions.</div> : (
+                <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                  {(permData.delegatable || []).map((p: string) => (
+                    <Badge key={p} className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[10px] font-mono">{p}</Badge>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* C. Manage Subordinates — only for admins who can manage permissions */}
+        {hasPermission(role!, 'permissions:manage' as any) && role !== 'warehouse_admin' && (
+          <Card className="shadow-sm">
+            <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1.5"><Users className="w-4 h-4 text-blue-500" /> Manage Subordinates ({subordinates.length})</CardTitle>
+            <CardDescription className="text-xs">Grant or revoke permissions for users within your scope.</CardDescription></CardHeader>
+            <CardContent>
+              {subordinates.length === 0 ? <div className="text-xs text-muted-foreground py-6 text-center">No subordinate users to manage.</div> : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-96 overflow-y-auto pr-1">
+                  {subordinates.map(s => (
+                    <div key={s.id} className="rounded-lg border bg-card p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate">{s.fullName}</div>
+                          <div className="text-[10px] text-muted-foreground truncate">@{s.username}</div>
+                        </div>
+                        <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400 border-0 text-[9px]">{(s.role || '').replace('_', ' ')}</Badge>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[9px]">{s.permCount} perms</Badge>
+                        <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[9px]">{s.delegateCount} deleg.</Badge>
+                      </div>
+                      <Button size="sm" variant="outline" className="w-full h-7 text-xs" onClick={() => setPermEditDlg({ open: true, target: s, submitting: false })}>
+                        <Pencil className="w-3 h-3 mr-1" /> Edit Permissions
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    )
+
     return null
   }
 
@@ -3647,7 +3815,7 @@ export default function IMSApp() {
               // - Bottom "More" group: categories, orders, suppliers, audit, features
               const ORG_KEYS = new Set(['enterprises', 'branches', 'warehouses', 'users'])
               const INV_KEYS = new Set(['products', 'stock', 'stockIn', 'stockOut', 'returns'])
-              const MORE_KEYS = new Set(['categories', 'conditions', 'orders', 'suppliers', 'audit', 'features', 'attachments'])
+              const MORE_KEYS = new Set(['categories', 'conditions', 'orders', 'suppliers', 'audit', 'features', 'attachments', 'permissions'])
               const present = new Set(navItems.map(n => n.key))
               const top = navItems.filter(n => n.key === 'dashboard')
               const org = navItems.filter(n => ORG_KEYS.has(n.key))
@@ -5235,6 +5403,185 @@ export default function IMSApp() {
                 } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setAttLink(s => ({ ...s, submitting: false })) }
               }} className="bg-gradient-to-r from-violet-600 to-purple-600 text-white">{attLink.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Upload className="w-4 h-4 mr-1.5" />}Attach</Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── ENTERPRISE LIMITS EDIT DIALOG (Task 6) ─── */}
+        <Dialog open={entLimitsDlg.open} onOpenChange={o => setEntLimitsDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><Building2 className="w-4 h-4 text-blue-500" /> Edit Limits — {entLimitsDlg.enterprise?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Update the maximum branches, warehouses, and users allowed for this enterprise.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1"><Label className="text-xs">Max Branches</Label><Input type="number" min={0} value={entLimitsDlg.maxBranches} onChange={e => setEntLimitsDlg(s => ({ ...s, maxBranches: parseInt(e.target.value) || 0 }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Max Warehouses</Label><Input type="number" min={0} value={entLimitsDlg.maxWarehouses} onChange={e => setEntLimitsDlg(s => ({ ...s, maxWarehouses: parseInt(e.target.value) || 0 }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Max Users</Label><Input type="number" min={0} value={entLimitsDlg.maxUsers} onChange={e => setEntLimitsDlg(s => ({ ...s, maxUsers: parseInt(e.target.value) || 0 }))} className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEntLimitsDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={entLimitsDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={entLimitsDlg.submitting} onClick={async () => {
+                setEntLimitsDlg(s => ({ ...s, submitting: true }))
+                try {
+                  await apiFetch(`/enterprises/${entLimitsDlg.enterprise.id}`, { method: 'PUT', body: JSON.stringify({ maxBranches: entLimitsDlg.maxBranches, maxWarehouses: entLimitsDlg.maxWarehouses, maxUsers: entLimitsDlg.maxUsers }) })
+                  toast({ title: 'Limits updated successfully' })
+                  setEntLimitsDlg(s => ({ ...s, open: false, submitting: false }))
+                  await loadData()
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setEntLimitsDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{entLimitsDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}Save Limits</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── CREATE ENTERPRISE ADMIN DIALOG (Task 6) ─── */}
+        <Dialog open={entAdminDlg.open} onOpenChange={o => setEntAdminDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-blue-500" /> Create Admin — {entAdminDlg.enterprise?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Create a new enterprise_admin user scoped to this enterprise.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg p-2 text-[11px] text-amber-700 dark:text-amber-400">If password is left blank, it defaults to <span className="font-mono font-semibold">admin123</span> and the new admin will be forced to reset it on first login.</div>
+              <div className="space-y-1"><Label className="text-xs">Username *</Label><Input value={entAdminDlg.username} onChange={e => setEntAdminDlg(s => ({ ...s, username: e.target.value }))} placeholder="e.g. acme_admin" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Full Name *</Label><Input value={entAdminDlg.fullName} onChange={e => setEntAdminDlg(s => ({ ...s, fullName: e.target.value }))} placeholder="John Doe" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Email (optional)</Label><Input type="email" value={entAdminDlg.email} onChange={e => setEntAdminDlg(s => ({ ...s, email: e.target.value }))} placeholder="" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Password (optional)</Label><Input type="password" value={entAdminDlg.password} onChange={e => setEntAdminDlg(s => ({ ...s, password: e.target.value }))} placeholder="blank = admin123" className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEntAdminDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={entAdminDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={entAdminDlg.submitting} onClick={async () => {
+                if (!entAdminDlg.username.trim() || !entAdminDlg.fullName.trim()) { toast({ title: 'Username and Full Name are required', variant: 'destructive' }); return }
+                setEntAdminDlg(s => ({ ...s, submitting: true }))
+                try {
+                  const body: any = { username: entAdminDlg.username.trim(), fullName: entAdminDlg.fullName.trim() }
+                  if (entAdminDlg.email.trim()) body.email = entAdminDlg.email.trim()
+                  if (entAdminDlg.password) body.password = entAdminDlg.password
+                  await apiFetch(`/enterprises/${entAdminDlg.enterprise.id}/create-admin`, { method: 'POST', body: JSON.stringify(body) })
+                  toast({ title: `Created admin: ${entAdminDlg.username}${!entAdminDlg.password ? ' (forced password reset on next login)' : ''}` })
+                  setEntAdminDlg({ open: false, enterprise: null, username: '', fullName: '', email: '', password: '', submitting: false })
+                  await loadData()
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setEntAdminDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{entAdminDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <KeyRound className="w-4 h-4 mr-1.5" />}Create Admin</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── RESET ENTERPRISE ADMIN PASSWORD DIALOG (Task 6) ─── */}
+        <Dialog open={entResetDlg.open} onOpenChange={o => setEntResetDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-blue-500" /> Reset Admin Password — {entResetDlg.enterprise?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Reset the password for this enterprise's enterprise_admin.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg p-2 text-[11px] text-amber-700 dark:text-amber-400">If left blank, password will be reset to <span className="font-mono font-semibold">admin123</span> with forced reset on next login.</div>
+              {entResetDlg.enterprise && (() => {
+                const admin = allUsers.find(u => u.enterpriseId === entResetDlg.enterprise.id && u.role === 'enterprise_admin')
+                return admin ? <div className="text-xs text-muted-foreground">Current admin: <span className="font-semibold text-foreground">@{admin.username}</span> ({admin.fullName})</div> : <div className="text-xs text-red-500">No enterprise admin found for this enterprise.</div>
+              })()}
+              <div className="space-y-1"><Label className="text-xs">New Password</Label><Input type="password" value={entResetDlg.newPassword} onChange={e => setEntResetDlg(s => ({ ...s, newPassword: e.target.value }))} placeholder="blank = admin123" className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEntResetDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={entResetDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={entResetDlg.submitting} onClick={async () => {
+                setEntResetDlg(s => ({ ...s, submitting: true }))
+                try {
+                  const body: any = {}
+                  if (entResetDlg.newPassword) body.newPassword = entResetDlg.newPassword
+                  await apiFetch(`/enterprises/${entResetDlg.enterprise.id}/reset-admin`, { method: 'POST', body: JSON.stringify(body) })
+                  toast({ title: `Password reset${!entResetDlg.newPassword ? ' to admin123 (forced reset on next login)' : ' successfully'}` })
+                  setEntResetDlg({ open: false, enterprise: null, newPassword: '', submitting: false })
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setEntResetDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{entResetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Reset Password</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── PERMISSION EDITOR DIALOG for subordinates (Task 6) ─── */}
+        <Dialog open={permEditDlg.open} onOpenChange={o => setPermEditDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-3xl w-[95vw]">
+            <DialogHeader>
+              <DialogTitle className="text-base font-bold flex items-center gap-1.5"><ShieldCheck className="w-4 h-4 text-blue-500" /> Edit Permissions — {permEditDlg.target?.fullName}</DialogTitle>
+              <DialogDescription className="text-xs">@{permEditDlg.target?.username} · {(permEditDlg.target?.role || '').replace('_', ' ')} · {permEditDlg.target?.permCount} perms / {permEditDlg.target?.delegateCount} delegatable</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
+              {!permData ? <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div> : (permData.groups || []).map((g: any) => (
+                <div key={g.key} className="rounded-lg border bg-card p-2.5">
+                  <div className="text-xs font-bold mb-1.5 flex items-center gap-1.5"><Shield className="w-3 h-3 text-blue-500" />{g.label}</div>
+                  <div className="space-y-0.5">
+                    {g.perms.map((p: string) => {
+                      const target = permEditDlg.target
+                      const cur = target?.permissions?.find((x: any) => x.ability === p)
+                      const canUse = !!cur?.canUse
+                      const canDel = !!cur?.canDelegate
+                      const granterCanDelegate = permData.isSuperAdmin || (permData.delegatable || []).includes(p)
+                      const refreshSubordinates = async () => {
+                        try {
+                          const subRes = await fetch(`${BASE}/api/permissions/subordinates`, { headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() } })
+                          if (subRes.ok) {
+                            const subData = await subRes.json()
+                            const arr = Array.isArray(subData) ? subData : []
+                            setSubordinates(arr)
+                            const updated = arr.find((s: any) => s.id === target.id)
+                            if (updated) setPermEditDlg(s => ({ ...s, target: updated }))
+                          }
+                        } catch (e) { /* ignore refresh error */ }
+                      }
+                      return (
+                        <div key={p} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 py-0.5 text-xs">
+                          <span className="font-mono truncate text-muted-foreground">{p}</span>
+                          <div className="flex items-center gap-1.5">
+                            <Label className="text-[10px] text-muted-foreground">Use</Label>
+                            <Switch
+                              checked={canUse}
+                              onCheckedChange={async (v) => {
+                                try {
+                                  if (v) {
+                                    await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: canDel }) })
+                                  } else if (canDel) {
+                                    await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: false, canDelegate: true }) })
+                                  } else {
+                                    await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) })
+                                  }
+                                  toast({ title: `${v ? 'Granted' : 'Revoked'} use: ${p}` })
+                                  await refreshSubordinates()
+                                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
+                              }}
+                            />
+                          </div>
+                          {granterCanDelegate ? (
+                            <div className="flex items-center gap-1.5">
+                              <Label className="text-[10px] text-muted-foreground">Delegate</Label>
+                              <Switch
+                                checked={canDel}
+                                onCheckedChange={async (v) => {
+                                  try {
+                                    if (v) {
+                                      await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: canUse, canDelegate: true }) })
+                                    } else if (canUse) {
+                                      await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: false }) })
+                                    } else {
+                                      await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) })
+                                    }
+                                    toast({ title: `${v ? 'Granted' : 'Revoked'} delegate: ${p}` })
+                                    await refreshSubordinates()
+                                  } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="flex items-center gap-1.5 opacity-50 cursor-not-allowed">
+                                  <Label className="text-[10px] text-muted-foreground">Delegate</Label>
+                                  <Switch checked={canDel} disabled />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="text-xs">You cannot delegate this permission</TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <DialogFooter><Button variant="ghost" onClick={() => setPermEditDlg(s => ({ ...s, open: false }))} className="text-muted-foreground">Close</Button></DialogFooter>
           </DialogContent>
         </Dialog>
 

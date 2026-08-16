@@ -16,15 +16,21 @@ export interface AuthState {
   branchId: number | null
   warehouseId: number | null
   isActive: boolean
+  mustResetPassword: boolean
   isLoggedIn: boolean
+  /** DB-backed permissions the user can USE (loaded from /api/permissions) */
+  permissions: Set<string>
+  /** DB-backed permissions the user can DELEGATE to subordinates */
+  delegatable: Set<string>
 }
 
 export interface AuthActions {
   login: (user: {
     id: number; username: string; fullName: string; email: string
     role: RoleLevel; enterpriseId: number | null; branchId: number | null
-    warehouseId: number | null; isActive: boolean
+    warehouseId: number | null; isActive: boolean; mustResetPassword: boolean
   }) => void
+  setPermissions: (permissions: string[], delegatable: string[]) => void
   logout: () => void
   getAuthHeaders: () => Record<string, string>
 }
@@ -32,7 +38,9 @@ export interface AuthActions {
 const initialState: AuthState = {
   userId: null, username: '', fullName: '', email: '',
   role: null, enterpriseId: null, branchId: null, warehouseId: null,
-  isActive: false, isLoggedIn: false,
+  isActive: false, mustResetPassword: false, isLoggedIn: false,
+  permissions: new Set<string>(),
+  delegatable: new Set<string>(),
 }
 
 export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
@@ -42,7 +50,12 @@ export const useAuthStore = create<AuthState & AuthActions>()((set, get) => ({
     userId: user.id, username: user.username, fullName: user.fullName,
     email: user.email, role: user.role, enterpriseId: user.enterpriseId,
     branchId: user.branchId, warehouseId: user.warehouseId,
-    isActive: user.isActive, isLoggedIn: true,
+    isActive: user.isActive, mustResetPassword: user.mustResetPassword, isLoggedIn: true,
+  }),
+
+  setPermissions: (permissions, delegatable) => set({
+    permissions: new Set(permissions),
+    delegatable: new Set(delegatable),
   }),
 
   logout: () => set(initialState),

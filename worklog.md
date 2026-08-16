@@ -352,3 +352,113 @@ Stage Summary:
 - Behavior now: clicking "Choose Files" multiple times ADDS new files to the existing list (doesn't replace). Re-selecting the same file is a no-op (deduped by name+size+lastModified). The native input is reset after each pick so the same file CAN be re-picked if desired (dedupe handles it)
 - Lint passes (exit 0); VLM-verified end-to-end in browser that 2-batch selection produces 4 files (not 2), and re-selecting produces no duplicates
 - page.tsx unchanged in line count (replaced 1-line handlers with multi-line append+dedupe handlers)
+
+---
+Task ID: 4
+Agent: permissions-enforcement-agent
+Task: Add `requirePermission` checks to ALL remaining API route files that don't have them yet
+
+Work Log:
+- Read /home/z/my-project/worklog.md to see what previous agents had built (Tasks 1, 6, 7-16: Attachment system redesign, multi-file ZIP, cookie fallback for <img src>, AttachmentPicker, file append behavior)
+- Read /home/z/my-project/src/lib/permissions.ts to confirm `requirePermission(ctx, ability)` signature and that it throws `FORBIDDEN: Missing permission "..."` when check fails (which `handleError` maps to HTTP 403)
+- Read /home/z/my-project/src/app/api/enterprises/route.ts and enterprises/[id]/route.ts as the canonical pattern reference (already had `requirePermission` per the task spec)
+- Read all 42 target route files in batches (branches, warehouses, products, categories, conditions, stock, orders, suppliers, stock-in, stock-out, returns, non-returnables, attachments, audit, dashboard, analytics, features, lots)
+- Discovered actual handler inventory differs slightly from task spec (which was optimistic in places):
+  * `returns/[id]/route.ts` only has GET (no PUT/DELETE) — added `returns:view` to the GET handler
+  * `non-returnables/[id]/route.ts` only has GET — added `non_returnables:view`
+  * `features/[id]/route.ts` only has PUT — added `features:edit`
+  * `stock-in/[id]/item/[itemId]/route.ts` only has DELETE — added `stock_in:delete`
+  * `stock-out/[id]/item/[itemId]/route.ts` only has DELETE — added `stock_out:delete`
+- For each file, performed the same atomic edit: added `import { requirePermission } from '@/lib/permissions'` after the existing `import { handleError } from '@/lib/route-utils'`, then inserted `await requirePermission(ctx, '<perm>')` immediately after `const ctx = getAuthContextFromHeaders(new Headers(req.headers))` in every handler that didn't already have it
+- Preserved the async params pattern `{ params }: { params: Promise<{ id: string }> }` — the permission check is inserted AFTER `const { id } = await params` but BEFORE the DB call, so unauthorized users are rejected before any tenant-scoped DB query runs
+- Used the permission mapping exactly as specified in the task:
+  * branches: view / create / edit / delete
+  * warehouses: view / create / edit / delete
+  * products: view / create / edit / delete (register/route.ts → products:create)
+  * categories: view / create / edit / delete
+  * conditions: view / create / edit / delete
+  * stock: view (GET) / adjust (POST)
+  * orders: view / create / edit (PUT) / cancel (DELETE)
+  * suppliers: view / create / edit / delete
+  * stock_in: view / create / edit (PUT + item POST) / delete (DELETE + item/[itemId] DELETE)
+  * stock_out: view / create / edit (PUT + item POST) / delete (DELETE + item/[itemId] DELETE)
+  * returns: view / create / edit
+  * non_returnables: view / create / edit
+  * attachments: view / create / edit / delete (download + counts + meta-keys all → attachments:view)
+  * audit → audit:view
+  * dashboard → dashboard:view
+  * analytics → analytics:view
+  * features: view (GET) / edit (POST + PUT)
+  * lots → lots:view
+- Did NOT touch any files that already had `requirePermission`:
+  * enterprises/route.ts, enterprises/[id]/route.ts, enterprises/[id]/reset-admin/route.ts, enterprises/[id]/create-admin/route.ts
+  * users/route.ts, users/[id]/route.ts
+  * permissions/** (5 files — they self-manage via `if (!ctx.userId) return 401` plus `canManageTarget` checks inside `grantPermission`/`revokePermission`)
+  * auth/route.ts (login endpoint, no check)
+  * ai-assistant/route.ts (utility endpoint, no check)
+- Ran `bun run lint` — passes with exit 0, no warnings
+- Verified dev.log shows no errors (only normal `GET / 200` lines from the auto-refresh dev server)
+- Grep verified: 47 files now contain `requirePermission`; 7 files correctly do NOT (auth + ai-assistant + 5 in permissions/ folder)
+- Total files modified: 42 route files (each handler within received one import + one `await requirePermission(...)` call)
+
+Stage Summary:
+- All 42 target API route files now enforce permission checks via `requirePermission(ctx, '<perm>')` from `@/lib/permissions`
+- Combined with the 7 files that already had checks (enterprises + users + permissions/**), plus the 2 explicitly open endpoints (auth + ai-assistant), ALL 54 API route files in `src/app/api/**` are now either:
+  * Permission-gated via `requirePermission` (49 files)
+  * Self-managing (5 files in permissions/**)
+  * Intentionally open (auth login endpoint + ai-assistant utility endpoint)
+- The check is inserted immediately after `getAuthContextFromHeaders` so:
+  * `super_admin` users pass instantly (implicit all-permissions in `hasPermission`)
+  * Non-super users must have a `UserPermission` row with `canUse=true` for the ability
+  * Unauthenticated requests (no userId) fail at `hasPermission` → throw FORBIDDEN → 403
+  * Tenant isolation (existing `db.*` layer) continues to act as the secondary defense-in-depth check
+- Cookie-based auth context (added in Task 13) means `<img src="/api/attachments/[id]/download">` browser-issued requests will pass the `attachments:view` check because `getAuthContextFromHeaders` falls back to the `ims-session` cookie — so image previews still work
+- Lint passes (exit 0); dev server compiles cleanly; no behavior changes for authorized users
+- 42 files modified, ~84 handlers gated (each got one import line + one `await requirePermission(...)` line)
+
+---
+Task ID: 6
+Agent: permission-manager-ui-agent
+Task: Add Permission Manager page + Enterprise super-admin management UI (limits edit, active toggle, create admin, reset admin) to src/app/page.tsx
+
+Work Log:
+- Read worklog.md (Tasks 1–4) and src/lib/permissions.ts to understand the DB-backed permission system (ALL_PERMISSIONS catalog, PERMISSION_GROUPS, grantPermission/revokePermission logic, getSubordinateUsers scoping)
+- Read src/app/api/permissions/route.ts + subordinates/route.ts to confirm the API response shape (isSuperAdmin, permissions[], delegatable[], catalog, groups[], raw[], and subordinates enriched with permissions[]/permCount/delegateCount)
+- Read src/lib/auth-store.ts (permissions + delegatable are Set<string>) and src/lib/rbac.ts (hasPermission falls back to store first, then static ROLE_PERMISSIONS; canDelegatePerm helper available but I used `auth.delegatable.has()` directly to avoid extra imports)
+- Inspected src/app/page.tsx structure:
+  * State declarations around lines 614-870 (auth + many feature dialogs)
+  * loadData() around 1427 — fetches 17 endpoints in parallel
+  * Enterprises render block at line 1740 (compact card with name, limits badge, edit/delete buttons)
+  * Audit page at 3640, then `return null` at 3654 — the spot to insert the new Permission Manager page
+  * 11 existing Dialogs ending at 5407 (attLink) followed by the AI Assistant widget
+- All required shadcn components already imported (Card, Badge, Button, Dialog, Switch, Input, Label, Tooltip, TooltipContent, TooltipTrigger, TooltipProvider). Icons ShieldCheck + KeyRound already imported (line 30). RotateCcw also already imported.
+- State additions (after dlgEdit at line 863): added permData, subordinates, permEditDlg, entAdminDlg, entResetDlg, entLimitsDlg — exactly per the task spec
+- useEffect (after line 1473): when page === 'permissions' AND auth.isLoggedIn, fetches /api/permissions (own + catalog) AND /api/permissions/subordinates in parallel; tolerates 403 for warehouse_admin (subordinates returns [])
+- Permission Manager page (inserted before return null): 3 sections
+  A) "My Permissions" — grid (grid-cols-1 sm:grid-cols-2 lg:grid-cols-3) of permission groups. Each perm row shows ability name (font-mono text-xs), amber shield badge "D" if delegatable, green Check if canUse=true, red X if not. Super_admin sees all green. Loading spinner while permData null.
+  B) "Delegatable Permissions" summary — amber-tinted Card showing count + flex-wrap list of delegatable abilities (skipped for super_admin since they delegate everything)
+  C) "Manage Subordinates" — only shown if `hasPermission(role!, 'permissions:manage' as any)` AND role !== 'warehouse_admin'. Grid of subordinate Cards with username, fullName, role badge, permCount + delegateCount badges, and "Edit Permissions" button that opens the permEditDlg dialog
+- Enterprises page enhancement (replaced the enterprises.map block):
+  * INACTIVE red badge when !e.isActive
+  * Switch next to name (gated by enterprises:toggle_active) — calls PUT /api/enterprises/[id] with {isActive: v}
+  * Limits badge as a clickable button (gated by enterprises:set_limits) — opens entLimitsDlg
+  * New "Admin:" footer row (gated by enterprises:manage_admin OR enterprises:reset_admin) showing current admin username or "No admin yet" amber badge
+  * "Create Admin" button (KeyRound) → opens entAdminDlg
+  * "Reset Password" button (RotateCcw) → opens entResetDlg, disabled if no admin
+  * "Permission Manager" button (ShieldCheck) → navigates to permissions page
+- 4 new Dialogs (inserted after attLink Dialog at line 5407, before AI Assistant widget):
+  1) Edit Limits — 3 numeric Inputs (maxBranches, maxWarehouses, maxUsers) → PUT /api/enterprises/[id]
+  2) Create Admin — username*, fullName*, email, password (blank=admin123 forced reset) → POST /api/enterprises/[id]/create-admin. Toast includes "(forced password reset on next login)" suffix when password was blank
+  3) Reset Password — shows current admin's @username (looked up from allUsers by enterpriseId+role='enterprise_admin'), single newPassword field (blank=admin123) → POST /api/enterprises/[id]/reset-admin
+  4) Permission Editor for subordinates — max-w-3xl, max-h-[65vh] scroll. For each permission group → for each perm, a 3-column grid: ability name | "Use" Switch | "Delegate" Switch-or-disabled. The Delegate Switch is DISABLED + wrapped in Tooltip "You cannot delegate this permission" if the granter (current user) doesn't have canDelegate for that ability (checked via `permData.delegatable.includes(p)` or `permData.isSuperAdmin`). On any switch change, immediately calls POST /api/permissions/grant or /api/permissions/revoke, then refreshes subordinates list (so the dialog target's state stays in sync). Each grant preserves the OTHER flag (e.g. toggling canUse keeps canDelegate as-is; toggling canDelegate keeps canUse as-is). If both canUse and canDelegate are off, calls revoke.
+- Permission type cast: rbac.ts's `Permission` type doesn't include the new DB-backed abilities (permissions:view, permissions:manage, enterprises:set_limits, enterprises:toggle_active, enterprises:manage_admin, enterprises:reset_admin). Used `as any` casts for those literal strings so hasPermission() accepts them at the TS level while still doing the correct Set<string>.has() check at runtime.
+- Ran `bun run lint` — exits 0 (only a BABEL note about file size >500KB, not an error)
+- Verified dev.log shows clean compilations (✓ Compiled in ...) with no errors after the edits
+
+Stage Summary:
+- Permission Manager page is fully wired at /permissions (visible in nav for any user with permissions:view, including super_admin who sees everything as green with all-subordinates listing)
+- Subordinate permission editing works inline with two switches per ability (Use + Delegate) with proper enforcement of the granter's own canDelegate scope — disabled switches show a tooltip explaining why delegation is unavailable
+- Enterprises page is now a full super_admin management surface: inline active toggle, inline limits editor, create-admin/reset-admin workflows with the "blank password = admin123 + forced reset" convention surfaced in amber warning banners
+- 4 new Dialogs added without touching existing ones; all reuse the existing apiFetch + toast + loadData patterns
+- All shadcn components reused (no new component files); mobile responsive (grid-cols-1 sm:2 lg:3 for permission groups; flex-wrap for enterprise admin row); uses gradient buttons for primary actions (consistent with rest of app)
+- File grew from 5281 → 5610 lines (+329 lines); lint exit 0; dev server compiles cleanly

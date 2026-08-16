@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 /**
  * GET /api/audit?limit=N
@@ -10,6 +11,7 @@ import { handleError } from '@/lib/route-utils'
 export async function GET(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'audit:view')
     const url = new URL(req.url)
     const limitParam = url.searchParams.get('limit')
     const limit = limitParam ? parseInt(limitParam, 10) : undefined

@@ -108,6 +108,7 @@ model User {
   role          String   // 'super_admin' | 'enterprise_admin' | 'branch_admin' | 'warehouse_admin'
   isActive      Boolean  @default(true)
   passwordHash  String
+  mustResetPassword Boolean @default(false)  // super_admin sets this when resetting an admin's credentials
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -117,10 +118,48 @@ model User {
   orders        Order[]     @relation("OrderCreatedBy")
   auditLogs     AuditLog[]
   uploadedAttachments Attachment[] @relation("AttachmentUploadedBy")
+  permissions   UserPermission[]
+  grantedPermissions UserPermission[] @relation("PermissionGrantedBy")
 
   @@index([enterpriseId])
   @@index([branchId])
   @@index([warehouseId])
+}
+
+// ─── 4b. UserPermission ──────────────────────────────────
+// Per-user permission grants with delegation control.
+//   canUse:       the user CAN perform this ability
+//   canDelegate:  the user CAN grant this ability to subordinate admins
+//   grantedBy:    the admin who granted this permission (null = seeded default)
+//
+// HIERARCHY:
+//   super_admin → implicitly has ALL abilities with canDelegate=true (no rows needed)
+//   enterprise_admin → permissions granted by super_admin
+//   branch_admin → permissions granted by enterprise_admin (or super_admin)
+//   warehouse_admin → permissions granted by branch_admin (or above)
+//
+// DELEGATION RULE:
+//   An admin can only grant an ability to a subordinate if:
+//     1. The admin has a row where ability=X AND canDelegate=true
+//     2. The target user is within the admin's tenant scope
+//     3. The target user's role is strictly lower in the hierarchy
+model UserPermission {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  ability       String   // e.g. 'users:create', 'stock:view', 'orders:approve'
+  canUse        Boolean  @default(true)
+  canDelegate   Boolean  @default(false)
+  grantedById   Int?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy     User?    @relation("PermissionGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, ability])
+  @@index([userId])
+  @@index([ability])
+  @@index([grantedById])
 }
 
 // ─── 5. Category ───────────────────────────────────────────

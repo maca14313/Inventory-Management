@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 export async function GET(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'stock:view')
     const data = await db.stock.findMany(ctx)
     return NextResponse.json(data)
   } catch (e) { return handleError(e) }
@@ -23,6 +25,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'stock:adjust')
     const body = await req.json()
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'Validation: body required' }, { status: 400 })

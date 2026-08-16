@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 /**
  * GET /api/non-returnables/[id]?id=stockOutItemId
@@ -19,6 +20,7 @@ export async function GET(
   try {
     const { id } = await params
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'non_returnables:view')
     const data = await db.returns.findItemById(ctx, parseInt(id, 10))
     if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     return NextResponse.json(data)

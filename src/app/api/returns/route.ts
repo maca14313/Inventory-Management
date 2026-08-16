@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 
 /**
  * GET /api/returns?tab=flagged|not_flagged&wid=N
@@ -13,6 +14,7 @@ import { handleError } from '@/lib/route-utils'
 export async function GET(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'returns:view')
     const url = new URL(req.url)
     // GET /api/returns?recorders=1 → list ReturnRecorder records (group-return records)
     if (url.searchParams.get('recorders') === '1') {
@@ -37,6 +39,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'returns:create')
     const body = await req.json()
     if (!body || typeof body !== 'object') {
       return NextResponse.json({ error: 'Validation: body required' }, { status: 400 })

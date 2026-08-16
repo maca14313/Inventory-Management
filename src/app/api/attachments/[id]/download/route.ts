@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { attachments } from '@/lib/attachments'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
+import { requirePermission } from '@/lib/permissions'
 import fs from 'fs'
 import zlib from 'zlib'
 
@@ -30,6 +31,7 @@ export async function GET(
   try {
     const { id } = await params
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
+    await requirePermission(ctx, 'attachments:view')
     const url = new URL(req.url)
     const inline = url.searchParams.get('inline') === '1'
     const fileIndexRaw = url.searchParams.get('fileIndex')

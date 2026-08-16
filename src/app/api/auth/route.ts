@@ -9,12 +9,12 @@ const COOKIE_NAME = 'ims-session'
 function publicUser(u: {
   id: number; username: string; fullName: string; email: string
   role: string; enterpriseId: number | null; branchId: number | null
-  warehouseId: number | null; isActive: boolean
+  warehouseId: number | null; isActive: boolean; mustResetPassword: boolean
 }) {
   return {
     id: u.id, username: u.username, fullName: u.fullName, email: u.email,
     role: u.role, enterpriseId: u.enterpriseId, branchId: u.branchId,
-    warehouseId: u.warehouseId, isActive: u.isActive,
+    warehouseId: u.warehouseId, isActive: u.isActive, mustResetPassword: u.mustResetPassword,
   }
 }
 
