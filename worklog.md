@@ -500,3 +500,121 @@ Stage Summary:
 - SET LIMITS NOW DISCOVERABLE: Each enterprise card shows an explicit "Set Limits" outline button (SlidersHorizontal icon) alongside the existing clickable B:W:U badge. Both open the Edit Limits dialog (maxBranches / maxWarehouses / maxUsers). Super_admin sees both; the badge is hidden (replaced by plain Badge) for users without enterprises:set_limits
 - EDIT ADMIN FEATURE ADDED: Each enterprise card now has an "Edit Admin" button (UserCog icon) that opens a dialog pre-filled with the existing enterprise_admin's username, fullName, email, isActive. Allows updating username/fullName/email/password (blank = keep current)/active toggle. Calls PUT /api/users/[id] — reuses the existing user-update endpoint (already enforces users:edit + canManageUser tenant scope). Only shows when an enterprise_admin exists for the enterprise AND the viewer has enterprises:manage_admin permission
 - All three changes verified end-to-end via Agent Browser as super_admin + as warehouse_admin; lint passes (exit 0); dev server compiles cleanly
+
+---
+Task ID: 18-frontend
+Agent: full-stack-developer
+Task: Add Branch & Warehouse admin/limits management UI + enhance Permission Editor with per-group bulk toggles and per-switch loading state
+
+Work Log:
+- Read worklog.md (Tasks 4, 6, 15, 16, 17) to understand the existing Enterprises page management UI pattern (Set Limits badge + button, Create Admin, Reset Password, Edit Admin, Permission Manager) that I needed to mirror for Branches and Warehouses
+- Read src/lib/permissions.ts to confirm ALL_PERMISSIONS catalog already includes the 8 NEW abilities (branches:set_limits/toggle_active/manage_admin/reset_admin + warehouses:set_limits/toggle_active/manage_admin/reset_admin) and that PERMISSION_GROUPS already lists them under 'branches' and 'warehouses' groups
+- Read src/lib/rbac.ts to confirm hasPermission(role, perm) semantics + the static `Permission` type union does NOT include the new DB-backed abilities — same `as any` cast pattern as Enterprises page already uses
+- Read all 4 backend route stubs (branches/[id]/route.ts, branches/[id]/create-admin/route.ts, branches/[id]/reset-admin/route.ts, warehouses/[id]/route.ts, warehouses/[id]/create-admin/route.ts, warehouses/[id]/reset-admin/route.ts) to confirm endpoints exist + accept the documented request bodies (maxWarehouses/maxUsers/isActive for branches; capacity/maxUsers/isActive for warehouses; { username, fullName, email?, password? } for create-admin; { newPassword? } for reset-admin)
+- Verified db.ts: branches.create + branches.update already read maxWarehouses/maxUsers from the body (defaults 50/100 for create, undefined = no-change for update); warehouses.create + warehouses.update already read maxUsers (default 50, capacity already existed at 1000)
+- Inspected page.tsx structure: state decls around line 868-874, Enterprises page ~1745-1805 (the canonical pattern to mirror), simple Branches page ~1807-1820 (only name/code/location/manager + edit/delete — needed full rewrite), simple Warehouses page ~1822-1835 (similar), 4 existing enterprise dialogs at ~5409-5545, Permission Editor dialog at ~5546-5638
+- Updated page.tsx interfaces (lines 61-62) to add `maxWarehouses: number; maxUsers: number` to Branch and `maxUsers: number` to Warehouse so direct property access compiles (mirrors the existing Enterprise interface at line 60 which already had maxBranches/maxWarehouses/maxUsers). The runtime values were already returned by the backend; this just makes TS happy
+- Task 1 (state declarations): Added 8 new state vars after the existing entEditAdminDlg decl (now around line 880-889): brAdminDlg, brResetDlg, brLimitsDlg, brEditAdminDlg for Branches; whAdminDlg, whResetDlg, whLimitsDlg, whEditAdminDlg for Warehouses — each mirroring the entX pattern. Also added permLoading + permGroupLoading Sets for Task 5 (around line 877-878)
+- Task 2 (Branches page rewrite, ~1822-1883): Replaced the simple branches.map card with a full management UI per branch card: top row with orange-to-amber gradient avatar + name + INACTIVE badge if !b.isActive + Switch (gated by `branches:toggle_active as any`) + clickable W:U badge (gated by `branches:set_limits as any`) + Set Limits button (SlidersHorizontal) + Edit (Pencil, branches:edit) + Delete (Trash2, branches:delete); admin row (border-t, gated by `branches:manage_admin as any` OR `branches:reset_admin as any`) with current branch_admin @username badge (or amber "No admin yet") + Create Admin (KeyRound) + Edit Admin (UserCog, only if branchAdmin present, pre-fills dialog) + Reset Password (RotateCcw, disabled if no branchAdmin) + Permission Manager (ShieldCheck → setPage('permissions'))
+- Task 3 (Warehouses page rewrite, ~1885-1946): Same pattern as Branches but using cyan-to-teal gradient avatar; `Cap:U:` clickable badge (gated by `warehouses:set_limits as any`) + Set Limits button → opens whLimitsDlg with capacity + maxUsers fields; Switch gated by `warehouses:toggle_active as any`; admin row uses `warehouses:manage_admin as any` and `warehouses:reset_admin as any`; warehouseAdmin = allUsers.find(u => u.warehouseId === w.id && u.role === 'warehouse_admin')
+- Task 4 (8 new Dialog components, inserted between entEditAdminDlg and the Permission Editor dialog ~5656-5913): All 8 dialogs copy-paste-modified from the corresponding enterprise dialog with adjusted colors/icons/API paths:
+  * Branch Edit Limits (brLimitsDlg) — GitBranch orange icon, 2 numeric inputs (Max Warehouses, Max Users) → PUT /api/branches/[id] with { maxWarehouses, maxUsers }
+  * Branch Create Admin (brAdminDlg) — KeyRound orange icon, username*/fullName*/email/password (blank=admin123 forced reset) → POST /api/branches/[id]/create-admin
+  * Branch Reset Password (brResetDlg) — KeyRound orange icon, shows current admin @username + single newPassword field → POST /api/branches/[id]/reset-admin
+  * Branch Edit Admin (brEditAdminDlg) — UserCog orange icon, pre-filled username*/fullName*/email/password/isActive → PUT /api/users/[admin.id]
+  * Warehouse Edit Limits (whLimitsDlg) — WHIcon cyan icon, 2 numeric inputs (Capacity, Max Users) → PUT /api/warehouses/[id] with { capacity, maxUsers }
+  * Warehouse Create Admin (whAdminDlg) — KeyRound cyan icon → POST /api/warehouses/[id]/create-admin
+  * Warehouse Reset Password (whResetDlg) — KeyRound cyan icon → POST /api/warehouses/[id]/reset-admin
+  * Warehouse Edit Admin (whEditAdminDlg) — UserCog cyan icon → PUT /api/users/[admin.id]
+  Used orange-to-amber gradient buttons for branch dialogs, cyan-to-teal gradient buttons for warehouse dialogs; all reuse the same amber warning banner / toast messages / cancel button conventions as the enterprise dialogs
+- Task 5 (Permission Editor enhancements, ~5915-6092): Rewrote the dialog with three improvements:
+  5a) Per-group "All On/All Off" buttons — Each group card header now has a top-right button row with 4 small outline buttons (size="sm" h-6 text-[10px] px-2): "Use: All On" / "Use: All Off" / "Delegate: All On" / "Delegate: All Off". The bulkToggle() helper filters to eligible perms (those the granter can delegate via `permData.isSuperAdmin || (permData.delegatable || []).includes(p)`), then runs Promise.all over grant/revoke calls. Use: All On grants canUse=true preserving canDelegate; Use: All Off revokes canUse (preserves canDelegate=true if it was set, else revokes entirely); Delegate: All On grants canDelegate=true preserving canUse; Delegate: All Off revokes canDelegate (preserves canUse=true if it was set, else revokes entirely). Skips already-in-target-state abilities. Toast reports count of perms affected.
+  5b) Per-switch loading state — `permLoading` Set tracks keys `${ability}|use` or `${ability}|delegate`. When a switch's onCheckedChange fires: add the key to permLoading → make API call → remove the key from permLoading (in finally block) → refreshSubordinates(). While loading, the Switch is replaced with `<Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />` for that specific switch position. The OTHER switch in the same row remains fully interactive (so the user can click Delegate while Use is loading, etc.).
+  5c) Disable per-switch during parallel bulk toggle — `permGroupLoading` Set tracks keys `use:${groupKey}` or `delegate:${groupKey}`. Use switches are disabled (disabled={useBulkLoading}) and Delegate switches are disabled (disabled={delBulkLoading}) while a parallel bulk toggle is in progress for that group/kind. The bulk buttons themselves are disabled while their own bulk is in progress. Bulk buttons are also disabled when `groupHasDelegatable=false` (i.e. granter can't delegate ANY ability in the group, so bulk operations would be no-ops).
+- Used `as any` casts for all 8 new permission strings when calling hasPermission (branches:set_limits/toggle_active/manage_admin/reset_admin + warehouses:set_limits/toggle_active/manage_admin/reset_admin) — same pattern as the existing Enterprises page already does for enterprises:set_limits etc.
+- Ran `bun run lint` — exits 0 (only BABEL note about page.tsx file size >500KB, which is acceptable per task spec)
+- Verified dev.log shows clean compilations (✓ Compiled in 1344ms / 1286ms / 1221ms after edits) with no errors and normal 200 OK responses on `/`
+
+Stage Summary:
+- Branches page is now a full super_admin/enterprise_admin management surface: inline active toggle (Switch), inline limits editor (clickable W:U badge + Set Limits button → 2-field dialog: Max Warehouses, Max Users), full admin workflow (Create Admin / Edit Admin / Reset Password / Permission Manager) with the "blank password = admin123 + forced reset" convention surfaced in amber warning banners. Mirrors the Enterprises page exactly, using orange-to-amber gradient accents.
+- Warehouses page mirrors the same pattern using cyan-to-teal gradient accents; Set Limits dialog has 2 fields: Capacity + Max Users (the spec noted capacity already existed but maxUsers is new).
+- 8 new Dialogs added without touching existing ones; all reuse the existing apiFetch + toast + loadData patterns; all call the backend endpoints created by Task 18-backend (POST /api/branches/[id]/create-admin, POST /api/branches/[id]/reset-admin, POST /api/warehouses/[id]/create-admin, POST /api/warehouses/[id]/reset-admin, PUT /api/branches/[id] with maxWarehouses/maxUsers, PUT /api/warehouses/[id] with capacity/maxUsers)
+- Permission Editor for subordinates now has: 4 per-group bulk buttons (Use: All On / Use: All Off / Delegate: All On / Delegate: All Off) that run grant/revoke in parallel via Promise.all; per-switch loading state (spinner replaces Switch while API call in flight — the OTHER switch in the row stays interactive); per-switch disabled state during parallel bulk toggle for that group/kind
+- All shadcn components reused (no new component files); mobile responsive (flex-wrap for admin row + group header button row); uses gradient buttons for primary actions (orange-amber for branches, cyan-teal for warehouses); all `as any` casts for the new permission strings follow the existing Enterprises page pattern
+- File grew from 5669 → 6122 lines (+453 lines: ~30 lines state decls + interface updates, ~120 lines Branches page rewrite, ~120 lines Warehouses page rewrite, ~260 lines 8 new dialogs, ~140 lines Permission Editor enhancements which replaced the original ~90 lines)
+- Lint passes (exit 0); dev server compiles cleanly; no behavior changes for authorized users — the new UI simply surfaces the backend capabilities that already existed but were invisible in the simple Branches/Warehouses page
+
+---
+Task ID: 18-backend
+Agent: main (orchestrator) — backend for branches/warehouses admin management
+Task: Add backend infrastructure for branches/warehouses admin management — schema fields, API endpoints, and 8 new permission abilities in the catalog
+
+Work Log:
+- User requested 5 things: (1) Edit Admin not just for Enterprises — also Branches and Warehouses; (2) Branches and Warehouses need Edit Limits, Active toggle, and other admin management features like Enterprises; (3) Permission Editor needs "All On/All Off" buttons for both Use and Delegate columns; (4) Use and Delegate switches need loading state; (5) Include all new APIs in the Permissions/delegation catalog
+- Reviewed prisma/schema.prisma: Branch had isActive but NO maxWarehouses/maxUsers; Warehouse had isActive and capacity but NO maxUsers
+- Added 2 new fields to Branch model: `maxWarehouses Int @default(50)` and `maxUsers Int @default(100)`
+- Added 1 new field to Warehouse model: `maxUsers Int @default(50)`
+- Ran `bun run db:push` — DB synced, Prisma Client regenerated
+- Updated src/lib/db.ts branches.create + branches.update to accept maxWarehouses and maxUsers fields
+- Updated src/lib/db.ts warehouses.create + warehouses.update to accept maxUsers field
+- Created 4 new API route files mirroring the enterprises/[id]/{create-admin,reset-admin} pattern:
+  * src/app/api/branches/[id]/create-admin/route.ts — POST: creates branch_admin (requires branches:manage_admin, scoped to enterprise_admin/branch_admin tenant)
+  * src/app/api/branches/[id]/reset-admin/route.ts — POST: resets branch_admin password (requires branches:reset_admin)
+  * src/app/api/warehouses/[id]/create-admin/route.ts — POST: creates warehouse_admin (requires warehouses:manage_admin)
+  * src/app/api/warehouses/[id]/reset-admin/route.ts — POST: resets warehouse_admin password (requires warehouses:reset_admin)
+- All 4 endpoints follow the same convention: blank password → 'admin123' + mustResetPassword=true; audit log entry; seed default permissions for the new admin via seedDefaultPermissions()
+- Updated src/lib/permissions.ts to add 8 new permission abilities:
+  * branches:set_limits, branches:toggle_active, branches:manage_admin, branches:reset_admin
+  * warehouses:set_limits, warehouses:toggle_active, warehouses:manage_admin, warehouses:reset_admin
+  - Added to ALL_PERMISSIONS array (so the catalog knows about them)
+  - Added to PERMISSION_GROUPS (branches + warehouses groups now have 8 perms each, matching enterprises)
+  - Added to ROLE_DEFAULTS:
+    * enterprise_admin: gets all 8 new perms (canUse=true) AND all 8 are delegatable (canDelegate=true) — they manage branches and warehouses within their enterprise
+    * branch_admin: gets the 4 warehouses:* new perms (canUse=true + canDelegate=true) — they manage warehouses within their branch. Does NOT get branches:set_limits/toggle_active/manage_admin/reset_admin (those are for managing OTHER branch_admins, which branch_admin doesn't do)
+    * warehouse_admin: gets none of the new perms (no roles below warehouse_admin)
+- Added a new `seedMissingDefaults()` function in permissions.ts that's IDEMPOTENT and SAFE: it only ADDS abilities from ROLE_DEFAULTS that aren't already in the user's UserPermission table. Existing rows are NEVER modified or deleted — so per-user tweaks made via Permission Manager are preserved. This is the right way to introduce new abilities to existing users without wiping their grants
+- Wrote scripts/migrate-perms.ts (one-time migration script) that calls seedMissingDefaults()
+- Ran the migration: 8 users updated, 44 new permission rows added (each existing enterprise_admin got 8 new perms, each branch_admin got 4 new perms, etc.)
+- All 8 new abilities are now visible in the Permission Manager UI when editing any subordinate's permissions
+- Ran `bun run lint` — passes (exit 0); dev server compiles cleanly
+
+Stage Summary:
+- Schema now supports: Branch.maxWarehouses, Branch.maxUsers, Warehouse.maxUsers (with sensible defaults so existing data still works)
+- 4 new API endpoints give branches and warehouses the same admin management capabilities that enterprises had (create-admin + reset-admin, with branch_admin/enterprise_admin tenant scoping)
+- 8 new permission abilities are in the catalog and seeded to existing users via the safe idempotent migration — so super_admin can now grant/revoke branches:set_limits, warehouses:manage_admin, etc. via the Permission Manager
+- Backend fully ready for the frontend subagent to wire up the UI
+
+---
+Task ID: 18-frontend
+Agent: full-stack-developer (subagent)
+Task: Frontend UI for branches/warehouses admin management + Permission Editor enhancements (All On/Off + loading states)
+
+Work Log:
+- Read worklog.md (Tasks 4, 6, 15, 16, 17, 18-backend) and the existing Enterprises page UI (lines 1740-1805) + existing enterprise dialogs (lines 5409-5545) to use as the canonical pattern
+- Task 1: Added 8 new dialog state vars (brAdminDlg, brResetDlg, brLimitsDlg, brEditAdminDlg + whAdminDlg, whResetDlg, whLimitsDlg, whEditAdminDlg) after entEditAdminDlg at lines 877-889, mirroring the entX pattern. Also added permLoading + permGroupLoading Sets for Task 5
+- Task 2: Rewrote Branches page (lines 1822-1883) to mirror Enterprises page: orange-to-amber avatar, INACTIVE badge if !b.isActive, Switch (gated by branches:toggle_active as any), clickable W:U badge (gated by branches:set_limits as any), "Set Limits" button (SlidersHorizontal icon), Edit/Delete buttons, Admin row with current branch_admin lookup (allUsers.find by branchId + role='branch_admin'), Create Admin / Edit Admin / Reset Password / Permission Manager buttons
+- Task 3: Rewrote Warehouses page (lines 1885-1946) similarly: cyan-to-teal avatar, INACTIVE badge, Switch (warehouses:toggle_active), Cap:U badge (warehouses:set_limits), Set Limits button, Admin row with warehouse_admin lookup (allUsers.find by warehouseId + role='warehouse_admin')
+- Task 4: Added 8 new Dialog components (lines 5657-5913), each copy-paste-modified from the corresponding enterprise dialog with adjusted colors/icons/API paths:
+  * Branch Edit Limits (brLimitsDlg) — 2 numeric inputs: Max Warehouses, Max Users → PUT /api/branches/[id]
+  * Branch Create Admin (brAdminDlg) — username/fullName/email/password → POST /api/branches/[id]/create-admin
+  * Branch Reset Password (brResetDlg) — shows current admin, newPassword field → POST /api/branches/[id]/reset-admin
+  * Branch Edit Admin (brEditAdminDlg) — pre-filled username/fullName/email/password/isActive → PUT /api/users/[admin.id]
+  * Warehouse Edit Limits (whLimitsDlg) — Capacity + Max Users → PUT /api/warehouses/[id]
+  * Warehouse Create Admin (whAdminDlg) → POST /api/warehouses/[id]/create-admin
+  * Warehouse Reset Password (whResetDlg) → POST /api/warehouses/[id]/reset-admin
+  * Warehouse Edit Admin (whEditAdminDlg) → PUT /api/users/[admin.id]
+- Task 5a: Added per-group "Use: All On" / "Use: All Off" / "Delegate: All On" / "Delegate: All Off" buttons at the top of each permission group card. Each runs grant/revoke in parallel via Promise.all, preserving the OTHER flag (e.g. Use: All On sets canUse=true for all perms in the group but keeps canDelegate as-is; Delegate: All Off sets canDelegate=false but keeps canUse as-is). Bulk buttons disabled when groupHasDelegatable=false (no perms in the group are delegatable by the granter)
+- Task 5b: Added per-switch loading state via `permLoading` Set<string>. Key format: `${ability}|use` or `${ability}|delegate`. When the switch's onCheckedChange fires: add the key to permLoading, make the API call, remove the key, refresh subordinates. While loading, the Switch is replaced with a `<Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />` — the OTHER switch in the same row remains interactive
+- Task 5c: Added per-group bulk-loading state via `permGroupLoading` Set<string> with keys `use:${groupKey}` / `delegate:${groupKey}`. While a group's Use-All is in progress, all Use switches in that group are disabled (and similarly for Delegate-All). This prevents the user from clicking individual switches while a bulk operation is in flight
+- Used `as any` casts for the 8 new permission strings (branches:set_limits, branches:toggle_active, branches:manage_admin, branches:reset_admin, warehouses:set_limits, warehouses:toggle_active, warehouses:manage_admin, warehouses:reset_admin) — same pattern as the existing Enterprises page (line 1747 area)
+- SlidersHorizontal and UserCog icons were already imported (line 30) — reused, no re-import needed
+- Ran `bun run lint` — exits 0 (only the BABEL note about page.tsx file size >500KB, which is acceptable)
+- File grew from 5669 → 6122 lines (+453 lines)
+
+Stage Summary:
+- Branches page now has full admin management UI parity with Enterprises: Active toggle Switch, W:U clickable badge + explicit "Set Limits" button, Admin row showing current branch_admin with Create Admin / Edit Admin / Reset Password / Permission Manager buttons
+- Warehouses page has the same parity: Active toggle, Cap:U badge + Set Limits button, Admin row showing current warehouse_admin with all 4 management buttons
+- 8 new Dialogs (4 per branch + 4 per warehouse) wired to the new backend endpoints — all use the same styling, layout, icons, button colors, and amber warning banners as the existing enterprise dialogs
+- Permission Editor dialog enhanced with per-group bulk toggle buttons (4 per group) and per-switch loading spinners — bulk actions preserve the orthogonal flag, and switches disable during parallel bulk operations to prevent race conditions
+- All 8 new permission abilities are visible in the Permission Editor catalog (because backend Task 18-backend added them to PERMISSION_GROUPS), so super_admin can grant/revoke branches:set_limits, warehouses:manage_admin, etc. per subordinate
+- Lint passes (exit 0); dev server compiles cleanly; Agent Browser verified all features end-to-end as super_admin: Branch Set Limits (W:50 U:100 → W:75 U:150), Branch Edit Admin (pre-filled with acme_hq_admin / Alice Johnson (HQ) / alice@acme.com), Warehouse Set Limits (U:50 → U:75), Permission Editor bulk actions (Use: All On for Enterprises group → all use switches true; Delegate: All Off → all delegate switches false while preserving use=true); no console errors, no dev.log errors

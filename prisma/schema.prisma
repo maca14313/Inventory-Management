@@ -54,6 +54,8 @@ model Branch {
   managerName   String   @default("")
   managerEmail  String   @default("")
   isActive      Boolean  @default(true)
+  maxWarehouses Int      @default(50)
+  maxUsers      Int      @default(100)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -76,6 +78,7 @@ model Warehouse {
   capacity      Int      @default(1000)
   managerName   String   @default("")
   isActive      Boolean  @default(true)
+  maxUsers      Int      @default(50)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
