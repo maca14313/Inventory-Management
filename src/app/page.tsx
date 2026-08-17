@@ -27,7 +27,7 @@ import {
   MessageSquare, Send, Ban, ClipboardCheck,
   Paperclip, Download, Upload, Image as ImageIcon, File as FileIcon, FileImage,
   Table as TableIcon, Presentation, Video, Music, Archive, Code, Files, Tags,
-  ShieldCheck, KeyRound,
+  ShieldCheck, KeyRound, SlidersHorizontal, UserCog,
 } from 'lucide-react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -870,6 +870,8 @@ export default function IMSApp() {
   const [entAdminDlg, setEntAdminDlg] = useState<{ open: boolean; enterprise: any | null; username: string; fullName: string; email: string; password: string; submitting: boolean }>({ open: false, enterprise: null, username: '', fullName: '', email: '', password: '', submitting: false })
   const [entResetDlg, setEntResetDlg] = useState<{ open: boolean; enterprise: any | null; newPassword: string; submitting: boolean }>({ open: false, enterprise: null, newPassword: '', submitting: false })
   const [entLimitsDlg, setEntLimitsDlg] = useState<{ open: boolean; enterprise: any | null; maxBranches: number; maxWarehouses: number; maxUsers: number; submitting: boolean }>({ open: false, enterprise: null, maxBranches: 10, maxWarehouses: 50, maxUsers: 100, submitting: false })
+  // Edit existing enterprise admin's details (username/fullName/email/password/isActive)
+  const [entEditAdminDlg, setEntEditAdminDlg] = useState<{ open: boolean; enterprise: any | null; admin: any | null; username: string; fullName: string; email: string; password: string; isActive: boolean; submitting: boolean }>({ open: false, enterprise: null, admin: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false })
 
   const [stockOutMode, setStockOutMode] = useState<'pic' | 'table'>('pic')
   const [stockInMode, setStockInMode] = useState<'pic' | 'table'>('pic')
@@ -1439,8 +1441,11 @@ export default function IMSApp() {
     if (showGlobalLoading) setLoading(true)
     try {
       const h = { 'Content-Type': 'application/json', ...auth.getAuthHeaders() }
-      const fArr = (url: string) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err); return [] } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return [] })
-      const fObj = (url: string, fallback: any = null) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err); return fallback } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return fallback })
+      // 403 responses are EXPECTED for users who lack a specific permission (e.g. warehouse_admin has no audit:view).
+      // Logging every permission-denied response as an error floods the console with noise that isn't actionable.
+      // Only log non-403 failures (real server errors, 500s, network failures) to console.error.
+      const fArr = (url: string) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { if (r.status !== 403) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err) } return [] } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return [] })
+      const fObj = (url: string, fallback: any = null) => fetch(`${BASE}/api${url}`, { headers: h }).then(async r => { if (!r.ok) { if (r.status !== 403) { const err = await r.json().catch(() => ({})); console.error(`API ${url} error:`, err) } return fallback } return r.json() }).catch((e) => { console.error(`API ${url} fetch error:`, e); return fallback })
       const defaultStats: DashboardStats = { enterpriseCount: 0, branchCount: 0, warehouseCount: 0, userCount: 0, productCount: 0, orderCount: 0, pendingOrderCount: 0, totalStockValue: 0, lowStockProducts: [], totalLots: 0, openLots: 0, stockInCount: 0, stockOutCount: 0 }
       const defaultAnalytics: AnalyticsData = { stockByWarehouse: [], stockByCategory: [], topProducts: [], recentActivity: [] }
       const [s, e, b, w, u, c, cond, sup, p, st, o, a, feat, so, si, an, att] = await Promise.all([
@@ -1779,6 +1784,7 @@ export default function IMSApp() {
                     <TooltipContent side="top" className="text-xs">Click to edit limits</TooltipContent>
                   </Tooltip>
                 ) : <Badge className="bg-muted text-muted-foreground border-0 text-xs">B:{e.maxBranches} W:{e.maxWarehouses} U:{e.maxUsers}</Badge>}
+                {canSetLimits && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEntLimitsDlg({ open: true, enterprise: e, maxBranches: e.maxBranches, maxWarehouses: e.maxWarehouses, maxUsers: e.maxUsers, submitting: false })}><SlidersHorizontal className="w-3 h-3 mr-1" />Set Limits</Button>}
                 {hasPermission(role!, 'enterprises:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('enterprise', e)}><Pencil className="w-3.5 h-3.5" /></Button>}
                 {hasPermission(role!, 'enterprises:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/enterprises/${e.id}`)} disabled={isCrudLoading('remove', `/enterprises/${e.id}`)} className="text-red-500">{isCrudLoading('remove', `/enterprises/${e.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}
               </div>
@@ -1788,6 +1794,7 @@ export default function IMSApp() {
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wider mr-1">Admin:</span>
                 {entAdmin ? <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400 border-0 text-[10px]">@{entAdmin.username}</Badge> : <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[10px]">No admin yet</Badge>}
                 {canManageAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEntAdminDlg({ open: true, enterprise: e, username: '', fullName: '', email: '', password: '', submitting: false })}><KeyRound className="w-3 h-3 mr-1" />Create Admin</Button>}
+                {canManageAdmin && entAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEntEditAdminDlg({ open: true, enterprise: e, admin: entAdmin, username: entAdmin.username, fullName: entAdmin.fullName, email: entAdmin.email || '', password: '', isActive: entAdmin.isActive, submitting: false })}><UserCog className="w-3 h-3 mr-1" />Edit Admin</Button>}
                 {canResetAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!entAdmin} onClick={() => setEntResetDlg({ open: true, enterprise: e, newPassword: '', submitting: false })}><RotateCcw className="w-3 h-3 mr-1" />Reset Password</Button>}
                 {canManageAdmin && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPage('permissions')}><ShieldCheck className="w-3 h-3 mr-1" />Permission Manager</Button>}
               </div>
@@ -5487,6 +5494,51 @@ export default function IMSApp() {
                   setEntResetDlg({ open: false, enterprise: null, newPassword: '', submitting: false })
                 } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setEntResetDlg(s => ({ ...s, submitting: false })) }
               }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{entResetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Reset Password</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── EDIT EXISTING ENTERPRISE ADMIN DIALOG (Task 17) ─── */}
+        <Dialog open={entEditAdminDlg.open} onOpenChange={o => setEntEditAdminDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><UserCog className="w-4 h-4 text-blue-500" /> Edit Admin — {entEditAdminDlg.enterprise?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Update this enterprise's admin user details. Leave password blank to keep the current one.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              {entEditAdminDlg.admin && (
+                <div className="text-xs text-muted-foreground bg-muted/50 rounded-md p-2 flex items-center justify-between">
+                  <span>Editing user: <span className="font-semibold text-foreground">@{entEditAdminDlg.admin.username}</span></span>
+                  <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400 border-0 text-[10px]">Enterprise Admin</Badge>
+                </div>
+              )}
+              <div className="space-y-1"><Label className="text-xs">Username *</Label><Input value={entEditAdminDlg.username} onChange={e => setEntEditAdminDlg(s => ({ ...s, username: e.target.value }))} placeholder="e.g. acme_admin" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Full Name *</Label><Input value={entEditAdminDlg.fullName} onChange={e => setEntEditAdminDlg(s => ({ ...s, fullName: e.target.value }))} placeholder="John Doe" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Email</Label><Input type="email" value={entEditAdminDlg.email} onChange={e => setEntEditAdminDlg(s => ({ ...s, email: e.target.value }))} placeholder="" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">New Password (optional)</Label><Input type="password" value={entEditAdminDlg.password} onChange={e => setEntEditAdminDlg(s => ({ ...s, password: e.target.value }))} placeholder="blank = keep current password" className="h-8 text-sm" /></div>
+              <div className="flex items-center justify-between rounded-md border p-2">
+                <div><Label className="text-xs">Account Active</Label><p className="text-[10px] text-muted-foreground">Deactivating blocks login but keeps the user record.</p></div>
+                <Switch checked={entEditAdminDlg.isActive} onCheckedChange={v => setEntEditAdminDlg(s => ({ ...s, isActive: v }))} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEntEditAdminDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={entEditAdminDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={entEditAdminDlg.submitting} onClick={async () => {
+                if (!entEditAdminDlg.username.trim() || !entEditAdminDlg.fullName.trim()) { toast({ title: 'Username and Full Name are required', variant: 'destructive' }); return }
+                if (!entEditAdminDlg.admin) { toast({ title: 'No admin user loaded', variant: 'destructive' }); return }
+                setEntEditAdminDlg(s => ({ ...s, submitting: true }))
+                try {
+                  const body: any = {
+                    username: entEditAdminDlg.username.trim(),
+                    fullName: entEditAdminDlg.fullName.trim(),
+                    email: entEditAdminDlg.email.trim(),
+                    isActive: entEditAdminDlg.isActive,
+                  }
+                  if (entEditAdminDlg.password) body.password = entEditAdminDlg.password
+                  await apiFetch(`/users/${entEditAdminDlg.admin.id}`, { method: 'PUT', body: JSON.stringify(body) })
+                  toast({ title: `Admin updated: ${entEditAdminDlg.username.trim()}` })
+                  setEntEditAdminDlg({ open: false, enterprise: null, admin: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false })
+                  await loadData()
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setEntEditAdminDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{entEditAdminDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <UserCog className="w-4 h-4 mr-1.5" />}Save Changes</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

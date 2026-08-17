@@ -462,3 +462,41 @@ Stage Summary:
 - 4 new Dialogs added without touching existing ones; all reuse the existing apiFetch + toast + loadData patterns
 - All shadcn components reused (no new component files); mobile responsive (grid-cols-1 sm:2 lg:3 for permission groups; flex-wrap for enterprise admin row); uses gradient buttons for primary actions (consistent with rest of app)
 - File grew from 5281 → 5610 lines (+329 lines); lint exit 0; dev server compiles cleanly
+
+---
+Task ID: 17
+Agent: main (orchestrator) — enterprise admin management + console noise fix
+Task: Two issues reported by user: (1) "where the admin can do enterprises:set_limits or edit spicific admin" — make Set Limits + Edit Admin features more discoverable in the UI; (2) Console errors flooding the browser: `API /users error: {}`, `API /audit error: {}`, `API /features error: {}`, `API /analytics error: {}`
+
+Work Log:
+- Read worklog.md (Tasks 4, 6, 15, 16 already complete — full permission system in place, Permission Manager page live, enterprises page has Set Limits via clickable B:W:U badge, Create Admin + Reset Password dialogs)
+- Diagnosed the console errors: They fire from loadData() in page.tsx (line 1442). The fArr/fObj helpers log every non-200 response via `console.error('API ${url} error:', err)`. For warehouse_admin (no users:view, audit:view, features:view, analytics:view in ROLE_DEFAULTS), the API returns 403 with empty body (`{}`). The client then logs `API /users error: {}` etc — these are EXPECTED permission-denied responses, not real errors, but they flood the console with noise
+- Confirmed by inspecting dev.log: `[handleError] FORBIDDEN: Missing permission "audit:view"` → 403 — server-side permission gate working as designed; the noise was purely a client-side logging issue
+- Reviewed the enterprises page (page.tsx ~line 1740): Set Limits feature WAS already there as a clickable B:W:U badge (line 1780) but not obvious — users couldn't find it. Edit Admin feature was MISSING entirely (only Create Admin + Reset Password existed)
+- Implemented Fix #1 (console noise): In loadData() (page.tsx line 1442-1446), wrapped the console.error call in `if (r.status !== 403)` so permission-denied responses silently fall back to [] / fallback instead of logging. Non-403 errors (500s, network failures) still log. Added explanatory comment
+- Implemented Fix #2 (Set Limits discoverability): Added an explicit "Set Limits" outline button next to the B:W:U badge on each enterprise card (page.tsx ~line 1787). Both the badge AND the button open the same Edit Limits dialog. Used the new SlidersHorizontal icon (added to the lucide-react import list)
+- Implemented Fix #3 (Edit Admin feature) — three-part change:
+  * Added new dialog state `entEditAdminDlg` (page.tsx ~line 874) with fields: open, enterprise, admin (the UserPermission target), username, fullName, email, password, isActive, submitting
+  * Added "Edit Admin" button (UserCog icon) to the enterprise admin row (page.tsx ~line 1797), gated by `canManageAdmin && entAdmin` (only shows when there IS an existing admin to edit). Pre-fills the dialog with the current admin's username/fullName/email/isActive when opened
+  * Added the Edit Admin Dialog UI (page.tsx ~line 5501) — max-w-md, includes: a header showing the admin being edited, username* + fullName* + email fields, optional new password (placeholder "blank = keep current password"), and an Account Active Switch with explanation. On Save: PUT /api/users/[id] with the updated body — reuses the existing endpoint (already has users:edit permission check + canManageUser tenant check). On success: toast + close + loadData()
+- Verified db.users.update (db.ts ~line 920) allows super_admin to edit any user via canManageUser (returns true for super_admin). PUT /api/users/[id] already requires users:edit (which super_admin has implicitly)
+- Verified via Agent Browser (logged in as super_admin):
+  * Enterprises page now shows on each card: clickable B:W:U badge + "Set Limits" button (NEW) + Create Admin + Edit Admin (NEW) + Reset Password + Permission Manager
+  * Clicked "Edit Admin" on Acme Corp → dialog opened with pre-filled username "acme_admin", fullName "Acme Enterprise Admin", email "admin@acme.com", Active=true, password blank
+  * Edited fullName to "Acme Enterprise Admin (Updated)" → clicked Save Changes → dialog closed, returned to Enterprises page, no console errors. Verified Users page shows the updated name persisted in DB
+  * Reverted the test edit back to "Acme Enterprise Admin"
+  * Clicked "Set Limits" button → Edit Limits dialog opened with maxBranches=10, maxWarehouses=50, maxUsers=100 (pre-filled from enterprise record)
+  * Console clean throughout (only React DevTools + HMR connected info messages)
+- Verified 403 console-silencing fix:
+  * Logged out, logged in as warehouse_admin (quick-login button "W Warehouse Admin — Acme WH1")
+  * Nav correctly hides Users/Audit/Features/Permission Manager items (warehouse_admin lacks those permissions)
+  * Console completely clean — no `API /users error: {}`, `API /audit error: {}`, `API /features error: {}`, `API /analytics error: {}` messages anymore
+  * Server-side dev.log still shows the 403s (security mechanism working as designed — server correctly rejects unauthorized requests), but the client no longer floods the browser console with noise for these expected permission-denied responses
+- Ran `bun run lint` — passes with exit 0 (only the BABEL note about page.tsx file size >500KB, not an error)
+- File grew from 5617 → 5669 lines (+52 lines: 4 lines for the 403-silencing fix with comment, 1 line for new dialog state, 1 line for new icon import, 1 line for new Set Limits button, 1 line for new Edit Admin button, ~44 lines for new Edit Admin Dialog)
+
+Stage Summary:
+- CONSOLE NOISE FIXED: loadData() now silently swallows 403 responses (expected for permission-denied). Non-403 errors still logged. warehouse_admin (and other restricted roles) no longer flood the browser console with `API /xxx error: {}` messages on every page load
+- SET LIMITS NOW DISCOVERABLE: Each enterprise card shows an explicit "Set Limits" outline button (SlidersHorizontal icon) alongside the existing clickable B:W:U badge. Both open the Edit Limits dialog (maxBranches / maxWarehouses / maxUsers). Super_admin sees both; the badge is hidden (replaced by plain Badge) for users without enterprises:set_limits
+- EDIT ADMIN FEATURE ADDED: Each enterprise card now has an "Edit Admin" button (UserCog icon) that opens a dialog pre-filled with the existing enterprise_admin's username, fullName, email, isActive. Allows updating username/fullName/email/password (blank = keep current)/active toggle. Calls PUT /api/users/[id] — reuses the existing user-update endpoint (already enforces users:edit + canManageUser tenant scope). Only shows when an enterprise_admin exists for the enterprise AND the viewer has enterprises:manage_admin permission
+- All three changes verified end-to-end via Agent Browser as super_admin + as warehouse_admin; lint passes (exit 0); dev server compiles cleanly
