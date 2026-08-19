@@ -500,3 +500,30 @@ Stage Summary:
 - SET LIMITS NOW DISCOVERABLE: Each enterprise card shows an explicit "Set Limits" outline button (SlidersHorizontal icon) alongside the existing clickable B:W:U badge. Both open the Edit Limits dialog (maxBranches / maxWarehouses / maxUsers). Super_admin sees both; the badge is hidden (replaced by plain Badge) for users without enterprises:set_limits
 - EDIT ADMIN FEATURE ADDED: Each enterprise card now has an "Edit Admin" button (UserCog icon) that opens a dialog pre-filled with the existing enterprise_admin's username, fullName, email, isActive. Allows updating username/fullName/email/password (blank = keep current)/active toggle. Calls PUT /api/users/[id] — reuses the existing user-update endpoint (already enforces users:edit + canManageUser tenant scope). Only shows when an enterprise_admin exists for the enterprise AND the viewer has enterprises:manage_admin permission
 - All three changes verified end-to-end via Agent Browser as super_admin + as warehouse_admin; lint passes (exit 0); dev server compiles cleanly
+---
+Task ID: 19
+Agent: main
+Task: Add Edit User, Toggle Active, Reset Password, Permission Manager controls to Users section (on adf8646 baseline, additive only)
+
+Work Log:
+- Reverted to adf8646 (clean baseline, nothing removed)
+- Added `users:toggle_active` and `users:reset_password` to ALL_PERMISSIONS in permissions.ts
+- Added them to PERMISSION_GROUPS users group
+- Added them to ROLE_DEFAULTS for enterprise_admin and branch_admin (perms + delegatable)
+- Added them to rbac.ts Permission type, users PERMISSION_GROUPS, and ROLE_PERMISSIONS
+- Updated PUT /api/users/[id] to check granular permissions (toggle_active/reset_password/edit)
+- Added `mustResetPassword` to User interface in page.tsx
+- Added `userEditDlg` and `userResetDlg` state variables
+- Enhanced Users card UI (kept section wrapper, New User btn, Role Hierarchy card intact):
+  - Each card now shows: INACTIVE badge, Toggle Active switch, scope path, role badge
+  - Manage section with: Edit User, Reset Password, Permission Manager buttons
+- Added Edit User dialog (username, fullName, email, password, isActive)
+- Added Reset Password dialog (new password, forced reset)
+- Updated seed endpoint to support mode=missing
+- Verified with Agent Browser: all dialogs open, no console errors
+
+Stage Summary:
+- Users section now has full management controls matching Enterprises pattern
+- Two new permissions added: `users:toggle_active`, `users:reset_password`
+- All existing functionality from adf8646 preserved intact
+- All verified via Agent Browser
