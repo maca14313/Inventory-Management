@@ -44,26 +44,16 @@ export const ALL_PERMISSIONS = [
   'branches:create',
   'branches:edit',
   'branches:delete',
-  'branches:set_limits',
-  'branches:toggle_active',
-  'branches:manage_admin',
-  'branches:reset_admin',
   // Warehouses
   'warehouses:view',
   'warehouses:create',
   'warehouses:edit',
   'warehouses:delete',
-  'warehouses:set_limits',
-  'warehouses:toggle_active',
-  'warehouses:manage_admin',
-  'warehouses:reset_admin',
   // Users
   'users:view',
   'users:create',
   'users:edit',
   'users:delete',
-  'users:toggle_active',
-  'users:reset_password',
   // Products
   'products:view',
   'products:create',
@@ -135,9 +125,9 @@ export type Permission = typeof ALL_PERMISSIONS[number]
 export const PERMISSION_GROUPS: { key: string; label: string; perms: string[] }[] = [
   { key: 'general', label: 'General', perms: ['dashboard:view', 'audit:view', 'analytics:view'] },
   { key: 'enterprises', label: 'Enterprises', perms: ['enterprises:view', 'enterprises:create', 'enterprises:edit', 'enterprises:delete', 'enterprises:set_limits', 'enterprises:toggle_active', 'enterprises:manage_admin', 'enterprises:reset_admin'] },
-  { key: 'branches', label: 'Branches', perms: ['branches:view', 'branches:create', 'branches:edit', 'branches:delete', 'branches:set_limits', 'branches:toggle_active', 'branches:manage_admin', 'branches:reset_admin'] },
-  { key: 'warehouses', label: 'Warehouses', perms: ['warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete', 'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin'] },
-  { key: 'users', label: 'Users', perms: ['users:view', 'users:create', 'users:edit', 'users:delete', 'users:toggle_active', 'users:reset_password'] },
+  { key: 'branches', label: 'Branches', perms: ['branches:view', 'branches:create', 'branches:edit', 'branches:delete'] },
+  { key: 'warehouses', label: 'Warehouses', perms: ['warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete'] },
+  { key: 'users', label: 'Users', perms: ['users:view', 'users:create', 'users:edit', 'users:delete'] },
   { key: 'products', label: 'Products', perms: ['products:view', 'products:create', 'products:edit', 'products:delete'] },
   { key: 'categories', label: 'Categories', perms: ['categories:view', 'categories:create', 'categories:edit', 'categories:delete'] },
   { key: 'conditions', label: 'Conditions', perms: ['conditions:view', 'conditions:create', 'conditions:edit', 'conditions:delete'] },
@@ -165,11 +155,8 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
       'dashboard:view', 'audit:view', 'analytics:view',
       'enterprises:view',
       'branches:view', 'branches:create', 'branches:edit', 'branches:delete',
-      'branches:set_limits', 'branches:toggle_active', 'branches:manage_admin', 'branches:reset_admin',
       'warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete',
-      'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin',
       'users:view', 'users:create', 'users:edit', 'users:delete',
-      'users:toggle_active', 'users:reset_password',
       'products:view', 'products:create', 'products:edit', 'products:delete',
       'categories:view', 'categories:create', 'categories:edit', 'categories:delete',
       'conditions:view', 'conditions:create', 'conditions:edit', 'conditions:delete',
@@ -188,11 +175,8 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
     delegatable: [
       'dashboard:view', 'audit:view',
       'branches:view', 'branches:create', 'branches:edit', 'branches:delete',
-      'branches:set_limits', 'branches:toggle_active', 'branches:manage_admin', 'branches:reset_admin',
       'warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete',
-      'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin',
       'users:view', 'users:create', 'users:edit', 'users:delete',
-      'users:toggle_active', 'users:reset_password',
       'products:view', 'products:create', 'products:edit', 'products:delete',
       'categories:view', 'categories:create', 'categories:edit',
       'conditions:view', 'conditions:create', 'conditions:edit',
@@ -212,9 +196,7 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
       'dashboard:view',
       'enterprises:view', 'branches:view',
       'warehouses:view', 'warehouses:create', 'warehouses:edit',
-      'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin',
       'users:view', 'users:create', 'users:edit',
-      'users:toggle_active', 'users:reset_password',
       'products:view', 'products:create', 'products:edit',
       'categories:view',
       'conditions:view',
@@ -232,9 +214,7 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
     delegatable: [
       'dashboard:view',
       'warehouses:view',
-      'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin',
       'users:view', 'users:create', 'users:edit',
-      'users:toggle_active', 'users:reset_password',
       'products:view', 'products:create', 'products:edit',
       'stock:view', 'stock:adjust',
       'orders:view', 'orders:create', 'orders:edit',
@@ -492,53 +472,6 @@ export async function seedAllExistingUsers(): Promise<{ seeded: number; skipped:
     seeded++
   }
   return { seeded, skipped }
-}
-
-/** Idempotent migration: for every existing non-super_admin user, ADD any abilities that
- *  are in their role's ROLE_DEFAULTS but NOT currently present in their UserPermission
- *  table. Existing rows are NEVER modified or deleted — so custom grants made by admins
- *  are preserved. This is the safe way to introduce new permission abilities (e.g. when
- *  we add branches:set_limits / warehouses:manage_admin) without wiping per-user tweaks.
- *  Returns counts of how many rows were added. */
-export async function seedMissingDefaults(): Promise<{ usersUpdated: number; permsAdded: number }> {
-  const users = await prisma.user.findMany()
-  let usersUpdated = 0, permsAdded = 0
-  for (const u of users) {
-    if (u.role === 'super_admin') continue
-    const defaults = ROLE_DEFAULTS[u.role]
-    if (!defaults) continue
-    // Build the desired ability→{canUse,canDelegate} map from ROLE_DEFAULTS
-    const desired = new Map<string, { canUse: boolean; canDelegate: boolean }>()
-    for (const a of defaults.perms) desired.set(a, { canUse: true, canDelegate: false })
-    for (const a of defaults.delegatable) {
-      const cur = desired.get(a) || { canUse: true, canDelegate: false }
-      cur.canDelegate = true
-      desired.set(a, cur)
-    }
-    // Fetch existing rows for this user
-    const existingRows = await prisma.userPermission.findMany({ where: { userId: u.id } })
-    const existingAbilities = new Set(existingRows.map(r => r.ability))
-    // For each desired ability that doesn't exist yet, create it
-    const toCreate: { ability: string; canUse: boolean; canDelegate: boolean }[] = []
-    for (const [ability, flags] of desired) {
-      if (!existingAbilities.has(ability)) {
-        toCreate.push({ ability, canUse: flags.canUse, canDelegate: flags.canDelegate })
-      }
-    }
-    if (toCreate.length === 0) continue
-    await prisma.userPermission.createMany({
-      data: toCreate.map(c => ({
-        userId: u.id,
-        ability: c.ability,
-        canUse: c.canUse,
-        canDelegate: c.canDelegate,
-        grantedById: null,
-      })),
-    })
-    usersUpdated++
-    permsAdded += toCreate.length
-  }
-  return { usersUpdated, permsAdded }
 }
 
 // ─── Subordinate listing (for Permission Manager UI) ───────

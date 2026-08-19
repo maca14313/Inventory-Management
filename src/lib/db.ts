@@ -680,8 +680,6 @@ export const db = {
             managerName: d.managerName || '',
             managerEmail: d.managerEmail || '',
             isActive: d.isActive ?? true,
-            maxWarehouses: d.maxWarehouses ?? 50,
-            maxUsers: d.maxUsers ?? 100,
           },
         })
         await tx.auditLog.create({
@@ -709,8 +707,6 @@ export const db = {
             ...(d.managerName !== undefined ? { managerName: d.managerName } : {}),
             ...(d.managerEmail !== undefined ? { managerEmail: d.managerEmail } : {}),
             ...(d.isActive !== undefined ? { isActive: d.isActive } : {}),
-            ...(d.maxWarehouses !== undefined ? { maxWarehouses: d.maxWarehouses } : {}),
-            ...(d.maxUsers !== undefined ? { maxUsers: d.maxUsers } : {}),
           },
         })
         await tx.auditLog.create({
@@ -773,7 +769,6 @@ export const db = {
             capacity: d.capacity ?? 1000,
             managerName: d.managerName || '',
             isActive: d.isActive ?? true,
-            maxUsers: d.maxUsers ?? 50,
           },
         })
         await tx.auditLog.create({
@@ -801,7 +796,6 @@ export const db = {
             ...(d.capacity !== undefined ? { capacity: d.capacity } : {}),
             ...(d.managerName !== undefined ? { managerName: d.managerName } : {}),
             ...(d.isActive !== undefined ? { isActive: d.isActive } : {}),
-            ...(d.maxUsers !== undefined ? { maxUsers: d.maxUsers } : {}),
           },
         })
         await tx.auditLog.create({
