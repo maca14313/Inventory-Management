@@ -618,3 +618,28 @@ Stage Summary:
 - Permission Editor dialog enhanced with per-group bulk toggle buttons (4 per group) and per-switch loading spinners — bulk actions preserve the orthogonal flag, and switches disable during parallel bulk operations to prevent race conditions
 - All 8 new permission abilities are visible in the Permission Editor catalog (because backend Task 18-backend added them to PERMISSION_GROUPS), so super_admin can grant/revoke branches:set_limits, warehouses:manage_admin, etc. per subordinate
 - Lint passes (exit 0); dev server compiles cleanly; Agent Browser verified all features end-to-end as super_admin: Branch Set Limits (W:50 U:100 → W:75 U:150), Branch Edit Admin (pre-filled with acme_hq_admin / Alice Johnson (HQ) / alice@acme.com), Warehouse Set Limits (U:50 → U:75), Permission Editor bulk actions (Use: All On for Enterprises group → all use switches true; Delegate: All Off → all delegate switches false while preserving use=true); no console errors, no dev.log errors
+---
+Task ID: 19
+Agent: main
+Task: Add Edit User, Toggle Active, Reset Password, Permission Manager controls to Users section (matching Enterprises/Branches/Warehouses card style)
+
+Work Log:
+- Read current state of permissions.ts, rbac.ts, page.tsx Users section, API routes
+- Added `users:toggle_active` and `users:reset_password` to ALL_PERMISSIONS in permissions.ts
+- Added them to PERMISSION_GROUPS users group
+- Added them to ROLE_DEFAULTS for enterprise_admin and branch_admin (both perms and delegatable)
+- Added them to rbac.ts Permission type, users PERMISSION_GROUPS, and ROLE_PERMISSIONS for enterprise_admin and branch_admin
+- Updated PUT /api/users/[id] to check granular permissions: `users:toggle_active` for isActive-only updates, `users:reset_password` for password changes, `users:edit` otherwise
+- Added `userEditDlg` and `userResetDlg` state variables to page.tsx
+- Enhanced Users card UI to match Enterprise/Branch/Warehouse card style with: avatar, INACTIVE badge, Toggle Active switch, scope info (enterprise→branch→warehouse), role badge, Edit/Delete in header
+- Added Manage section to each card with: Edit User button, Reset Password button, Permission Manager link
+- Added Edit User dialog (username, fullName, email, password, isActive) and Reset Password dialog (new password, forced reset)
+- Updated User interface to include `mustResetPassword` field
+- Updated permissions/seed endpoint to support `mode=missing` for additive permission seeding
+- Verified with Agent Browser: Users page shows all controls, Edit User dialog opens with correct data, Reset Password dialog works, Permission Manager shows new permissions
+
+Stage Summary:
+- Users section now has full management controls matching Enterprises/Branches/Warehouses pattern
+- Two new permissions added: `users:toggle_active`, `users:reset_password`
+- Granular API permission checks implemented
+- All verified via Agent Browser - no console errors

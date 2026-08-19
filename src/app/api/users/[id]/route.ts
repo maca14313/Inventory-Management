@@ -25,8 +25,18 @@ export async function PUT(
   try {
     const { id } = await params
     const ctx = getAuthContextFromHeaders(new Headers(req.headers))
-    await requirePermission(ctx, 'users:edit')
     const body = await req.json()
+    // Granular permission checks based on what's being updated
+    // Toggle on card sends only {isActive}; Edit dialog sends {username, fullName, email, password?, isActive}
+    // Reset password sends {password, mustResetPassword}
+    const hasOnlyActive = body.isActive !== undefined && body.password === undefined && body.username === undefined && body.fullName === undefined && body.email === undefined && body.role === undefined
+    if (hasOnlyActive) {
+      await requirePermission(ctx, 'users:toggle_active')
+    } else if (body.password !== undefined) {
+      await requirePermission(ctx, 'users:reset_password')
+    } else {
+      await requirePermission(ctx, 'users:edit')
+    }
     const data = await db.users.update(ctx, parseInt(id, 10), body)
     return NextResponse.json(data)
   } catch (e) { return handleError(e) }
