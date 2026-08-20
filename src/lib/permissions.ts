@@ -44,16 +44,27 @@ export const ALL_PERMISSIONS = [
   'branches:create',
   'branches:edit',
   'branches:delete',
+  'branches:set_limits',
+  'branches:toggle_active',
+  'branches:manage_admin',
+  'branches:reset_admin',
   // Warehouses
   'warehouses:view',
   'warehouses:create',
   'warehouses:edit',
   'warehouses:delete',
+  'warehouses:set_limits',
+  'warehouses:toggle_active',
+  'warehouses:manage_admin',
+  'warehouses:reset_admin',
   // Users
   'users:view',
   'users:create',
   'users:edit',
   'users:delete',
+  'users:toggle_active',
+  'users:manage_admin',
+  'users:reset_admin',
   // Products
   'products:view',
   'products:create',
@@ -125,9 +136,9 @@ export type Permission = typeof ALL_PERMISSIONS[number]
 export const PERMISSION_GROUPS: { key: string; label: string; perms: string[] }[] = [
   { key: 'general', label: 'General', perms: ['dashboard:view', 'audit:view', 'analytics:view'] },
   { key: 'enterprises', label: 'Enterprises', perms: ['enterprises:view', 'enterprises:create', 'enterprises:edit', 'enterprises:delete', 'enterprises:set_limits', 'enterprises:toggle_active', 'enterprises:manage_admin', 'enterprises:reset_admin'] },
-  { key: 'branches', label: 'Branches', perms: ['branches:view', 'branches:create', 'branches:edit', 'branches:delete'] },
-  { key: 'warehouses', label: 'Warehouses', perms: ['warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete'] },
-  { key: 'users', label: 'Users', perms: ['users:view', 'users:create', 'users:edit', 'users:delete'] },
+  { key: 'branches', label: 'Branches', perms: ['branches:view', 'branches:create', 'branches:edit', 'branches:delete', 'branches:set_limits', 'branches:toggle_active', 'branches:manage_admin', 'branches:reset_admin'] },
+  { key: 'warehouses', label: 'Warehouses', perms: ['warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete', 'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin'] },
+  { key: 'users', label: 'Users', perms: ['users:view', 'users:create', 'users:edit', 'users:delete', 'users:toggle_active', 'users:manage_admin', 'users:reset_admin'] },
   { key: 'products', label: 'Products', perms: ['products:view', 'products:create', 'products:edit', 'products:delete'] },
   { key: 'categories', label: 'Categories', perms: ['categories:view', 'categories:create', 'categories:edit', 'categories:delete'] },
   { key: 'conditions', label: 'Conditions', perms: ['conditions:view', 'conditions:create', 'conditions:edit', 'conditions:delete'] },
@@ -154,9 +165,9 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
     perms: [
       'dashboard:view', 'audit:view', 'analytics:view',
       'enterprises:view',
-      'branches:view', 'branches:create', 'branches:edit', 'branches:delete',
-      'warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete',
-      'users:view', 'users:create', 'users:edit', 'users:delete',
+      'branches:view', 'branches:create', 'branches:edit', 'branches:delete', 'branches:set_limits', 'branches:toggle_active', 'branches:manage_admin', 'branches:reset_admin',
+      'warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete', 'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin',
+      'users:view', 'users:create', 'users:edit', 'users:delete', 'users:toggle_active', 'users:manage_admin', 'users:reset_admin',
       'products:view', 'products:create', 'products:edit', 'products:delete',
       'categories:view', 'categories:create', 'categories:edit', 'categories:delete',
       'conditions:view', 'conditions:create', 'conditions:edit', 'conditions:delete',
@@ -174,9 +185,9 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
     ],
     delegatable: [
       'dashboard:view', 'audit:view',
-      'branches:view', 'branches:create', 'branches:edit', 'branches:delete',
-      'warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete',
-      'users:view', 'users:create', 'users:edit', 'users:delete',
+      'branches:view', 'branches:create', 'branches:edit', 'branches:delete', 'branches:set_limits', 'branches:toggle_active', 'branches:manage_admin', 'branches:reset_admin',
+      'warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete', 'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin',
+      'users:view', 'users:create', 'users:edit', 'users:delete', 'users:toggle_active', 'users:manage_admin', 'users:reset_admin',
       'products:view', 'products:create', 'products:edit', 'products:delete',
       'categories:view', 'categories:create', 'categories:edit',
       'conditions:view', 'conditions:create', 'conditions:edit',
@@ -195,8 +206,8 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
     perms: [
       'dashboard:view',
       'enterprises:view', 'branches:view',
-      'warehouses:view', 'warehouses:create', 'warehouses:edit',
-      'users:view', 'users:create', 'users:edit',
+      'warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:set_limits', 'warehouses:toggle_active', 'warehouses:manage_admin', 'warehouses:reset_admin',
+      'users:view', 'users:create', 'users:edit', 'users:toggle_active', 'users:manage_admin', 'users:reset_admin',
       'products:view', 'products:create', 'products:edit',
       'categories:view',
       'conditions:view',
@@ -213,7 +224,7 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
     ],
     delegatable: [
       'dashboard:view',
-      'warehouses:view',
+      'warehouses:view', 'warehouses:manage_admin', 'warehouses:reset_admin',
       'users:view', 'users:create', 'users:edit',
       'products:view', 'products:create', 'products:edit',
       'stock:view', 'stock:adjust',
@@ -242,6 +253,40 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
       'non_returnables:view', 'non_returnables:create',
       'attachments:view', 'attachments:create', 'attachments:edit',
       'lots:view',
+      'users:view', 'users:create', 'users:edit',
+      'permissions:view', 'permissions:manage',
+    ],
+    delegatable: [
+      'dashboard:view',
+      'warehouses:view',
+      'products:view',
+      'stock:view', 'stock:adjust',
+      'orders:view', 'orders:create', 'orders:edit',
+      'stock_in:view', 'stock_in:create', 'stock_in:edit',
+      'stock_out:view', 'stock_out:create', 'stock_out:edit',
+      'returns:view', 'returns:create',
+      'non_returnables:view', 'non_returnables:create',
+      'attachments:view', 'attachments:create',
+      'users:view', 'users:create', 'users:edit',
+      'permissions:view', 'permissions:manage',
+    ],
+  },
+  user: {
+    perms: [
+      'dashboard:view',
+      'enterprises:view', 'branches:view', 'warehouses:view',
+      'products:view',
+      'categories:view',
+      'conditions:view',
+      'stock:view', 'stock:adjust',
+      'orders:view', 'orders:create', 'orders:edit',
+      'suppliers:view',
+      'stock_in:view', 'stock_in:create',
+      'stock_out:view', 'stock_out:create',
+      'returns:view', 'returns:create',
+      'non_returnables:view',
+      'attachments:view', 'attachments:create',
+      'lots:view',
     ],
     delegatable: [],
   },
@@ -250,7 +295,7 @@ const ROLE_DEFAULTS: Record<string, { perms: string[]; delegatable: string[] }> 
 // ─── Role hierarchy ─────────────────────────────────────────
 
 const ROLE_ORDER: Record<string, number> = {
-  super_admin: 0, enterprise_admin: 1, branch_admin: 2, warehouse_admin: 3,
+  super_admin: 0, enterprise_admin: 1, branch_admin: 2, warehouse_admin: 3, user: 4,
 }
 
 export function roleLevel(role: string): number {
@@ -341,7 +386,7 @@ export async function canManageTarget(
   granter: AuthContext,
   targetId: number,
 ): Promise<boolean> {
-  if (granter.role === 'warehouse_admin') return false
+  if (granter.role === 'user') return false
   const target = await prisma.user.findUnique({ where: { id: targetId } })
   if (!target) return false
   if (target.role === 'super_admin') return false
@@ -353,6 +398,9 @@ export async function canManageTarget(
   }
   if (granter.role === 'branch_admin') {
     return target.branchId === granter.branchId && target.enterpriseId === granter.enterpriseId
+  }
+  if (granter.role === 'warehouse_admin') {
+    return target.warehouseId === granter.warehouseId && target.branchId === granter.branchId && target.enterpriseId === granter.enterpriseId
   }
   return false
 }
@@ -481,7 +529,7 @@ export async function getSubordinateUsers(granter: AuthContext): Promise<{
   id: number; username: string; fullName: string; role: string
   enterpriseId: number | null; branchId: number | null; warehouseId: number | null
 }[]> {
-  if (granter.role === 'warehouse_admin') return []
+  if (granter.role === 'user') return []
   if (granter.role === 'super_admin') {
     return prisma.user.findMany({
       where: { role: { not: 'super_admin' } },
@@ -493,7 +541,7 @@ export async function getSubordinateUsers(granter: AuthContext): Promise<{
     return prisma.user.findMany({
       where: {
         enterpriseId: granter.enterpriseId,
-        role: { in: ['branch_admin', 'warehouse_admin'] },
+        role: { in: ['branch_admin', 'warehouse_admin', 'user'] },
       },
       select: { id: true, username: true, fullName: true, role: true, enterpriseId: true, branchId: true, warehouseId: true },
       orderBy: { id: 'asc' },
@@ -504,7 +552,19 @@ export async function getSubordinateUsers(granter: AuthContext): Promise<{
       where: {
         branchId: granter.branchId,
         enterpriseId: granter.enterpriseId,
-        role: 'warehouse_admin',
+        role: { in: ['warehouse_admin', 'user'] },
+      },
+      select: { id: true, username: true, fullName: true, role: true, enterpriseId: true, branchId: true, warehouseId: true },
+      orderBy: { id: 'asc' },
+    })
+  }
+  if (granter.role === 'warehouse_admin') {
+    return prisma.user.findMany({
+      where: {
+        warehouseId: granter.warehouseId,
+        branchId: granter.branchId,
+        enterpriseId: granter.enterpriseId,
+        role: 'user',
       },
       select: { id: true, username: true, fullName: true, role: true, enterpriseId: true, branchId: true, warehouseId: true },
       orderBy: { id: 'asc' },

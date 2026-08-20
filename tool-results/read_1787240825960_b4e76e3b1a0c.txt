@@ -1,0 +1,502 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+     4→import { useTheme } from 'next-themes'
+     5→import { Button } from '@/components/ui/button'
+     6→import { Input } from '@/components/ui/input'
+     7→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+     8→import { Badge } from '@/components/ui/badge'
+     9→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog'
+    10→import { Label } from '@/components/ui/label'
+    11→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    12→import { Textarea } from '@/components/ui/textarea'
+    13→import { Switch } from '@/components/ui/switch'
+    14→import { Separator } from '@/components/ui/separator'
+    15→import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
+    16→import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
+    17→import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+    18→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    19→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    20→import {
+    21→  LayoutDashboard, Package, Warehouse as WHIcon, Users, ShoppingCart, Tag,
+    22→  Plus, Trash2, Pencil, Search, AlertTriangle, TrendingUp,
+    23→  Box, Truck, Building2, GitBranch, Shield, Globe, LogOut, Loader2,
+    24→  Key, Lock, ToggleLeft, ToggleRight, Menu, X, ChevronDown, ChevronRight,
+    25→  ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw, Calendar, Check, Eye, LayoutGrid, List,
+    26→  Sun, Moon, Phone, Mail, MapPin, FileText, Hash, ChevronLeft, Sparkles, ChevronRight as ChevronRightIcon, SkipBack, SkipForward, Printer, Filter, CalendarDays,
+    27→  MessageSquare, Send, Ban, ClipboardCheck,
+    28→  Paperclip, Download, Upload, Image as ImageIcon, File as FileIcon, FileImage,
+    29→  Table as TableIcon, Presentation, Video, Music, Archive, Code, Files, Tags,
+    30→  ShieldCheck, KeyRound, SlidersHorizontal, UserCog,
+    31→} from 'lucide-react'
+    32→import {
+    33→  BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
+    34→  Tooltip as RTooltip, ResponsiveContainer, Legend, LineChart, Line,
+    35→} from 'recharts'
+    36→import { toast } from '@/hooks/use-toast'
+    37→import { t, type Locale, locales } from '@/lib/i18n'
+    38→import {
+    39→  type RoleLevel, type Permission, type EnterpriseAbility,
+    40→  ROLE_HIERARCHY, ROLE_LABELS, ROLE_DESCRIPTIONS,
+    41→  ALL_ABILITIES, ABILITY_LABELS,
+    42→  PERMISSION_GROUPS, MANAGEABLE_ROLES,
+    43→  hasPermission, canManageRole, getPermissions, getNavItemsForRole,
+    44→} from '@/lib/rbac'
+    45→import { useAuthStore } from '@/lib/auth-store'
+    46→import { apiFetch } from '@/lib/api'
+    47→import { MEASUREMENTS } from '@/lib/db'
+    48→
+    49→const BASE = process.env.NEXT_PUBLIC_BASE_PATH || ''
+    50→const SORTED_MEASUREMENTS = [...MEASUREMENTS].sort((a, b) => a.localeCompare(b))
+    51→
+    52→const ICONS: Record<string, React.ComponentType<any>> = {
+    53→  LayoutDashboard, Package, Warehouse: WHIcon, Users, ShoppingCart, Tag, ClipboardCheck,
+    54→  Box, Truck, Building2, GitBranch, Shield, ShieldCheck, Globe, ArrowUpFromLine, ArrowDownToLine, Layers, RotateCcw,
+    55→  Paperclip,
+    56→}
+    57→
+    58→const PIE_COLORS = ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316']
+    59→
+    60→interface Enterprise { id: number; name: string; code: string; contactEmail: string; contactPhone: string; address: string; isActive: boolean; maxBranches: number; maxWarehouses: number; maxUsers: number }
+    61→interface Branch { id: number; enterpriseId: number; name: string; code: string; location: string; managerName: string; managerEmail: string; isActive: boolean }
+    62→interface Warehouse { id: number; enterpriseId: number; branchId: number; name: string; code: string; location: string; capacity: number; managerName: string; isActive: boolean }
+    63→interface User { id: number; enterpriseId: number | null; branchId: number | null; warehouseId: number | null; username: string; email: string; fullName: string; role: RoleLevel; isActive: boolean }
+    64→interface Category { id: number; enterpriseId: number; name: string; description: string }
+    65→interface Condition { id: number; enterpriseId: number; name: string; description: string }
+    66→interface Supplier { id: number; enterpriseId: number; name: string; contactPerson: string; email: string; phone: string; address: string }
+    67→interface Product { id: number; enterpriseId: number; name: string; sku: string; description: string; categoryId: number | null; price: number; cost: number; unit: string; reorderLevel: number; isActive: boolean }
+    68→interface StockItem { id: number; productId: number; warehouseId: number; quantity: number }
+    69→interface Order { id: number; enterpriseId: number; type: 'purchase' | 'sales'; supplierId: number | null; warehouseId: number | null; status: string; totalAmount: number; notes: string; createdBy: number | null }
+    70→interface AuditEntry { id: number; userId: number | null; enterpriseId: number | null; action: string; entity: string; entityId: number | null; details: string; createdAt: string }
+    71→interface Feature { id: number; enterpriseId: number; feature: string; enabled: boolean }
+    72→interface Lot { id: number; lotNumber: string; productId: number; warehouseId: number; quantity: number; remainingQty: number; unit: string; costPerUnit: number; supplierName: string | null; source: string; sourceRef: string | null; notes: string | null; receivedDate: string; closedAt: string | null; status: string; createdAt: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
+    73→interface StockInItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; createdAt: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
+    74→interface StockInRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockInItem[]; createdAt: string }
+    75→interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string; createdAt?: string; updatedAt?: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
+    76→interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[]; createdAt: string }
+    77→interface ReturnRecord { id: number; stockOutItemId: number; returnRecorderId: number | null; quantity: number; unit: string; notes: string; returnedAt: string; createdAt: string }
+    78→interface ReturnRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; returns?: (ReturnRecord & { stockOutItem?: { product: Product } })[] }
+    79→interface NonReturnable { id: number; stockOutItemId: number; nonReturnableRecorderId: number | null; quantity: number; unit: string; reason: string; reasonDetail: string; notes: string; decidedAt: string; createdAt: string; stockOutItem?: { id: number; productId: number; warehouseId: number; quantity: number; unit: string; product?: Product } }
+    80→interface NonReturnableRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; nonReturnables?: (NonReturnable & { stockOutItem?: { product: Product } })[] }
+    81→interface ReturnableItem extends StockOutItem { returnedQty: number; remainingQty: number; nonReturnableQty: number; product: Product; recorder: StockOutRecorder; returns: ReturnRecord[]; nonReturnables?: NonReturnable[]; createdAt: string }
+    82→
+    83→// ─── Attachments ────────────────────────────────────────────
+    84→interface AttachmentMetaField { id: number; attachmentId: number; key: string; value: string; description: string; createdAt: string; updatedAt: string }
+    85→interface AttachmentFileEntry { name: string; size: number; mimeType: string }
+    86→interface AttachmentRecord {
+    87→  id: number; enterpriseId: number; branchId: number | null; warehouseId: number | null
+    88→  fileName: string; storedName: string; mimeType: string; originalSize: number; storedSize: number
+    89→  isImage: boolean; isMultiFile: boolean; fileCount: number; fileCategory: string; fileListJson: string
+    90→  previewData: string
+    91→  entityType: string; entityId: number | null
+    92→  title: string; description: string; uploadedById: number | null
+    93→  metaFields?: AttachmentMetaField[]
+    94→  uploadedBy?: { id: number; username: string; fullName: string } | null
+    95→  createdAt: string; updatedAt: string
+    96→}
+    97→const ATTACHMENT_ENTITY_TYPES = [
+    98→  { key: 'standalone', label: 'Standalone' },
+    99→  { key: 'stock_in', label: 'Stock In' },
+   100→  { key: 'stock_in_item', label: 'Stock In Item' },
+   101→  { key: 'stock_out', label: 'Stock Out' },
+   102→  { key: 'stock_out_item', label: 'Stock Out Item' },
+   103→  { key: 'return', label: 'Return' },
+   104→  { key: 'non_returnable', label: 'Non-Returnable' },
+   105→  { key: 'order', label: 'Order' },
+   106→  { key: 'order_item', label: 'Order Item' },
+   107→  { key: 'product', label: 'Product' },
+   108→] as const
+   109→const ATTACHMENT_FILE_CATEGORIES: { key: string; label: string; icon: string }[] = [
+   110→  { key: 'image', label: 'Images', icon: 'ImageIcon' },
+   111→  { key: 'pdf', label: 'PDFs', icon: 'FileText' },
+   112→  { key: 'document', label: 'Documents', icon: 'FileText' },
+   113→  { key: 'spreadsheet', label: 'Spreadsheets', icon: 'Table' },
+   114→  { key: 'presentation', label: 'Presentations', icon: 'Presentation' },
+   115→  { key: 'video', label: 'Videos', icon: 'Video' },
+   116→  { key: 'audio', label: 'Audio', icon: 'Music' },
+   117→  { key: 'archive', label: 'Archives', icon: 'Archive' },
+   118→  { key: 'code', label: 'Code', icon: 'Code' },
+   119→  { key: 'other', label: 'Other', icon: 'FileIcon' },
+   120→]
+   121→
+   122→// ─── Non-Returnable reasons catalogue ────────────────────────────
+   123→// Curated list of why a "should-be-returned" item cannot be returned.
+   124→// Each entry is stored in the DB as the `reason` key (e.g. "damaged") and shown
+   125→// to the user as the human-readable label (e.g. "Damaged"). The "other" entry is
+   126→// always last and triggers a free-text reasonDetail input.
+   127→const NON_RETURNABLE_REASONS: { key: string; label: string }[] = [
+   128→  { key: 'altered', label: 'Altered' },
+   129→  { key: 'assembled', label: 'Assembled' },
+   130→  { key: 'biohazard', label: 'Biohazard' },
+   131→  { key: 'clearance-item', label: 'Clearance Item' },
+   132→  { key: 'code-revealed', label: 'Code Revealed' },
+   133→  { key: 'contaminated', label: 'Contaminated' },
+   134→  { key: 'counterfeit-suspected', label: 'Counterfeit Suspected' },
+   135→  { key: 'custom-made', label: 'Custom Made' },
+   136→  { key: 'customer-banned', label: 'Customer Banned' },
+   137→  { key: 'damaged', label: 'Damaged' },
+   138→  { key: 'damaged-in-transit', label: 'Damaged In Transit' },
+   139→  { key: 'dead', label: 'Dead' },
+   140→  { key: 'destroyed', label: 'Destroyed' },
+   141→  { key: 'dirty', label: 'Dirty' },
+   142→  { key: 'disposed', label: 'Disposed' },
+   143→  { key: 'duplicate-return', label: 'Duplicate Return' },
+   144→  { key: 'electrical-fault', label: 'Electrical Fault' },
+   145→  { key: 'excessive-wear', label: 'Excessive Wear' },
+   146→  { key: 'expired', label: 'Expired' },
+   147→  { key: 'export-restricted', label: 'Export Restricted' },
+   148→  { key: 'final-sale', label: 'Final Sale' },
+   149→  { key: 'fraud-suspected', label: 'Fraud Suspected' },
+   150→  { key: 'free-gift-missing', label: 'Free Gift Missing' },
+   151→  { key: 'gift-restriction', label: 'Gift Restriction' },
+   152→  { key: 'hazardous-material', label: 'Hazardous Material' },
+   153→  { key: 'hygiene-seal-broken', label: 'Hygiene Seal Broken' },
+   154→  { key: 'improperly-packaged', label: 'Improperly Packaged' },
+   155→  { key: 'incompatible-item', label: 'Incompatible Item' },
+   156→  { key: 'laundered', label: 'Laundered' },
+   157→  { key: 'liquid-damaged', label: 'Liquid Damaged' },
+   158→  { key: 'lost', label: 'Lost' },
+   159→  { key: 'manufacturer-defect', label: 'Manufacturer Defect' },
+   160→  { key: 'missing-accessories', label: 'Missing Accessories' },
+   161→  { key: 'missing-invoice', label: 'Missing Invoice' },
+   162→  { key: 'missing-packaging', label: 'Missing Packaging' },
+   163→  { key: 'missing-parts', label: 'Missing Parts' },
+   164→  { key: 'missing-serial-label', label: 'Missing Serial Label' },
+   165→  { key: 'non-original-condition', label: 'Non-Original Condition' },
+   166→  { key: 'no-receipt', label: 'No Receipt' },
+   167→  { key: 'not-purchased-here', label: 'Not Purchased Here' },
+   168→  { key: 'odor-tainted', label: 'Odor Tainted' },
+   169→  { key: 'opened', label: 'Opened' },
+   170→  { key: 'oversized-return', label: 'Oversized Return' },
+   171→  { key: 'policy-abuse', label: 'Policy Abuse' },
+   172→  { key: 'quarantine', label: 'Quarantine' },
+   173→  { key: 'recalled', label: 'Recalled' },
+   174→  { key: 'refurbished', label: 'Refurbished' },
+   175→  { key: 'regulated-item', label: 'Regulated Item' },
+   176→  { key: 'restocking-fee-zeroes-refund', label: 'Restocking Fee Zeroes Refund' },
+   177→  { key: 'return-window-closed', label: 'Return Window Closed' },
+   178→  { key: 'seasonal-item', label: 'Seasonal Item' },
+   179→  { key: 'serial-mismatch', label: 'Serial Mismatch' },
+   180→  { key: 'software-unsealed', label: 'Software Unsealed' },
+   181→  { key: 'spoiled', label: 'Spoiled' },
+   182→  { key: 'stolen', label: 'Stolen' },
+   183→  { key: 'swapped', label: 'Swapped' },
+   184→  { key: 'tampered', label: 'Tampered' },
+   185→  { key: 'time-lapsed', label: 'Time Lapsed' },
+   186→  { key: 'unauthorized-return', label: 'Unauthorized Return' },
+   187→  { key: 'unpaid-return-shipping', label: 'Unpaid Return Shipping' },
+   188→  { key: 'used', label: 'Used' },
+   189→  { key: 'warranty-voided', label: 'Warranty Voided' },
+   190→  { key: 'worn-out', label: 'Worn Out' },
+   191→  { key: 'wrong-address', label: 'Wrong Address' },
+   192→  { key: 'wrong-item-returned', label: 'Wrong Item Returned' },
+   193→  { key: 'other', label: 'Other (specify in notes)' },
+   194→]
+   195→// Quick lookup: reason key → human-readable label
+   196→const REASON_LABELS: Record<string, string> = Object.fromEntries(NON_RETURNABLE_REASONS.map(r => [r.key, r.label]))
+   197→interface DashboardStats { enterpriseCount: number; branchCount: number; warehouseCount: number; userCount: number; productCount: number; orderCount: number; pendingOrderCount: number; totalStockValue: number; lowStockProducts: { id: number; name: string; sku: string; reorderLevel: number; totalQty: number }[]; totalLots: number; openLots: number; stockInCount: number; stockOutCount: number }
+   198→interface AnalyticsData { stockByWarehouse: { name: string; value: number }[]; stockByCategory: { name: string; value: number }[]; topProducts: { name: string; quantity: number; value: number }[]; recentActivity: { id: number; action: string; entity: string; entityId: number | null; details: string; createdAt: string; userName: string | null }[] }
+   199→
+   200→// Custom Alphabetical Month-Year Date Picker
+   201→const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+   202→function CustomDatePicker({ value, onChange, compact }: { value: string; onChange: (v: string) => void; compact?: boolean }) {
+   203→  const [open, setOpen] = useState(false)
+   204→  const today = new Date()
+   205→  const [year, setYear] = useState(today.getFullYear())
+   206→  const [month, setMonth] = useState(today.getMonth())
+   207→  const parsed = value ? new Date(value + 'T00:00:00') : null
+   208→
+   209→  const years = Array.from({ length: 10 }, (_, i) => today.getFullYear() - 2 + i)
+   210→  // Months sorted alphabetically
+   211→  const alphaMonths = MONTHS.map((m, i) => ({ name: m, index: i })).sort((a, b) => a.name.localeCompare(b.name))
+   212→
+   213→  const daysInMonth = new Date(year, month + 1, 0).getDate()
+   214→  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
+   215→
+   216→  const selectDate = (d: number) => {
+   217→    const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+   218→    onChange(iso)
+   219→    setOpen(false)
+   220→  }
+   221→
+   222→  return (
+   223→    <div className="relative">
+   224→      <button type="button" onClick={() => setOpen(!open)}
+   225→        className={`w-full flex items-center gap-2 rounded-lg border border-input bg-background text-foreground hover:bg-accent transition ${compact ? 'px-2 py-1 text-xs' : 'px-3 py-2 text-sm'}`}>
+   226→        <Calendar className={`${compact ? 'w-3.5 h-3.5' : 'w-4 h-4'} text-muted-foreground shrink-0`} />
+   227→        {parsed ? parsed.toLocaleDateString() : <span className="text-muted-foreground">Pick a date</span>}
+   228→      </button>
+   229→      {open && (
+   230→        <div className="absolute z-50 mt-1 w-64 rounded-xl border bg-popover p-3 shadow-xl">
+   231→          <div className="flex gap-2 mb-3">
+   232→            <Select value={String(year)} onValueChange={v => setYear(parseInt(v))}>
+   233→              <SelectTrigger className="h-8 text-xs flex-1"><SelectValue /></SelectTrigger>
+   234→              <SelectContent>{years.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
+   235→            </Select>
+   236→            <Select value={String(month)} onValueChange={v => setMonth(parseInt(v))}>
+   237→              <SelectTrigger className="h-8 text-xs flex-1"><SelectValue /></SelectTrigger>
+   238→              <SelectContent className="max-h-48">
+   239→                {alphaMonths.map(m => <SelectItem key={m.index} value={String(m.index)}>{m.name}</SelectItem>)}
+   240→              </SelectContent>
+   241→            </Select>
+   242→          </div>
+   243→          <div className="grid grid-cols-7 gap-1">
+   244→            {days.map(d => {
+   245→              const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+   246→              const isSelected = value === iso
+   247→              return <button key={d} onClick={() => selectDate(d)}
+   248→                className={`h-7 w-7 rounded-md text-xs font-medium transition ${isSelected ? 'bg-blue-600 text-white' : 'hover:bg-accent text-foreground'}`}>{d}</button>
+   249→            })}
+   250→          </div>
+   251→        </div>
+   252→      )}
+   253→    </div>
+   254→  )
+   255→}
+   256→
+   257→// ─── Helper: icon-prefixed label
+   258→function IconLabel({ icon: Icon, children }: { icon: React.ComponentType<any>; children: React.ReactNode }) {
+   259→  return <Label className="text-xs font-medium flex items-center gap-1.5"><Icon className="w-3.5 h-3.5 text-muted-foreground" />{children}</Label>
+   260→}
+   261→
+   262→// ─── Helper: section header
+   263→function SectionHeader({ icon: Icon, children }: { icon: React.ComponentType<any>; children: React.ReactNode }) {
+   264→  return <div className="flex items-center gap-2 pb-1"><Icon className="w-4 h-4 text-blue-500" /><span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{children}</span></div>
+   265→}
+   266→
+   267→// ─── Reusable Attachment Picker ───────────────────────────
+   268→// Used inside EVERY record/item form dialog (Stock In, Stock Out, StockOutItem,
+   269→// Order, Register/Product, Return, NonReturnable) so the user can:
+   270→//   • pick multiple files at once  → zipped server-side into one archive
+   271→//   • preview selected files with size + IMG badge + per-file remove button
+   272→//   • attach unlimited key-value-description metadata fields to the SAME attachment
+   273→//   • set an optional title + description
+   274→// This is the SAME feature set as the standalone Upload dialog on the Attachments
+   275→// page, so behaviour is consistent everywhere an attachment can be created.
+   276→const ATT_PICKER_ACCENTS: Record<string, { ring: string; btn: string; chip: string; file: string; meta: string }> = {
+   277→  violet:  { ring: 'border-violet-200 dark:border-violet-500/30',  btn: 'bg-violet-100 text-violet-700 hover:bg-violet-200 dark:bg-violet-500/20 dark:text-violet-300',          chip: 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400',         file: 'file:bg-violet-100 file:text-violet-700 hover:file:bg-violet-200 dark:file:bg-violet-500/20 dark:file:text-violet-300',         meta: 'bg-violet-50 dark:bg-violet-500/10' },
+   278→  blue:    { ring: 'border-blue-200 dark:border-blue-500/30',      btn: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-500/20 dark:text-blue-300',              chip: 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400',                 file: 'file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200 dark:file:bg-blue-500/20 dark:file:text-blue-300',                 meta: 'bg-blue-50 dark:bg-blue-500/10' },
+   279→  emerald: { ring: 'border-emerald-200 dark:border-emerald-500/30',btn: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-300',  chip: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400',     file: 'file:bg-emerald-100 file:text-emerald-700 hover:file:bg-emerald-200 dark:file:bg-emerald-500/20 dark:file:text-emerald-300', meta: 'bg-emerald-50 dark:bg-emerald-500/10' },
+   280→  rose:    { ring: 'border-rose-200 dark:border-rose-500/30',     btn: 'bg-rose-100 text-rose-700 hover:bg-rose-200 dark:bg-rose-500/20 dark:text-rose-300',              chip: 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400',                 file: 'file:bg-rose-100 file:text-rose-700 hover:file:bg-rose-200 dark:file:bg-rose-500/20 dark:file:text-rose-300',                 meta: 'bg-rose-50 dark:bg-rose-500/10' },
+   281→}
+   282→
+   283→// ─── File preview thumbnail
+   284→// Renders an actual image thumbnail for image files using URL.createObjectURL().
+   285→// For non-image files, falls back to a FileText icon on a muted tile.
+   286→// The object URL is computed synchronously via useMemo (no cascading renders)
+   287→// and revoked in a useEffect cleanup when the file changes or the component unmounts
+   288→// to prevent memory leaks.
+   289→function FilePreviewThumb({ file, size = 32 }: { file: File; size?: number }) {
+   290→  const isImage = file.type.startsWith('image/')
+   291→  const url = useMemo(() => {
+   292→    if (!isImage) return null
+   293→    return URL.createObjectURL(file)
+   294→  }, [file, isImage])
+   295→  useEffect(() => {
+   296→    if (!url) return
+   297→    return () => URL.revokeObjectURL(url)
+   298→  }, [url])
+   299→  if (!isImage || !url) {
+   300→    return (
+   301→      <div
+   302→        className="flex items-center justify-center bg-muted/60 rounded shrink-0 border"
+   303→        style={{ width: size, height: size }}
+   304→      >
+   305→        <FileText className="text-muted-foreground" style={{ width: Math.max(12, size * 0.5), height: Math.max(12, size * 0.5) }} />
+   306→      </div>
+   307→    )
+   308→  }
+   309→  return (
+   310→    <img
+   311→      src={url}
+   312→      alt={file.name}
+   313→      className="object-cover rounded shrink-0 border bg-muted/40"
+   314→      style={{ width: size, height: size }}
+   315→    />
+   316→  )
+   317→}
+   318→
+   319→function AttachmentPicker({
+   320→  files, onFilesChange,
+   321→  metaFields, onMetaChange,
+   322→  title, onTitleChange,
+   323→  description, onDescChange,
+   324→  accent = 'violet',
+   325→  hint,
+   326→}: {
+   327→  files: File[]
+   328→  onFilesChange: (f: File[]) => void
+   329→  metaFields: { key: string; value: string; description: string }[]
+   330→  onMetaChange: (m: { key: string; value: string; description: string }[]) => void
+   331→  title: string
+   332→  onTitleChange: (s: string) => void
+   333→  description: string
+   334→  onDescChange: (s: string) => void
+   335→  accent?: 'violet' | 'blue' | 'emerald' | 'rose'
+   336→  hint?: string
+   337→}) {
+   338→  const a = ATT_PICKER_ACCENTS[accent] || ATT_PICKER_ACCENTS.violet
+   339→  const totalKB = files.reduce((s, f) => s + f.size, 0) / 1024
+   340→  return (
+   341→    <div className={`bg-muted/30 rounded-lg p-2.5 space-y-2 border ${a.ring}`}>
+   342→      <SectionHeader icon={Paperclip}>Attachments</SectionHeader>
+   343→      {hint && <div className="text-[10px] text-muted-foreground">{hint}</div>}
+   344→
+   345→      {/* File picker (multi) */}
+   346→      <input type="file" multiple onChange={e => {
+   347→        const incoming = Array.from(e.target.files || [])
+   348→        if (incoming.length === 0) return
+   349→        // APPEND to existing files (don't replace). Dedupe by name+size+lastModified
+   350→        // so re-selecting the same file doesn't create duplicates.
+   351→        const seen = new Set(files.map(f => `${f.name}|${f.size}|${f.lastModified}`))
+   352→        onFilesChange([...files, ...incoming.filter(f => !seen.has(`${f.name}|${f.size}|${f.lastModified}`))])
+   353→        // Reset the input value so selecting the SAME file again still fires onChange
+   354→        e.target.value = ''
+   355→      }} className={`w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-medium ${a.file}`} />
+   356→      <p className="text-[10px] text-muted-foreground">Select one or more files — they'll be zipped into a single archive on upload. Images will be previewable.</p>
+   357→
+   358→      {/* Selected files list with per-file remove */}
+   359→      {files.length > 0 && (
+   360→        <div className="space-y-1">
+   361→          <div className="text-[10px] text-muted-foreground font-medium">{files.length} file(s) selected · {totalKB.toFixed(1)} KB total</div>
+   362→          {files.map((f, i) => (
+   363→            <div key={i} className="flex items-center gap-2 bg-card rounded-md px-2 py-1.5 text-[11px] border">
+   364→              <FilePreviewThumb file={f} size={32} />
+   365→              <div className="flex-1 min-w-0">
+   366→                <div className="truncate" title={f.name}>{f.name}</div>
+   367→                <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+   368→                  <span>{(f.size / 1024).toFixed(1)} KB</span>
+   369→                  {f.type.startsWith('image/') && <Badge className={`${a.chip} border-0 text-[9px] px-1 py-0`}><ImageIcon className="w-2.5 h-2.5 mr-0.5 inline" />IMG</Badge>}
+   370→                </div>
+   371→              </div>
+   372→              <Button size="sm" variant="ghost" onClick={() => onFilesChange(files.filter((_, j) => j !== i))} className="text-red-500 h-5 w-5 p-0"><X className="w-3 h-3" /></Button>
+   373→            </div>
+   374→          ))}
+   375→        </div>
+   376→      )}
+   377→
+   378→      {/* Optional title + description for the attachment record */}
+   379→      <div className="grid grid-cols-1 gap-2">
+   380→        <div className="space-y-1"><Label className="text-[10px] font-medium text-muted-foreground">Attachment title (optional)</Label><Input value={title} onChange={e => onTitleChange(e.target.value)} placeholder="e.g. Delivery photos, Invoice scan..." className="h-7 text-xs" /></div>
+   381→        <div className="space-y-1"><Label className="text-[10px] font-medium text-muted-foreground">Attachment description (optional)</Label><Input value={description} onChange={e => onDescChange(e.target.value)} placeholder="Short note about this attachment..." className="h-7 text-xs" /></div>
+   382→      </div>
+   383→
+   384→      {/* Custom metadata key-value-description editor (unlimited rows) */}
+   385→      <div className={`${a.meta} rounded-md p-2 space-y-1.5`}>
+   386→        <div className="flex items-center justify-between">
+   387→          <Label className="text-[10px] font-semibold flex items-center gap-1 text-muted-foreground uppercase tracking-wider"><Tags className="w-3 h-3" />Custom Metadata</Label>
+   388→          <Button size="sm" variant="ghost" onClick={() => onMetaChange([...metaFields, { key: '', value: '', description: '' }])} className="h-6 text-[11px] px-2 text-violet-600 hover:bg-violet-100 dark:hover:bg-violet-500/20"><Plus className="w-3 h-3 mr-0.5" />Add Field</Button>
+   389→        </div>
+   390→        <p className="text-[10px] text-muted-foreground">Add unlimited key-value-description fields. These power the advanced content-based filters on every list page.</p>
+   391→        {metaFields.length === 0 && <div className="text-[10px] text-muted-foreground italic">No custom fields yet. Click "Add Field" to add key-value-description metadata.</div>}
+   392→        {metaFields.map((m, i) => (
+   393→          <div key={i} className="space-y-1 bg-card rounded-md p-1.5 border">
+   394→            <div className="flex gap-1">
+   395→              <Input value={m.key} onChange={e => onMetaChange(metaFields.map((x, j) => j === i ? { ...x, key: e.target.value } : x))} placeholder="Key (e.g. batch)" className="h-7 text-xs flex-1" />
+   396→              <Input value={m.value} onChange={e => onMetaChange(metaFields.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} placeholder="Value (e.g. B-001)" className="h-7 text-xs flex-1" />
+   397→              <Button size="sm" variant="ghost" onClick={() => onMetaChange(metaFields.filter((_, j) => j !== i))} className="text-red-500 h-7 w-7 p-0"><X className="w-3 h-3" /></Button>
+   398→            </div>
+   399→            <Input value={m.description} onChange={e => onMetaChange(metaFields.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} placeholder="Description (optional) — what this field means..." className="h-7 text-xs" />
+   400→          </div>
+   401→        ))}
+   402→      </div>
+   403→    </div>
+   404→  )
+   405→}
+   406→
+   407→// ─── Pagination helper
+   408→function Pager({ page, totalPages, onPageChange }: { page: number; totalPages: number; onPageChange: (p: number) => void }) {
+   409→  if (totalPages <= 1) return null
+   410→  return (
+   411→    <div className="flex items-center justify-between pt-2">
+   412→      <span className="text-[11px] text-muted-foreground">Page {page} of {totalPages}</span>
+   413→      <div className="flex items-center gap-1">
+   414→        <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => onPageChange(1)} className="h-7 w-7 p-0"><SkipBack className="w-3 h-3" /></Button>
+   415→        <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => onPageChange(page - 1)} className="h-7 w-7 p-0"><ChevronLeft className="w-3 h-3" /></Button>
+   416→        <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => onPageChange(page + 1)} className="h-7 w-7 p-0"><ChevronRight className="w-3 h-3" /></Button>
+   417→        <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => onPageChange(totalPages)} className="h-7 w-7 p-0"><SkipForward className="w-3 h-3" /></Button>
+   418→      </div>
+   419→    </div>
+   420→  )
+   421→}
+   422→
+   423→// ─── Advanced Collapsible Filter Panel (reusable across all list pages)
+   424→// Wraps a set of filter fields in a collapsible container with a header that shows
+   425→// the number of active filters and a Clear button. Children are the filter fields.
+   426→function FilterPanel({
+   427→  activeCount,
+   428→  onClear,
+   429→  children,
+   430→  title = 'Advanced Filters',
+   431→  defaultOpen = false,
+   432→  resultLabel,
+   433→}: {
+   434→  activeCount: number
+   435→  onClear: () => void
+   436→  children: React.ReactNode
+   437→  title?: string
+   438→  defaultOpen?: boolean
+   439→  resultLabel?: string
+   440→}) {
+   441→  const [open, setOpen] = useState(defaultOpen)
+   442→  return (
+   443→    <Collapsible open={open} onOpenChange={setOpen} className="bg-muted/30 rounded-md border">
+   444→      <div className="flex items-center justify-between gap-2 p-2">
+   445→        <CollapsibleTrigger asChild>
+   446→          <button type="button" className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition">
+   447→            <Filter className="w-3.5 h-3.5" />
+   448→            <span>{title}</span>
+   449→            {activeCount > 0 && <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400 border-0 text-[9px] h-4 px-1.5">{activeCount}</Badge>}
+   450→            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+   451→          </button>
+   452→        </CollapsibleTrigger>
+   453→        <div className="flex items-center gap-2">
+   454→          {resultLabel && <span className="text-[10px] text-muted-foreground">{resultLabel}</span>}
+   455→          {activeCount > 0 && <Button size="sm" variant="ghost" onClick={onClear} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
+   456→        </div>
+   457→      </div>
+   458→      <CollapsibleContent>
+   459→        <div className="px-2 pb-2 pt-1 flex flex-wrap items-end gap-2 border-t">{children}</div>
+   460→      </CollapsibleContent>
+   461→    </Collapsible>
+   462→  )
+   463→}
+   464→
+   465→// ─── Filter field wrapper: label + child
+   466→function FilterField({ label, children, width }: { label: string; children: React.ReactNode; width?: string }) {
+   467→  return (
+   468→    <div className="space-y-0.5">
+   469→      <Label className="text-[10px] text-muted-foreground">{label}</Label>
+   470→      <div className={width}>{children}</div>
+   471→    </div>
+   472→  )
+   473→}
+   474→
+   475→// ─── PaginatedCombobox: reusable Popover-based combobox with search + pagination.
+   476→// Used to replace every large-data <Select> (warehouses, categories, products, suppliers,
+   477→// enterprises, branches) so that the dropdown stays fast and usable when the list grows.
+   478→// Style mirrors the Returns warehouse combobox (violet accent for selected).
+   479→type ComboItem = { value: string; label: string; sublabel?: string; badge?: string }
+   480→function PaginatedCombobox({
+   481→  items,
+   482→  value,
+   483→  onChange,
+   484→  placeholder = 'Select...',
+   485→  allLabel,
+   486→  allValue = '_all',
+   487→  perPage = 10,
+   488→  triggerClassName = '',
+   489→  contentClassName = 'w-44',
+   490→  disabled = false,
+   491→  compact = false,
+   492→}: {
+   493→  items: ComboItem[]
+   494→  value: string | undefined | ''
+   495→  onChange: (value: string) => void
+   496→  placeholder?: string
+   497→  allLabel?: string
+   498→  allValue?: string
+   499→  perPage?: number
+   500→  triggerClassName?: string
+
+[showing lines 1-500 of 5669; use offset=501 with limit to continue reading]

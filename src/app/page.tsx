@@ -58,8 +58,8 @@ const ICONS: Record<string, React.ComponentType<any>> = {
 const PIE_COLORS = ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316']
 
 interface Enterprise { id: number; name: string; code: string; contactEmail: string; contactPhone: string; address: string; isActive: boolean; maxBranches: number; maxWarehouses: number; maxUsers: number }
-interface Branch { id: number; enterpriseId: number; name: string; code: string; location: string; managerName: string; managerEmail: string; isActive: boolean }
-interface Warehouse { id: number; enterpriseId: number; branchId: number; name: string; code: string; location: string; capacity: number; managerName: string; isActive: boolean }
+interface Branch { id: number; enterpriseId: number; name: string; code: string; location: string; managerName: string; managerEmail: string; isActive: boolean; maxWarehouses: number; maxUsers: number }
+interface Warehouse { id: number; enterpriseId: number; branchId: number; name: string; code: string; location: string; capacity: number; managerName: string; isActive: boolean; maxUsers: number }
 interface User { id: number; enterpriseId: number | null; branchId: number | null; warehouseId: number | null; username: string; email: string; fullName: string; role: RoleLevel; isActive: boolean }
 interface Category { id: number; enterpriseId: number; name: string; description: string }
 interface Condition { id: number; enterpriseId: number; name: string; description: string }
@@ -872,6 +872,18 @@ export default function IMSApp() {
   const [entLimitsDlg, setEntLimitsDlg] = useState<{ open: boolean; enterprise: any | null; maxBranches: number; maxWarehouses: number; maxUsers: number; submitting: boolean }>({ open: false, enterprise: null, maxBranches: 10, maxWarehouses: 50, maxUsers: 100, submitting: false })
   // Edit existing enterprise admin's details (username/fullName/email/password/isActive)
   const [entEditAdminDlg, setEntEditAdminDlg] = useState<{ open: boolean; enterprise: any | null; admin: any | null; username: string; fullName: string; email: string; password: string; isActive: boolean; submitting: boolean }>({ open: false, enterprise: null, admin: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false })
+  // ─── Branch admin management state ───────
+  const [brAdminDlg, setBrAdminDlg] = useState<{ open: boolean; branch: any | null; username: string; fullName: string; email: string; password: string; submitting: boolean }>({ open: false, branch: null, username: '', fullName: '', email: '', password: '', submitting: false })
+  const [brResetDlg, setBrResetDlg] = useState<{ open: boolean; branch: any | null; newPassword: string; submitting: boolean }>({ open: false, branch: null, newPassword: '', submitting: false })
+  const [brEditAdminDlg, setBrEditAdminDlg] = useState<{ open: boolean; branch: any | null; admin: any | null; username: string; fullName: string; email: string; password: string; isActive: boolean; submitting: boolean }>({ open: false, branch: null, admin: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false })
+  const [brLimitsDlg, setBrLimitsDlg] = useState<{ open: boolean; branch: any | null; maxWarehouses: number; maxUsers: number; submitting: boolean }>({ open: false, branch: null, maxWarehouses: 20, maxUsers: 50, submitting: false })
+  // ─── Warehouse admin management state ───────
+  const [whAdminDlg, setWhAdminDlg] = useState<{ open: boolean; warehouse: any | null; username: string; fullName: string; email: string; password: string; submitting: boolean }>({ open: false, warehouse: null, username: '', fullName: '', email: '', password: '', submitting: false })
+  const [whResetDlg, setWhResetDlg] = useState<{ open: boolean; warehouse: any | null; newPassword: string; submitting: boolean }>({ open: false, warehouse: null, newPassword: '', submitting: false })
+  const [whEditAdminDlg, setWhEditAdminDlg] = useState<{ open: boolean; warehouse: any | null; admin: any | null; username: string; fullName: string; email: string; password: string; isActive: boolean; submitting: boolean }>({ open: false, warehouse: null, admin: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false })
+  const [whLimitsDlg, setWhLimitsDlg] = useState<{ open: boolean; warehouse: any | null; maxUsers: number; submitting: boolean }>({ open: false, warehouse: null, maxUsers: 20, submitting: false })
+  // Permission editor loading states
+  const [permLoading, setPermLoading] = useState<Record<string, boolean>>({})
 
   const [stockOutMode, setStockOutMode] = useState<'pic' | 'table'>('pic')
   const [stockInMode, setStockInMode] = useState<'pic' | 'table'>('pic')
@@ -1586,6 +1598,7 @@ export default function IMSApp() {
                 { u: 'acme_admin', label: 'Enterprise Admin', desc: 'Acme Corp', color: 'from-blue-500 to-cyan-500' },
                 { u: 'acme_hq_admin', label: 'Branch Admin', desc: 'Acme HQ', color: 'from-orange-500 to-amber-500' },
                 { u: 'acme_wh1_admin', label: 'Warehouse Admin', desc: 'Acme WH1', color: 'from-emerald-500 to-teal-500' },
+                { u: 'acme_wh1_user', label: 'User', desc: 'Acme WH1', color: 'from-slate-500 to-slate-600' },
               ].map(d => (
                 <button key={d.u} onClick={() => { setLoginUser(d.u); setLoginPass('admin123') }}
                   className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all text-sm flex items-center gap-3 ${loginUser === d.u ? 'bg-blue-50 border-blue-300 dark:bg-blue-500/10 dark:border-blue-500/30' : 'bg-muted/30 border-transparent hover:bg-muted/60'}`}>
@@ -1809,13 +1822,61 @@ export default function IMSApp() {
       <div className="space-y-5">
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navBranches')}</h1>
           {hasPermission(role!, 'branches:create') && <Button onClick={() => openCreate('branch')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newBranch')}</Button>}</div>
-        <div className="grid gap-3">{branches.map(b => (
-          <Card key={b.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-bold shrink-0">{b.name.charAt(0)}</div>
-              <div><div className="font-semibold">{b.name}</div><div className="text-xs text-muted-foreground">{b.code} · {b.location} · {b.managerName}</div></div></div>
-            <div className="flex gap-2">{hasPermission(role!, 'branches:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('branch', b)}><Pencil className="w-3.5 h-3.5" /></Button>}
-              {hasPermission(role!, 'branches:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/branches/${b.id}`)} disabled={isCrudLoading('remove', `/branches/${b.id}`)} className="text-red-500">{isCrudLoading('remove', `/branches/${b.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}</div>
-          </CardContent></Card>))}</div>
+        <div className="grid gap-3">{branches.map(b => {
+          const brAdmin = allUsers.find(u => u.branchId === b.id && u.role === 'branch_admin')
+          const canToggleActive = hasPermission(role!, 'branches:toggle_active' as any)
+          const canSetLimits = hasPermission(role!, 'branches:set_limits' as any)
+          const canManageAdmin = hasPermission(role!, 'branches:manage_admin' as any)
+          const canResetAdmin = hasPermission(role!, 'branches:reset_admin' as any)
+          return (
+          <Card key={b.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center text-white font-bold shrink-0">{b.name.charAt(0)}</div>
+                <div>
+                  <div className="font-semibold flex items-center gap-2 flex-wrap">
+                    {b.name}
+                    {!b.isActive && <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[9px]">INACTIVE</Badge>}
+                    {canToggleActive && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span><Switch checked={b.isActive} onCheckedChange={async (v) => { try { await apiFetch(`/branches/${b.id}`, { method: 'PUT', body: JSON.stringify({ isActive: v }) }); toast({ title: `Branch ${v ? 'activated' : 'deactivated'}` }); await loadData() } catch (err: any) { toast({ title: err.message, variant: 'destructive' }) } }} /></span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="text-xs">{b.isActive ? 'Click to deactivate' : 'Click to activate'}</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{b.code} · {b.location} · {b.managerName}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {canSetLimits ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" className="inline-flex" onClick={() => setBrLimitsDlg({ open: true, branch: b, maxWarehouses: b.maxWarehouses, maxUsers: b.maxUsers, submitting: false })}>
+                        <Badge className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 text-xs cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-500/25">W:{b.maxWarehouses} U:{b.maxUsers}</Badge>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">Click to edit limits</TooltipContent>
+                  </Tooltip>
+                ) : <Badge className="bg-muted text-muted-foreground border-0 text-xs">W:{b.maxWarehouses} U:{b.maxUsers}</Badge>}
+                {canSetLimits && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setBrLimitsDlg({ open: true, branch: b, maxWarehouses: b.maxWarehouses, maxUsers: b.maxUsers, submitting: false })}><SlidersHorizontal className="w-3 h-3 mr-1" />Set Limits</Button>}
+                {hasPermission(role!, 'branches:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('branch', b)}><Pencil className="w-3.5 h-3.5" /></Button>}
+                {hasPermission(role!, 'branches:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/branches/${b.id}`)} disabled={isCrudLoading('remove', `/branches/${b.id}`)} className="text-red-500">{isCrudLoading('remove', `/branches/${b.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}
+              </div>
+            </div>
+            {(canManageAdmin || canResetAdmin) && (
+              <div className="flex items-center gap-2 flex-wrap pt-2 border-t">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider mr-1">Admin:</span>
+                {brAdmin ? <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400 border-0 text-[10px]">@{brAdmin.username}</Badge> : <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[10px]">No admin yet</Badge>}
+                {canManageAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setBrAdminDlg({ open: true, branch: b, username: '', fullName: '', email: '', password: '', submitting: false })}><KeyRound className="w-3 h-3 mr-1" />Create Admin</Button>}
+                {canManageAdmin && brAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setBrEditAdminDlg({ open: true, branch: b, admin: brAdmin, username: brAdmin.username, fullName: brAdmin.fullName, email: brAdmin.email || '', password: '', isActive: brAdmin.isActive, submitting: false })}><UserCog className="w-3 h-3 mr-1" />Edit Admin</Button>}
+                {canResetAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!brAdmin} onClick={() => setBrResetDlg({ open: true, branch: b, newPassword: '', submitting: false })}><RotateCcw className="w-3 h-3 mr-1" />Reset Password</Button>}
+                {canManageAdmin && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPage('permissions')}><ShieldCheck className="w-3 h-3 mr-1" />Permission Manager</Button>}
+              </div>
+            )}
+          </CardContent></Card>)
+        })}</div>
       </div>
     )
 
@@ -1824,13 +1885,61 @@ export default function IMSApp() {
       <div className="space-y-5">
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navWarehouses')}</h1>
           {hasPermission(role!, 'warehouses:create') && <Button onClick={() => openCreate('warehouse')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newWarehouse')}</Button>}</div>
-        <div className="grid gap-3">{warehouses.map(w => (
-          <Card key={w.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center text-white font-bold shrink-0">{w.name.charAt(0)}</div>
-              <div><div className="font-semibold">{w.name}</div><div className="text-xs text-muted-foreground">{w.code} · {w.location} · Cap: {fmtN(w.capacity)}</div></div></div>
-            <div className="flex gap-2">{hasPermission(role!, 'warehouses:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('warehouse', w)}><Pencil className="w-3.5 h-3.5" /></Button>}
-              {hasPermission(role!, 'warehouses:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/warehouses/${w.id}`)} disabled={isCrudLoading('remove', `/warehouses/${w.id}`)} className="text-red-500">{isCrudLoading('remove', `/warehouses/${w.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}</div>
-          </CardContent></Card>))}</div>
+        <div className="grid gap-3">{warehouses.map(w => {
+          const whAdmin = allUsers.find(u => u.warehouseId === w.id && u.role === 'warehouse_admin')
+          const canToggleActive = hasPermission(role!, 'warehouses:toggle_active' as any)
+          const canSetLimits = hasPermission(role!, 'warehouses:set_limits' as any)
+          const canManageAdmin = hasPermission(role!, 'warehouses:manage_admin' as any)
+          const canResetAdmin = hasPermission(role!, 'warehouses:reset_admin' as any)
+          return (
+          <Card key={w.id} className="shadow-sm hover:shadow-md transition-shadow"><CardContent className="p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center text-white font-bold shrink-0">{w.name.charAt(0)}</div>
+                <div>
+                  <div className="font-semibold flex items-center gap-2 flex-wrap">
+                    {w.name}
+                    {!w.isActive && <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[9px]">INACTIVE</Badge>}
+                    {canToggleActive && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span><Switch checked={w.isActive} onCheckedChange={async (v) => { try { await apiFetch(`/warehouses/${w.id}`, { method: 'PUT', body: JSON.stringify({ isActive: v }) }); toast({ title: `Warehouse ${v ? 'activated' : 'deactivated'}` }); await loadData() } catch (err: any) { toast({ title: err.message, variant: 'destructive' }) } }} /></span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="text-xs">{w.isActive ? 'Click to deactivate' : 'Click to activate'}</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{w.code} · {w.location} · Cap: {fmtN(w.capacity)}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {canSetLimits ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" className="inline-flex" onClick={() => setWhLimitsDlg({ open: true, warehouse: w, maxUsers: w.maxUsers, submitting: false })}>
+                        <Badge className="bg-blue-50 text-blue-600 dark:bg-blue-500/15 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 text-xs cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-500/25">U:{w.maxUsers}</Badge>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">Click to edit limits</TooltipContent>
+                  </Tooltip>
+                ) : <Badge className="bg-muted text-muted-foreground border-0 text-xs">U:{w.maxUsers}</Badge>}
+                {canSetLimits && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setWhLimitsDlg({ open: true, warehouse: w, maxUsers: w.maxUsers, submitting: false })}><SlidersHorizontal className="w-3 h-3 mr-1" />Set Limits</Button>}
+                {hasPermission(role!, 'warehouses:edit') && <Button size="sm" variant="ghost" onClick={() => openEdit('warehouse', w)}><Pencil className="w-3.5 h-3.5" /></Button>}
+                {hasPermission(role!, 'warehouses:delete') && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/warehouses/${w.id}`)} disabled={isCrudLoading('remove', `/warehouses/${w.id}`)} className="text-red-500">{isCrudLoading('remove', `/warehouses/${w.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}
+              </div>
+            </div>
+            {(canManageAdmin || canResetAdmin) && (
+              <div className="flex items-center gap-2 flex-wrap pt-2 border-t">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wider mr-1">Admin:</span>
+                {whAdmin ? <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[10px]">@{whAdmin.username}</Badge> : <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[10px]">No admin yet</Badge>}
+                {canManageAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setWhAdminDlg({ open: true, warehouse: w, username: '', fullName: '', email: '', password: '', submitting: false })}><KeyRound className="w-3 h-3 mr-1" />Create Admin</Button>}
+                {canManageAdmin && whAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setWhEditAdminDlg({ open: true, warehouse: w, admin: whAdmin, username: whAdmin.username, fullName: whAdmin.fullName, email: whAdmin.email || '', password: '', isActive: whAdmin.isActive, submitting: false })}><UserCog className="w-3 h-3 mr-1" />Edit Admin</Button>}
+                {canResetAdmin && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!whAdmin} onClick={() => setWhResetDlg({ open: true, warehouse: w, newPassword: '', submitting: false })}><RotateCcw className="w-3 h-3 mr-1" />Reset Password</Button>}
+                {canManageAdmin && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPage('permissions')}><ShieldCheck className="w-3 h-3 mr-1" />Permission Manager</Button>}
+              </div>
+            )}
+          </CardContent></Card>)
+        })}</div>
       </div>
     )
 
@@ -1840,13 +1949,26 @@ export default function IMSApp() {
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navUsers')}</h1>
           {hasPermission(role!, 'users:create') && <Button onClick={() => openCreate('user')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newUser')}</Button>}</div>
         <div className="space-y-2">{allUsers.map(u => {
-          const colors: Record<string, string> = { super_admin: 'from-purple-500 to-pink-500', enterprise_admin: 'from-blue-500 to-cyan-500', branch_admin: 'from-orange-500 to-amber-500', warehouse_admin: 'from-emerald-500 to-teal-500' }
+          const colors: Record<string, string> = { super_admin: 'from-purple-500 to-pink-500', enterprise_admin: 'from-blue-500 to-cyan-500', branch_admin: 'from-orange-500 to-amber-500', warehouse_admin: 'from-emerald-500 to-teal-500', user: 'from-slate-500 to-slate-600' }
+          const canToggleActive = hasPermission(role!, 'users:toggle_active' as any) && u.id !== auth.userId
           return (<Card key={u.id} className="shadow-sm"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${colors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white font-bold shrink-0`}>{u.fullName.charAt(0)}</div>
-              <div><div className="font-semibold">{u.fullName}</div><div className="text-xs text-muted-foreground">{u.username} · {u.email}</div></div></div>
+              <div>
+                <div className="font-semibold flex items-center gap-2 flex-wrap">
+                  {u.fullName}
+                  {!u.isActive && <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[9px]">INACTIVE</Badge>}
+                </div>
+                <div className="text-xs text-muted-foreground">{u.username} · {u.email}</div></div></div>
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge className={`${statusColor(u.role === 'super_admin' ? 'confirmed' : u.role === 'enterprise_admin' ? 'approved' : u.role === 'branch_admin' ? 'shipped' : 'received')} border-0 text-xs`}>{ROLE_LABELS[u.role]}</Badge>
+              <Badge className={`${statusColor(u.role === 'super_admin' ? 'confirmed' : u.role === 'enterprise_admin' ? 'approved' : u.role === 'branch_admin' ? 'shipped' : u.role === 'warehouse_admin' ? 'received' : 'pending')} border-0 text-xs`}>{ROLE_LABELS[u.role]}</Badge>
+              {canToggleActive && (
+                <Tooltip>
+                  <TooltipTrigger asChild><span><Switch checked={u.isActive} onCheckedChange={async (v) => { try { await apiFetch(`/users/${u.id}`, { method: 'PUT', body: JSON.stringify({ isActive: v }) }); toast({ title: `User ${v ? 'activated' : 'deactivated'}` }); await loadData() } catch (err: any) { toast({ title: err.message, variant: 'destructive' }) } }} /></span></TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">{u.isActive ? 'Click to deactivate' : 'Click to activate'}</TooltipContent>
+                </Tooltip>
+              )}
               {hasPermission(role!, 'users:edit') && (role === 'super_admin' || canManageRole(role!, u.role)) && <Button size="sm" variant="ghost" onClick={() => openEdit('user', u)}><Pencil className="w-3.5 h-3.5" /></Button>}
+              {hasPermission(role!, 'users:delete') && u.id !== auth.userId && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/users/${u.id}`)} disabled={isCrudLoading('remove', `/users/${u.id}`)} className="text-red-500">{isCrudLoading('remove', `/users/${u.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}
             </div></CardContent></Card>)})}</div>
         <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-xs flex items-center gap-2"><Lock className="w-4 h-4 text-blue-500" /> Role Hierarchy</CardTitle></CardHeader>
           <CardContent className="text-xs text-muted-foreground"><p>Your role: <span className="text-blue-500 font-medium">{ROLE_LABELS[role!]}</span></p><p>Can create: <span className="text-foreground font-medium">{MANAGEABLE_ROLES[role!].map(r => ROLE_LABELS[r]).join(', ') || 'None'}</span></p></CardContent></Card>
@@ -3703,6 +3825,53 @@ export default function IMSApp() {
       </div>
     )
 
+    // Helper for permission group rendering (uses const, so cannot be inline JSX)
+    const renderPermGroup = (g: any) => {
+      const allGroupPerms = g.perms as string[]
+      const target = permEditDlg.target
+      const groupCanUseAll = allGroupPerms.every((p: string) => !!target?.permissions?.find((x: any) => x.ability === p)?.canUse)
+      const groupCanDelAll = allGroupPerms.every((p: string) => !!target?.permissions?.find((x: any) => x.ability === p)?.canDelegate)
+      const groupHasAnyDelegatable = allGroupPerms.some((p: string) => permData.isSuperAdmin || (permData.delegatable || []).includes(p))
+      const refreshTarget = async () => { try { const subRes = await fetch(`${BASE}/api/permissions/subordinates`, { headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() } }); if (subRes.ok) { const subData = await subRes.json(); const arr = Array.isArray(subData) ? subData : []; setSubordinates(arr); const updated = arr.find((s: any) => s.id === target.id); if (updated) setPermEditDlg(s => ({ ...s, target: updated })) } } catch (e) { /* ignore */ } }
+      return (
+        <div key={g.key} className="rounded-lg border bg-card p-2.5">
+          <div className="text-xs font-bold mb-1.5 flex items-center justify-between gap-2"><div className="flex items-center gap-1.5"><Shield className="w-3 h-3 text-blue-500" />{g.label}</div>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant={groupCanUseAll ? 'default' : 'outline'} className={`h-5 text-[9px] px-1.5 ${groupCanUseAll ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`} onClick={async () => { const nv = !groupCanUseAll; setPermLoading(s => ({ ...s, [`${g.key}:use`]: true })); try { for (const p of allGroupPerms) { const cur = target?.permissions?.find((x: any) => x.ability === p); if (nv && !cur?.canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: !!cur?.canDelegate }) }) } else if (!nv && cur?.canUse) { if (cur?.canDelegate) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: false, canDelegate: true }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } } } toast({ title: `${nv ? 'Granted' : 'Revoked'} all ${g.label} use` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`${g.key}:use`]: false })) } }}>{permLoading[`${g.key}:use`] ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}{groupCanUseAll ? '✓' : '○'} Use All</Button>
+              {groupHasAnyDelegatable && <Button size="sm" variant={groupCanDelAll ? 'default' : 'outline'} className={`h-5 text-[9px] px-1.5 ${groupCanDelAll ? 'bg-amber-600 hover:bg-amber-700' : ''}`} onClick={async () => { const nv = !groupCanDelAll; setPermLoading(s => ({ ...s, [`${g.key}:del`]: true })); try { for (const p of allGroupPerms) { if (!(permData.isSuperAdmin || (permData.delegatable || []).includes(p))) continue; const cur = target?.permissions?.find((x: any) => x.ability === p); if (nv && !cur?.canDelegate) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: true }) }) } else if (!nv && cur?.canDelegate) { if (cur?.canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: false }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } } } toast({ title: `${nv ? 'Granted' : 'Revoked'} all ${g.label} delegate` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`${g.key}:del`]: false })) } }}>{permLoading[`${g.key}:del`] ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}{groupCanDelAll ? '✓' : '○'} Del. All</Button>}
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            {g.perms.map((p: string) => {
+              const cur = target?.permissions?.find((x: any) => x.ability === p)
+              const canUse = !!cur?.canUse
+              const canDel = !!cur?.canDelegate
+              const granterCanDelegate = permData.isSuperAdmin || (permData.delegatable || []).includes(p)
+              return (
+                <div key={p} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 py-0.5 text-xs">
+                  <span className="font-mono truncate text-muted-foreground">{p}</span>
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-[10px] text-muted-foreground">Use</Label>
+                    <Switch disabled={permLoading[`use:${p}`]} checked={canUse} onCheckedChange={async (v) => { setPermLoading(s => ({ ...s, [`use:${p}`]: true })); try { if (v) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: canDel }) }) } else if (canDel) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: false, canDelegate: true }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } toast({ title: `${v ? 'Granted' : 'Revoked'} use: ${p}` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`use:${p}`]: false })) } }} />
+                    {permLoading[`use:${p}`] && <Loader2 className="w-3 h-3 animate-spin text-blue-500" />}
+                  </div>
+                  {granterCanDelegate ? (
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-[10px] text-muted-foreground">Delegate</Label>
+                      <Switch disabled={permLoading[`del:${p}`]} checked={canDel} onCheckedChange={async (v) => { setPermLoading(s => ({ ...s, [`del:${p}`]: true })); try { if (v) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: canUse, canDelegate: true }) }) } else if (canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: false }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } toast({ title: `${v ? 'Granted' : 'Revoked'} delegate: ${p}` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`del:${p}`]: false })) } }} />
+                      {permLoading[`del:${p}`] && <Loader2 className="w-3 h-3 animate-spin text-amber-500" />}
+                    </div>
+                  ) : (
+                    <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1.5 opacity-50 cursor-not-allowed"><Label className="text-[10px] text-muted-foreground">Delegate</Label><Switch checked={canDel} disabled /></span></TooltipTrigger><TooltipContent side="top" className="text-xs">You cannot delegate this permission</TooltipContent></Tooltip>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )
+    }
+
     // ─── PERMISSION MANAGER (Task 6) ───────────────────────────
     if (page === 'permissions' && hasPermission(role!, 'permissions:view' as any)) return (
       <div className="space-y-5">
@@ -3758,7 +3927,7 @@ export default function IMSApp() {
         )}
 
         {/* C. Manage Subordinates — only for admins who can manage permissions */}
-        {hasPermission(role!, 'permissions:manage' as any) && role !== 'warehouse_admin' && (
+        {hasPermission(role!, 'permissions:manage' as any) && role !== 'user' && (
           <Card className="shadow-sm">
             <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-1.5"><Users className="w-4 h-4 text-blue-500" /> Manage Subordinates ({subordinates.length})</CardTitle>
             <CardDescription className="text-xs">Grant or revoke permissions for users within your scope.</CardDescription></CardHeader>
@@ -5543,6 +5712,191 @@ export default function IMSApp() {
           </DialogContent>
         </Dialog>
 
+        {/* ─── BRANCH LIMITS EDIT DIALOG ─── */}
+        <Dialog open={brLimitsDlg.open} onOpenChange={o => setBrLimitsDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><GitBranch className="w-4 h-4 text-orange-500" /> Edit Limits — {brLimitsDlg.branch?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Update the maximum warehouses and users allowed for this branch.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1"><Label className="text-xs">Max Warehouses</Label><Input type="number" min={0} value={brLimitsDlg.maxWarehouses} onChange={e => setBrLimitsDlg(s => ({ ...s, maxWarehouses: parseInt(e.target.value) || 0 }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Max Users</Label><Input type="number" min={0} value={brLimitsDlg.maxUsers} onChange={e => setBrLimitsDlg(s => ({ ...s, maxUsers: parseInt(e.target.value) || 0 }))} className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setBrLimitsDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={brLimitsDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={brLimitsDlg.submitting} onClick={async () => {
+                setBrLimitsDlg(s => ({ ...s, submitting: true }))
+                try { await apiFetch(`/branches/${brLimitsDlg.branch.id}`, { method: 'PUT', body: JSON.stringify({ maxWarehouses: brLimitsDlg.maxWarehouses, maxUsers: brLimitsDlg.maxUsers }) }); toast({ title: 'Limits updated' }); setBrLimitsDlg(s => ({ ...s, open: false, submitting: false })); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setBrLimitsDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-orange-500 to-amber-500 text-white">{brLimitsDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}Save Limits</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── CREATE BRANCH ADMIN DIALOG ─── */}
+        <Dialog open={brAdminDlg.open} onOpenChange={o => setBrAdminDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-orange-500" /> Create Admin — {brAdminDlg.branch?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Create a new branch_admin user scoped to this branch.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg p-2 text-[11px] text-amber-700 dark:text-amber-400">If password is left blank, it defaults to <span className="font-mono font-semibold">admin123</span> and the new admin will be forced to reset it on first login.</div>
+              <div className="space-y-1"><Label className="text-xs">Username *</Label><Input value={brAdminDlg.username} onChange={e => setBrAdminDlg(s => ({ ...s, username: e.target.value }))} placeholder="e.g. branch_admin" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Full Name *</Label><Input value={brAdminDlg.fullName} onChange={e => setBrAdminDlg(s => ({ ...s, fullName: e.target.value }))} placeholder="John Doe" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Email (optional)</Label><Input type="email" value={brAdminDlg.email} onChange={e => setBrAdminDlg(s => ({ ...s, email: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Password (optional)</Label><Input type="password" value={brAdminDlg.password} onChange={e => setBrAdminDlg(s => ({ ...s, password: e.target.value }))} placeholder="blank = admin123" className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setBrAdminDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={brAdminDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={brAdminDlg.submitting} onClick={async () => {
+                if (!brAdminDlg.username.trim() || !brAdminDlg.fullName.trim()) { toast({ title: 'Username and Full Name are required', variant: 'destructive' }); return }
+                setBrAdminDlg(s => ({ ...s, submitting: true }))
+                try {
+                  const body: any = { username: brAdminDlg.username.trim(), fullName: brAdminDlg.fullName.trim() }
+                  if (brAdminDlg.email.trim()) body.email = brAdminDlg.email.trim()
+                  if (brAdminDlg.password) body.password = brAdminDlg.password
+                  await apiFetch(`/branches/${brAdminDlg.branch.id}/create-admin`, { method: 'POST', body: JSON.stringify(body) })
+                  toast({ title: `Created admin: ${brAdminDlg.username}` }); setBrAdminDlg({ open: false, branch: null, username: '', fullName: '', email: '', password: '', submitting: false }); await loadData()
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setBrAdminDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-orange-500 to-amber-500 text-white">{brAdminDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <KeyRound className="w-4 h-4 mr-1.5" />}Create Admin</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── RESET BRANCH ADMIN PASSWORD DIALOG ─── */}
+        <Dialog open={brResetDlg.open} onOpenChange={o => setBrResetDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-orange-500" /> Reset Admin Password — {brResetDlg.branch?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Reset the password for this branch's branch_admin.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg p-2 text-[11px] text-amber-700 dark:text-amber-400">If left blank, password will be reset to <span className="font-mono font-semibold">admin123</span> with forced reset on next login.</div>
+              {brResetDlg.branch && (() => { const admin = allUsers.find(u => u.branchId === brResetDlg.branch.id && u.role === 'branch_admin'); return admin ? <div className="text-xs text-muted-foreground">Current admin: <span className="font-semibold text-foreground">@{admin.username}</span> ({admin.fullName})</div> : <div className="text-xs text-red-500">No branch admin found.</div> })()}
+              <div className="space-y-1"><Label className="text-xs">New Password</Label><Input type="password" value={brResetDlg.newPassword} onChange={e => setBrResetDlg(s => ({ ...s, newPassword: e.target.value }))} placeholder="blank = admin123" className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setBrResetDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={brResetDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={brResetDlg.submitting} onClick={async () => {
+                setBrResetDlg(s => ({ ...s, submitting: true }))
+                try { const body: any = {}; if (brResetDlg.newPassword) body.newPassword = brResetDlg.newPassword; await apiFetch(`/branches/${brResetDlg.branch.id}/reset-admin`, { method: 'POST', body: JSON.stringify(body) }); toast({ title: 'Password reset' }); setBrResetDlg({ open: false, branch: null, newPassword: '', submitting: false }) } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setBrResetDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-orange-500 to-amber-500 text-white">{brResetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Reset Password</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── EDIT BRANCH ADMIN DIALOG ─── */}
+        <Dialog open={brEditAdminDlg.open} onOpenChange={o => setBrEditAdminDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><UserCog className="w-4 h-4 text-orange-500" /> Edit Admin — {brEditAdminDlg.branch?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Update this branch's admin user details. Leave password blank to keep the current one.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              {brEditAdminDlg.admin && <div className="text-xs text-muted-foreground bg-muted/50 rounded-md p-2 flex items-center justify-between"><span>Editing user: <span className="font-semibold text-foreground">@{brEditAdminDlg.admin.username}</span></span><Badge className="bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400 border-0 text-[10px]">Branch Admin</Badge></div>}
+              <div className="space-y-1"><Label className="text-xs">Username *</Label><Input value={brEditAdminDlg.username} onChange={e => setBrEditAdminDlg(s => ({ ...s, username: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Full Name *</Label><Input value={brEditAdminDlg.fullName} onChange={e => setBrEditAdminDlg(s => ({ ...s, fullName: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Email</Label><Input type="email" value={brEditAdminDlg.email} onChange={e => setBrEditAdminDlg(s => ({ ...s, email: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">New Password (optional)</Label><Input type="password" value={brEditAdminDlg.password} onChange={e => setBrEditAdminDlg(s => ({ ...s, password: e.target.value }))} placeholder="blank = keep current password" className="h-8 text-sm" /></div>
+              <div className="flex items-center justify-between rounded-md border p-2"><div><Label className="text-xs">Account Active</Label><p className="text-[10px] text-muted-foreground">Deactivating blocks login.</p></div><Switch checked={brEditAdminDlg.isActive} onCheckedChange={v => setBrEditAdminDlg(s => ({ ...s, isActive: v }))} /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setBrEditAdminDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={brEditAdminDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={brEditAdminDlg.submitting} onClick={async () => {
+                if (!brEditAdminDlg.username.trim() || !brEditAdminDlg.fullName.trim()) { toast({ title: 'Username and Full Name are required', variant: 'destructive' }); return }
+                if (!brEditAdminDlg.admin) { toast({ title: 'No admin user loaded', variant: 'destructive' }); return }
+                setBrEditAdminDlg(s => ({ ...s, submitting: true }))
+                try { const body: any = { username: brEditAdminDlg.username.trim(), fullName: brEditAdminDlg.fullName.trim(), email: brEditAdminDlg.email.trim(), isActive: brEditAdminDlg.isActive }; if (brEditAdminDlg.password) body.password = brEditAdminDlg.password; await apiFetch(`/users/${brEditAdminDlg.admin.id}`, { method: 'PUT', body: JSON.stringify(body) }); toast({ title: `Admin updated: ${brEditAdminDlg.username.trim()}` }); setBrEditAdminDlg({ open: false, branch: null, admin: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setBrEditAdminDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-orange-500 to-amber-500 text-white">{brEditAdminDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <UserCog className="w-4 h-4 mr-1.5" />}Save Changes</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── WAREHOUSE LIMITS EDIT DIALOG ─── */}
+        <Dialog open={whLimitsDlg.open} onOpenChange={o => setWhLimitsDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><WHIcon className="w-4 h-4 text-cyan-500" /> Edit Limits — {whLimitsDlg.warehouse?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Update the maximum users allowed for this warehouse.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1"><Label className="text-xs">Max Users</Label><Input type="number" min={0} value={whLimitsDlg.maxUsers} onChange={e => setWhLimitsDlg(s => ({ ...s, maxUsers: parseInt(e.target.value) || 0 }))} className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setWhLimitsDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={whLimitsDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={whLimitsDlg.submitting} onClick={async () => {
+                setWhLimitsDlg(s => ({ ...s, submitting: true }))
+                try { await apiFetch(`/warehouses/${whLimitsDlg.warehouse.id}`, { method: 'PUT', body: JSON.stringify({ maxUsers: whLimitsDlg.maxUsers }) }); toast({ title: 'Limits updated' }); setWhLimitsDlg(s => ({ ...s, open: false, submitting: false })); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setWhLimitsDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white">{whLimitsDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : null}Save Limits</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── CREATE WAREHOUSE ADMIN DIALOG ─── */}
+        <Dialog open={whAdminDlg.open} onOpenChange={o => setWhAdminDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-cyan-500" /> Create Admin — {whAdminDlg.warehouse?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Create a new warehouse_admin user scoped to this warehouse.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg p-2 text-[11px] text-amber-700 dark:text-amber-400">If password is left blank, it defaults to <span className="font-mono font-semibold">admin123</span> and the new admin will be forced to reset it on first login.</div>
+              <div className="space-y-1"><Label className="text-xs">Username *</Label><Input value={whAdminDlg.username} onChange={e => setWhAdminDlg(s => ({ ...s, username: e.target.value }))} placeholder="e.g. wh_admin" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Full Name *</Label><Input value={whAdminDlg.fullName} onChange={e => setWhAdminDlg(s => ({ ...s, fullName: e.target.value }))} placeholder="John Doe" className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Email (optional)</Label><Input type="email" value={whAdminDlg.email} onChange={e => setWhAdminDlg(s => ({ ...s, email: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Password (optional)</Label><Input type="password" value={whAdminDlg.password} onChange={e => setWhAdminDlg(s => ({ ...s, password: e.target.value }))} placeholder="blank = admin123" className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setWhAdminDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={whAdminDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={whAdminDlg.submitting} onClick={async () => {
+                if (!whAdminDlg.username.trim() || !whAdminDlg.fullName.trim()) { toast({ title: 'Username and Full Name are required', variant: 'destructive' }); return }
+                setWhAdminDlg(s => ({ ...s, submitting: true }))
+                try {
+                  const body: any = { username: whAdminDlg.username.trim(), fullName: whAdminDlg.fullName.trim() }
+                  if (whAdminDlg.email.trim()) body.email = whAdminDlg.email.trim()
+                  if (whAdminDlg.password) body.password = whAdminDlg.password
+                  await apiFetch(`/warehouses/${whAdminDlg.warehouse.id}/create-admin`, { method: 'POST', body: JSON.stringify(body) })
+                  toast({ title: `Created admin: ${whAdminDlg.username}` }); setWhAdminDlg({ open: false, warehouse: null, username: '', fullName: '', email: '', password: '', submitting: false }); await loadData()
+                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setWhAdminDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white">{whAdminDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <KeyRound className="w-4 h-4 mr-1.5" />}Create Admin</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── RESET WAREHOUSE ADMIN PASSWORD DIALOG ─── */}
+        <Dialog open={whResetDlg.open} onOpenChange={o => setWhResetDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><KeyRound className="w-4 h-4 text-cyan-500" /> Reset Admin Password — {whResetDlg.warehouse?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Reset the password for this warehouse's warehouse_admin.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg p-2 text-[11px] text-amber-700 dark:text-amber-400">If left blank, password will be reset to <span className="font-mono font-semibold">admin123</span> with forced reset on next login.</div>
+              {whResetDlg.warehouse && (() => { const admin = allUsers.find(u => u.warehouseId === whResetDlg.warehouse.id && u.role === 'warehouse_admin'); return admin ? <div className="text-xs text-muted-foreground">Current admin: <span className="font-semibold text-foreground">@{admin.username}</span> ({admin.fullName})</div> : <div className="text-xs text-red-500">No warehouse admin found.</div> })()}
+              <div className="space-y-1"><Label className="text-xs">New Password</Label><Input type="password" value={whResetDlg.newPassword} onChange={e => setWhResetDlg(s => ({ ...s, newPassword: e.target.value }))} placeholder="blank = admin123" className="h-8 text-sm" /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setWhResetDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={whResetDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={whResetDlg.submitting} onClick={async () => {
+                setWhResetDlg(s => ({ ...s, submitting: true }))
+                try { const body: any = {}; if (whResetDlg.newPassword) body.newPassword = whResetDlg.newPassword; await apiFetch(`/warehouses/${whResetDlg.warehouse.id}/reset-admin`, { method: 'POST', body: JSON.stringify(body) }); toast({ title: 'Password reset' }); setWhResetDlg({ open: false, warehouse: null, newPassword: '', submitting: false }) } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setWhResetDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white">{whResetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Reset Password</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ─── EDIT WAREHOUSE ADMIN DIALOG ─── */}
+        <Dialog open={whEditAdminDlg.open} onOpenChange={o => setWhEditAdminDlg(s => ({ ...s, open: o }))}>
+          <DialogContent className="max-w-md w-[95vw]">
+            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><UserCog className="w-4 h-4 text-cyan-500" /> Edit Admin — {whEditAdminDlg.warehouse?.name}</DialogTitle>
+            <DialogDescription className="text-xs">Update this warehouse's admin user details. Leave password blank to keep the current one.</DialogDescription></DialogHeader>
+            <div className="space-y-3">
+              {whEditAdminDlg.admin && <div className="text-xs text-muted-foreground bg-muted/50 rounded-md p-2 flex items-center justify-between"><span>Editing user: <span className="font-semibold text-foreground">@{whEditAdminDlg.admin.username}</span></span><Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border-0 text-[10px]">Warehouse Admin</Badge></div>}
+              <div className="space-y-1"><Label className="text-xs">Username *</Label><Input value={whEditAdminDlg.username} onChange={e => setWhEditAdminDlg(s => ({ ...s, username: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Full Name *</Label><Input value={whEditAdminDlg.fullName} onChange={e => setWhEditAdminDlg(s => ({ ...s, fullName: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">Email</Label><Input type="email" value={whEditAdminDlg.email} onChange={e => setWhEditAdminDlg(s => ({ ...s, email: e.target.value }))} className="h-8 text-sm" /></div>
+              <div className="space-y-1"><Label className="text-xs">New Password (optional)</Label><Input type="password" value={whEditAdminDlg.password} onChange={e => setWhEditAdminDlg(s => ({ ...s, password: e.target.value }))} placeholder="blank = keep current" className="h-8 text-sm" /></div>
+              <div className="flex items-center justify-between rounded-md border p-2"><div><Label className="text-xs">Account Active</Label><p className="text-[10px] text-muted-foreground">Deactivating blocks login.</p></div><Switch checked={whEditAdminDlg.isActive} onCheckedChange={v => setWhEditAdminDlg(s => ({ ...s, isActive: v }))} /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setWhEditAdminDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={whEditAdminDlg.submitting}>{t(locale,'cancel')}</Button>
+              <Button disabled={whEditAdminDlg.submitting} onClick={async () => {
+                if (!whEditAdminDlg.username.trim() || !whEditAdminDlg.fullName.trim()) { toast({ title: 'Username and Full Name are required', variant: 'destructive' }); return }
+                if (!whEditAdminDlg.admin) { toast({ title: 'No admin user loaded', variant: 'destructive' }); return }
+                setWhEditAdminDlg(s => ({ ...s, submitting: true }))
+                try { const body: any = { username: whEditAdminDlg.username.trim(), fullName: whEditAdminDlg.fullName.trim(), email: whEditAdminDlg.email.trim(), isActive: whEditAdminDlg.isActive }; if (whEditAdminDlg.password) body.password = whEditAdminDlg.password; await apiFetch(`/users/${whEditAdminDlg.admin.id}`, { method: 'PUT', body: JSON.stringify(body) }); toast({ title: `Admin updated: ${whEditAdminDlg.username.trim()}` }); setWhEditAdminDlg({ open: false, warehouse: null, admin: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false }); await loadData() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setWhEditAdminDlg(s => ({ ...s, submitting: false })) }
+              }} className="bg-gradient-to-r from-cyan-500 to-teal-500 text-white">{whEditAdminDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <UserCog className="w-4 h-4 mr-1.5" />}Save Changes</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* ─── PERMISSION EDITOR DIALOG for subordinates (Task 6) ─── */}
         <Dialog open={permEditDlg.open} onOpenChange={o => setPermEditDlg(s => ({ ...s, open: o }))}>
           <DialogContent className="max-w-3xl w-[95vw]">
@@ -5551,87 +5905,7 @@ export default function IMSApp() {
               <DialogDescription className="text-xs">@{permEditDlg.target?.username} · {(permEditDlg.target?.role || '').replace('_', ' ')} · {permEditDlg.target?.permCount} perms / {permEditDlg.target?.delegateCount} delegatable</DialogDescription>
             </DialogHeader>
             <div className="space-y-3 max-h-[65vh] overflow-y-auto pr-1">
-              {!permData ? <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div> : (permData.groups || []).map((g: any) => (
-                <div key={g.key} className="rounded-lg border bg-card p-2.5">
-                  <div className="text-xs font-bold mb-1.5 flex items-center gap-1.5"><Shield className="w-3 h-3 text-blue-500" />{g.label}</div>
-                  <div className="space-y-0.5">
-                    {g.perms.map((p: string) => {
-                      const target = permEditDlg.target
-                      const cur = target?.permissions?.find((x: any) => x.ability === p)
-                      const canUse = !!cur?.canUse
-                      const canDel = !!cur?.canDelegate
-                      const granterCanDelegate = permData.isSuperAdmin || (permData.delegatable || []).includes(p)
-                      const refreshSubordinates = async () => {
-                        try {
-                          const subRes = await fetch(`${BASE}/api/permissions/subordinates`, { headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() } })
-                          if (subRes.ok) {
-                            const subData = await subRes.json()
-                            const arr = Array.isArray(subData) ? subData : []
-                            setSubordinates(arr)
-                            const updated = arr.find((s: any) => s.id === target.id)
-                            if (updated) setPermEditDlg(s => ({ ...s, target: updated }))
-                          }
-                        } catch (e) { /* ignore refresh error */ }
-                      }
-                      return (
-                        <div key={p} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 py-0.5 text-xs">
-                          <span className="font-mono truncate text-muted-foreground">{p}</span>
-                          <div className="flex items-center gap-1.5">
-                            <Label className="text-[10px] text-muted-foreground">Use</Label>
-                            <Switch
-                              checked={canUse}
-                              onCheckedChange={async (v) => {
-                                try {
-                                  if (v) {
-                                    await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: canDel }) })
-                                  } else if (canDel) {
-                                    await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: false, canDelegate: true }) })
-                                  } else {
-                                    await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) })
-                                  }
-                                  toast({ title: `${v ? 'Granted' : 'Revoked'} use: ${p}` })
-                                  await refreshSubordinates()
-                                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
-                              }}
-                            />
-                          </div>
-                          {granterCanDelegate ? (
-                            <div className="flex items-center gap-1.5">
-                              <Label className="text-[10px] text-muted-foreground">Delegate</Label>
-                              <Switch
-                                checked={canDel}
-                                onCheckedChange={async (v) => {
-                                  try {
-                                    if (v) {
-                                      await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: canUse, canDelegate: true }) })
-                                    } else if (canUse) {
-                                      await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: false }) })
-                                    } else {
-                                      await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) })
-                                    }
-                                    toast({ title: `${v ? 'Granted' : 'Revoked'} delegate: ${p}` })
-                                    await refreshSubordinates()
-                                  } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) }
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="flex items-center gap-1.5 opacity-50 cursor-not-allowed">
-                                  <Label className="text-[10px] text-muted-foreground">Delegate</Label>
-                                  <Switch checked={canDel} disabled />
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent side="top" className="text-xs">You cannot delegate this permission</TooltipContent>
-                            </Tooltip>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))}
+{!permData ? <div className="flex items-center justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-blue-500" /></div> : (permData.groups || []).map(renderPermGroup)}
             </div>
             <DialogFooter><Button variant="ghost" onClick={() => setPermEditDlg(s => ({ ...s, open: false }))} className="text-muted-foreground">Close</Button></DialogFooter>
           </DialogContent>

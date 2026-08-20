@@ -18,10 +18,10 @@
 
 // ─── Role Definition ─────────────────────────────────────────
 
-export type RoleLevel = 'super_admin' | 'enterprise_admin' | 'branch_admin' | 'warehouse_admin'
+export type RoleLevel = 'super_admin' | 'enterprise_admin' | 'branch_admin' | 'warehouse_admin' | 'user'
 
 export const ROLE_HIERARCHY: RoleLevel[] = [
-  'super_admin', 'enterprise_admin', 'branch_admin', 'warehouse_admin'
+  'super_admin', 'enterprise_admin', 'branch_admin', 'warehouse_admin', 'user'
 ]
 
 export const ROLE_LABELS: Record<RoleLevel, string> = {
@@ -29,21 +29,24 @@ export const ROLE_LABELS: Record<RoleLevel, string> = {
   enterprise_admin: 'Enterprise Admin',
   branch_admin: 'Branch Admin',
   warehouse_admin: 'Warehouse Admin',
+  user: 'User',
 }
 
 export const ROLE_DESCRIPTIONS: Record<RoleLevel, string> = {
   super_admin: 'Full system access. Manages all enterprises, creates enterprise admins, toggles features.',
   enterprise_admin: 'Scoped to one enterprise. Manages branches, warehouses, users, and all inventory within it.',
   branch_admin: 'Scoped to one branch. Manages warehouses and warehouse admins within it.',
-  warehouse_admin: 'Scoped to one warehouse. Manages stock and views orders for that warehouse only.',
+  warehouse_admin: 'Scoped to one warehouse. Manages stock, orders, and users (employees) for that warehouse.',
+  user: 'Employee scoped to one warehouse. Performs daily inventory operations.',
 }
 
 /** What roles can each role CREATE/MANAGE? */
 export const MANAGEABLE_ROLES: Record<RoleLevel, RoleLevel[]> = {
-  super_admin: ['enterprise_admin', 'branch_admin', 'warehouse_admin'],
-  enterprise_admin: ['branch_admin', 'warehouse_admin'],
-  branch_admin: ['warehouse_admin'],
-  warehouse_admin: [],
+  super_admin: ['enterprise_admin', 'branch_admin', 'warehouse_admin', 'user'],
+  enterprise_admin: ['branch_admin', 'warehouse_admin', 'user'],
+  branch_admin: ['warehouse_admin', 'user'],
+  warehouse_admin: ['user'],
+  user: [],
 }
 
 // ─── Permissions ─────────────────────────────────────────────
