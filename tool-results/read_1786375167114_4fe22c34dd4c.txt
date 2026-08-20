@@ -1,0 +1,202 @@
+     1→   976→    // ─── STOCK IN (Task 1-b + Task 6: mirrors Stock Out, emerald theme)
+     2→   977→    if (page === 'stockIn') return (
+     3→   978→      <div className="space-y-3">
+     4→   979→        <div className="flex items-center justify-between flex-wrap gap-2">
+     5→   980→          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><ArrowDownToLine className="w-4 h-4 text-emerald-500" />Stock In</h1></div>
+     6→   981→          <Button size="sm" onClick={() => openCreate('stockInRecorder')} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Receipt</Button>
+     7→   982→        </div>
+     8→   983→
+     9→   984→        {/* ── Filters ── */}
+    10→   985→        <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
+    11→   986→          <Filter className="w-3.5 h-3.5 text-muted-foreground mb-1.5" />
+    12→   987→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date From</Label><div className="w-32"><CustomDatePicker compact value={stockInFilterDateFrom} onChange={v => { setStockInFilterDateFrom(v); setStockInRecPage(1) }} /></div></div>
+    13→   988→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Date To</Label><div className="w-32"><CustomDatePicker compact value={stockInFilterDateTo} onChange={v => { setStockInFilterDateTo(v); setStockInRecPage(1) }} /></div></div>
+    14→   989→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Status</Label><Select value={stockInFilterStatus || '_all'} onValueChange={v => { setStockInFilterStatus(v === '_all' ? '' : v); setStockInRecPage(1) }}><SelectTrigger className="h-7 text-xs w-28"><SelectValue placeholder="All" /></SelectTrigger><SelectContent><SelectItem value="_all">All</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="submitted">Submitted</SelectItem></SelectContent></Select></div>
+    15→   990→          <div className="space-y-0.5"><Label className="text-[10px] text-muted-foreground">Supplier</Label><Input value={stockInFilterPerson} onChange={e => { setStockInFilterPerson(e.target.value); setStockInRecPage(1) }} placeholder="Search name..." className="h-7 text-xs w-32" /></div>
+    16→   991→          {(stockInFilterDateFrom || stockInFilterDateTo || stockInFilterStatus || stockInFilterPerson) && <Button size="sm" variant="ghost" onClick={() => { setStockInFilterDateFrom(''); setStockInFilterDateTo(''); setStockInFilterStatus(''); setStockInFilterPerson(''); setStockInRecPage(1) }} className="h-7 text-xs text-muted-foreground"><X className="w-3 h-3 mr-0.5" />Clear</Button>}
+    17→   992→        </div>
+    18→   993→
+    19→   994→        {(() => {
+    20→   995→          let filtered = [...stockInData].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    21→   996→          if (stockInFilterDateFrom) filtered = filtered.filter(r => new Date(r.createdAt) >= new Date(stockInFilterDateFrom + 'T00:00:00'))
+    22→   997→          if (stockInFilterDateTo) filtered = filtered.filter(r => new Date(r.createdAt) <= new Date(stockInFilterDateTo + 'T23:59:59'))
+    23→   998→          if (stockInFilterStatus) filtered = filtered.filter(r => r.status === stockInFilterStatus)
+    24→   999→          if (stockInFilterPerson) filtered = filtered.filter(r => (r.personName || '').toLowerCase().includes(stockInFilterPerson.toLowerCase()))
+    25→  1000→
+    26→  1001→          const recTotalPages = Math.ceil(filtered.length / STOCK_IN_REC_PER_PAGE)
+    27→  1002→          const recPaged = filtered.slice((stockInRecPage - 1) * STOCK_IN_REC_PER_PAGE, stockInRecPage * STOCK_IN_REC_PER_PAGE)
+    28→  1003→
+    29→  1004→          return (<>
+    30→  1005→            {recPaged.length === 0 && <div className="text-center text-sm text-muted-foreground py-8">No receipts found</div>}
+    31→  1006→            {recPaged.map(r => { const isExp = expandedIn === r.id; const isExpanding = expandingInId === r.id; const pendingItems = getPendingInItems(r.id); const totalItems = r.items.length + pendingItems.length
+    32→  1007→              return (<Card key={r.id} className="shadow-sm"><CardContent className="p-2.5">
+    33→  1008→                <div className="flex items-center justify-between cursor-pointer" onClick={() => { if (isExp) { setExpandedIn(null) } else { setExpandingInId(r.id); setTimeout(() => { setExpandedIn(r.id); setExpandingInId(null) }, 200) } }}>
+    34→  1009→                  <div className="flex items-center gap-1.5">{isExpanding ? <Loader2 className="w-3 h-3 animate-spin text-emerald-500" /> : <ChevronRight className={`w-3.5 h-3.5 text-emerald-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />}
+    35→  1010→                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
+    36→  1011→                    {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
+    37→  1012→                  <div className="flex items-center gap-1">
+    38→  1013→                    <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
+    39→  1014→                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); openEdit('stockInRecorder', r) }} className="h-5 w-5 p-0 text-muted-foreground"><Pencil className="w-2.5 h-2.5" /></Button>}
+    40→  1015→                    {hasPermission(role!, 'orders:edit') && <Button size="sm" variant="ghost" onClick={e => { e.stopPropagation(); crud.remove(`/stock-in/${r.id}`) }} disabled={isCrudLoading('remove', `/stock-in/${r.id}`)} className="h-5 w-5 p-0 text-red-500">{isCrudLoading('remove', `/stock-in/${r.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button>}
+    41→  1016→                  </div>
+    42→  1017→                </div>
+    43→  1018→                {isExp && (<div className="mt-2 space-y-2 border-t pt-2">
+    44→  1019→                  <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+    45→  1020→                    {r.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5" />{r.personPhone}</span>}
+    46→  1021→                    {r.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5" />{r.personEmail}</span>}
+    47→  1022→                    {r.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5" />{r.personAddress}</span>}
+    48→  1023→                    {r.notes && <span className="flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{r.notes}</span>}
+    49→  1024→                  </div>
+    50→  1025→
+    51→  1026→                  {/* ── Items Table (saved + pending) with pagination ── */}
+    52→  1027→                  {(() => { const allItems = [...r.items.map(i => ({ ...i, _pending: false })), ...pendingItems.map(i => ({ ...i, id: i.tempId, _pending: true }))] as any[]
+    53→  1028→                    const totalPages = Math.ceil(allItems.length / STOCK_IN_ITEMS_PER_PAGE); const paged = allItems.slice((stockInItemPage - 1) * STOCK_IN_ITEMS_PER_PAGE, stockInItemPage * STOCK_IN_ITEMS_PER_PAGE)
+    54→  1029→                    const totalQty = allItems.reduce((sum: number, i: any) => sum + i.quantity, 0)
+    55→  1030→                    const totalValue = allItems.reduce((sum: number, i: any) => sum + (i.quantity * (i.costPerUnit || 0)), 0)
+    56→  1031→                    return (<div id={`stockin-print-${r.id}`}>
+    57→  1032→                      <div className="flex items-center justify-between mb-1">
+    58→  1033→                        <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Items ({totalItems}) · Total Qty: {totalQty} · Value: {fmt(totalValue)}</span>
+    59→  1034→                        <Button size="sm" variant="outline" onClick={() => { const w = window.open('', '_blank', 'width=800,height=600'); if (!w) return; w.document.write('<html><head><title>Stock In - ' + r.recorderCode + '</title><style>body{font-family:system-ui,sans-serif;padding:24px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #e2e8f0;padding:6px 10px;text-align:left;font-size:13px}th{background:#f1f5f9;font-weight:600}.badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}.saved{background:#dcfce7;color:#166534}.pending{background:#fef3c7;color:#92400e}h2{font-size:18px;margin:0}p{color:#64748b;font-size:13px;margin:4px 0}.summary{margin-top:8px;font-size:13px;color:#334155;font-weight:600}</style></head><body>'); w.document.write('<h2>' + r.recorderCode + '</h2>'); w.document.write('<p>Date: ' + new Date(r.createdAt).toLocaleString() + '</p>'); w.document.write('<p>Supplier: ' + r.personName + (r.personPhone ? ' | Phone: ' + r.personPhone : '') + (r.personEmail ? ' | Email: ' + r.personEmail : '') + '</p>'); if (r.personAddress) w.document.write('<p>Address: ' + r.personAddress + '</p>'); if (r.notes) w.document.write('<p>Notes: ' + r.notes + '</p>'); w.document.write('<table><thead><tr><th>Product</th><th style="text-align:right">Qty</th><th>Unit</th><th style="text-align:right">Cost/Unit</th><th style="text-align:right">Total</th><th>Status</th></tr></thead><tbody>'); allItems.forEach((item: any) => { const prod = products.find((p: any) => p.id === item.productId); w.document.write('<tr><td>' + (prod?.name || '#'+item.productId) + '</td><td style="text-align:right">' + item.quantity + '</td><td>' + item.unit + '</td><td style="text-align:right">' + (item.costPerUnit || 0).toFixed(2) + '</td><td style="text-align:right">' + ((item.costPerUnit || 0) * item.quantity).toFixed(2) + '</td><td><span class="badge ' + (item._pending ? 'pending' : 'saved') + '">' + (item._pending ? 'Pending' : 'Saved') + '</span></td></tr>') }); w.document.write('</tbody></table>'); w.document.write('<p class="summary">Total Items: ' + totalItems + ' · Total Qty: ' + totalQty + ' · Total Value: $' + totalValue.toFixed(2) + '</p>'); w.document.write('</body></html>'); w.document.close(); w.print() }} className="h-5 text-[10px] gap-0.5"><Printer className="w-2.5 h-2.5" />Print</Button>
+    60→  1035→                      </div>
+    61→  1036→                      {totalItems > 0 ? (<>
+    62→  1037→                        {/* Mobile: stacked cards */}
+    63→  1038→                        <div className="sm:hidden space-y-1.5">
+    64→  1039→                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+    65→  1040→                            return (<div key={item.id} className={`rounded-md border p-2 space-y-1 ${item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed border-amber-300 dark:border-amber-600' : ''}`}>
+    66→  1041→                              <div className="flex items-center justify-between gap-2"><span className="text-[11px] font-medium truncate">{prod?.name || `#${item.productId}`}</span>{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400 shrink-0">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400 shrink-0">Saved</Badge>}</div>
+    67→  1042→                              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[11px]">
+    68→  1043→                                <div><span className="text-muted-foreground">Qty: </span><span className="font-mono">{item.quantity}</span></div>
+    69→  1044→                                <div><span className="text-muted-foreground">Unit: </span>{item.unit}</div>
+    70→  1045→                                <div><span className="text-muted-foreground">Cost/U: </span><span className="font-mono">{fmt(item.costPerUnit || 0)}</span></div>
+    71→  1046→                                <div><span className="text-muted-foreground">Total: </span><span className="font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</span></div>
+    72→  1047→                              </div>
+    73→  1048→                              <div className="flex justify-end pt-0.5 border-t"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-5 w-5 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></div>
+    74→  1049→                            </div>)})}
+    75→  1050→                        </div>
+    76→  1051→                        {/* Desktop: table */}
+    77→  1052→                        <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+    78→  1053→                          <TableHead className="h-6 text-[10px]">Product</TableHead><TableHead className="h-6 text-[10px] text-right w-14">Qty</TableHead><TableHead className="h-6 text-[10px] w-14">Unit</TableHead><TableHead className="h-6 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-6 text-[10px] text-right w-24">Total</TableHead><TableHead className="h-6 text-[10px] text-center w-14">Status</TableHead><TableHead className="h-6 w-10"></TableHead>
+    79→  1054→                        </TableRow></TableHeader><TableBody>
+    80→  1055→                          {paged.map((item: any) => { const prod = products.find(p => p.id === item.productId)
+    81→  1056→                            return (<TableRow key={item.id} className={item._pending ? 'bg-amber-50/50 dark:bg-amber-500/5 border-dashed' : ''}>
+    82→  1057→                              <TableCell className="py-1 text-[11px] font-medium">{prod?.name || `#${item.productId}`}</TableCell>
+    83→  1058→                              <TableCell className="py-1 text-[11px] text-right font-mono">{item.quantity}</TableCell>
+    84→  1059→                              <TableCell className="py-1 text-[11px] text-muted-foreground">{item.unit}</TableCell>
+    85→  1060→                              <TableCell className="py-1 text-[11px] text-right font-mono">{fmt(item.costPerUnit || 0)}</TableCell>
+    86→  1061→                              <TableCell className="py-1 text-[11px] text-right font-mono">{fmt((item.costPerUnit || 0) * item.quantity)}</TableCell>
+    87→  1062→                              <TableCell className="py-1 text-center">{item._pending ? <Badge variant="outline" className="text-[9px] h-4 border-amber-300 text-amber-700 dark:border-amber-600 dark:text-amber-400">Pend</Badge> : <Badge variant="outline" className="text-[9px] h-4 border-emerald-300 text-emerald-700 dark:border-emerald-600 dark:text-emerald-400">Saved</Badge>}</TableCell>
+    88→  1063→                              <TableCell className="py-1 text-right"><Button size="sm" variant="ghost" onClick={() => item._pending ? removePendingInItem(r.id, item.tempId) : crud.remove(`/stock-in/${r.id}/item/${item.id}`)} disabled={!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`)} className="text-red-500 h-4 w-4 p-0">{!item._pending && isCrudLoading('remove', `/stock-in/${r.id}/item/${item.id}`) ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Trash2 className="w-2.5 h-2.5" />}</Button></TableCell>
+    89→  1064→                            </TableRow>)})}
+    90→  1065→                        </TableBody></Table></div>
+    91→  1066→                        <Pager page={stockInItemPage} totalPages={totalPages} onPageChange={setStockInItemPage} />
+    92→  1067→                      </>) : <div className="text-[10px] text-muted-foreground text-center py-2">No items yet</div>}
+    93→  1068→                    </div>)})()}
+    94→  1069→
+    95→  1070→                  {/* Submit pending button */}
+    96→  1071→                  {pendingItems.length > 0 && (
+    97→  1072→                    <div className="flex items-center gap-1.5">
+    98→  1073→                      <Button size="sm" disabled={submittingRecorder === r.id} onClick={() => submitPendingInItems(r.id, r.enterpriseId || eid || 0)} className="bg-emerald-600 text-white h-6 text-[11px]">{submittingRecorder === r.id ? <Loader2 className="w-2.5 h-2.5 mr-0.5 animate-spin" /> : <Check className="w-2.5 h-2.5 mr-0.5" />}Submit {pendingItems.length}</Button>
+    99→  1074→                      <Button size="sm" variant="ghost" onClick={() => clearPendingInItems(r.id)} className="h-6 text-[11px] text-muted-foreground" disabled={submittingRecorder === r.id}>Clear</Button>
+   100→  1075→                    </div>
+   101→  1076→                  )}
+   102→  1077→
+   103→  1078→                  {/* ── Add Items Section ── */}
+   104→  1079→                  <div className="bg-muted/30 rounded-md p-2">
+   105→  1080→                    <div className="flex items-center justify-between mb-1.5">
+   106→  1081→                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Add Items</span>
+   107→  1082→                      <div className="flex items-center bg-muted rounded-md p-0.5">
+   108→  1083→                        <button onClick={() => setStockInMode('pic')} className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${stockInMode === 'pic' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-muted-foreground'}`}><LayoutGrid className="w-2.5 h-2.5 inline mr-0.5" />Pick</button>
+   109→  1084→                        <button onClick={() => setStockInMode('table')} className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${stockInMode === 'table' ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-sm' : 'text-muted-foreground'}`}><List className="w-2.5 h-2.5 inline mr-0.5" />Table</button>
+   110→  1085→                      </div>
+   111→  1086→                    </div>
+   112→  1087→
+   113→  1088→                    {/* ── Pick Mode ── */}
+   114→  1089→                    {stockInMode === 'pic' ? (
+   115→  1090→                      (() => {
+   116→  1091→                        const sel = (stockInPickInputs['_selected'] || { productId: 0, qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) as { productId: number; qty: number; unit: string; costPerUnit: number; notes: string }
+   117→  1092→                        const filteredProds = products.filter(p => !stockInSearch || p.name.toLowerCase().includes(stockInSearch.toLowerCase()) || p.sku.toLowerCase().includes(stockInSearch.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name))
+   118→  1093→                        const selTotalPages = Math.ceil(filteredProds.length / STOCK_IN_PICK_SELECT_PER_PAGE)
+   119→  1094→                        const selPaged = filteredProds.slice((stockInPickSelectPage - 1) * STOCK_IN_PICK_SELECT_PER_PAGE, stockInPickSelectPage * STOCK_IN_PICK_SELECT_PER_PAGE)
+   120→  1095→                        return (<div className="space-y-1.5">
+   121→  1096→                          <div className="relative"><Search className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" /><Input placeholder="Filter products..." value={stockInSearch} onChange={e => { setStockInSearch(e.target.value); setStockInPickSelectPage(1) }} className="h-6 text-[11px] pl-7" /></div>
+   122→  1097→                          {/* Mobile: stacked form */}
+   123→  1098→                          <div className="sm:hidden rounded-md border border-dashed border-emerald-300 dark:border-emerald-600 p-2 space-y-1.5">
+   124→  1099→                            <Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}><SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">{selPaged.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span></SelectItem>)}{selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}</SelectContent></Select>
+   125→  1100→                            <div className="grid grid-cols-3 gap-1.5">
+   126→  1101→                              <Input type="number" min={1} value={sel.qty || 1} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } as any }))} placeholder="Qty" className="h-7 text-[11px] text-right" />
+   127→  1102→                              <Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-7 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+   128→  1103→                              <Input type="number" step="0.01" min={0} value={sel.costPerUnit || ''} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], costPerUnit: parseFloat(e.target.value) || 0 } as any }))} placeholder="Cost/U" className="h-7 text-[11px] text-right" />
+   129→  1104→                            </div>
+   130→  1105→                            <Button size="sm" disabled={addingItem || !sel.productId} className="h-7 text-[11px] bg-emerald-600 text-white w-full" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '' }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add to receipt</Button>
+   131→  1106→                          </div>
+   132→  1107→                          {/* Desktop: table */}
+   133→  1108→                          <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+   134→  1109→                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
+   135→  1110→                          </TableRow></TableHeader><TableBody><TableRow className="border-dashed border-b-emerald-300 dark:border-b-emerald-600">
+   136→  1111→                            <TableCell className="py-0.5"><Select value={sel.productId ? String(sel.productId) : '_none'} onValueChange={v => { if (v === '_none') return; setStockInPickInputs(prev => ({ ...prev, _selected: { productId: parseInt(v), qty: prev['_selected']?.qty || 1, unit: prev['_selected']?.unit || 'pcs', costPerUnit: prev['_selected']?.costPerUnit || 0, notes: prev['_selected']?.notes || '' } })) }}><SelectTrigger className="h-5 text-[11px]"><SelectValue placeholder="Select product..." /></SelectTrigger><SelectContent className="max-h-64">
+   137→  1112→                              {selPaged.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name} <span className="text-muted-foreground ml-1 font-mono text-[10px]">{p.sku}</span></SelectItem>)}
+   138→  1113→                              {selPaged.length === 0 && <div className="px-2 py-1.5 text-[11px] text-muted-foreground text-center">No products found</div>}
+   139→  1114→                            </SelectContent></Select></TableCell>
+   140→  1115→                            <TableCell className="py-0.5"><Input type="number" min={1} value={sel.qty || 1} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], qty: parseInt(e.target.value) || 1 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+   141→  1116→                            <TableCell className="py-0.5"><Select value={sel.unit || 'pcs'} onValueChange={v => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], unit: v } as any }))}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+   142→  1117→                            <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={sel.costPerUnit || ''} onChange={e => setStockInPickInputs(prev => ({ ...prev, _selected: { ...prev['_selected'], costPerUnit: parseFloat(e.target.value) || 0 } as any }))} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+   143→  1118→                            <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem || !sel.productId} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!sel.productId) { toast({ title: 'Select a product', variant: 'destructive' }); return }; if (!sel.qty || sel.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: sel.productId, warehouseId: r.warehouseId, quantity: sel.qty, unit: sel.unit || 'pcs', costPerUnit: sel.costPerUnit || 0, notes: '' }); setStockInPickInputs(prev => { const n = { ...prev }; delete n['_selected']; return n }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+   144→  1119→                          </TableRow></TableBody></Table></div>
+   145→  1120→                          {selTotalPages > 1 && <div className="flex items-center justify-between pt-1"><span className="text-[10px] text-muted-foreground">Products page {stockInPickSelectPage}/{selTotalPages}</span><div className="flex gap-0.5"><Button size="sm" variant="outline" disabled={stockInPickSelectPage <= 1} onClick={() => setStockInPickSelectPage(p => p - 1)} className="h-5 w-5 p-0"><ChevronLeft className="w-2.5 h-2.5" /></Button><Button size="sm" variant="outline" disabled={stockInPickSelectPage >= selTotalPages} onClick={() => setStockInPickSelectPage(p => p + 1)} className="h-5 w-5 p-0"><ChevronRight className="w-2.5 h-2.5" /></Button></div></div>}
+   146→  1121→                        </div>)
+   147→  1122→                      })()
+   148→  1123→                    ) : (
+   149→  1124→                      // ── Table Mode ──
+   150→  1125→                      (() => { const sortedProds = [...products].sort((a, b) => a.name.localeCompare(b.name)); const totalPages = Math.ceil(sortedProds.length / STOCK_IN_PRODUCTS_PER_PAGE); const paged = sortedProds.slice((stockInProductPage - 1) * STOCK_IN_PRODUCTS_PER_PAGE, stockInProductPage * STOCK_IN_PRODUCTS_PER_PAGE)
+   151→  1126→                        return (<div>
+   152→  1127→                          {/* Mobile: stacked cards */}
+   153→  1128→                          <div className="sm:hidden space-y-1.5">
+   154→  1129→                            {paged.map(prod => { const inp = getInRowInput(prod.id)
+   155→  1130→                              return (<div key={prod.id} className="rounded-md border p-2 space-y-1.5">
+   156→  1131→                                <div className="text-[11px]"><span className="font-medium">{prod.name}</span> <span className="text-muted-foreground font-mono text-[10px]">{prod.sku}</span></div>
+   157→  1132→                                <div className="grid grid-cols-3 gap-1.5">
+   158→  1133→                                  <Input type="number" min={1} value={inp.qty} onChange={e => updateInRowInput(prod.id, { qty: parseInt(e.target.value) || 1 })} placeholder="Qty" className="h-6 text-[11px] text-right" />
+   159→  1134→                                  <Select value={inp.unit} onValueChange={v => updateInRowInput(prod.id, { unit: v })}><SelectTrigger className="h-6 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select>
+   160→  1135→                                  <Input type="number" step="0.01" min={0} value={inp.costPerUnit || ''} onChange={e => updateInRowInput(prod.id, { costPerUnit: parseFloat(e.target.value) || 0 })} placeholder="Cost/U" className="h-6 text-[11px] text-right" />
+   161→  1136→                                </div>
+   162→  1137→                                <Button size="sm" disabled={addingItem} className="h-6 text-[10px] bg-emerald-600 text-white w-full" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '' }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) }}>{addingItem ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Plus className="w-3 h-3 mr-1" />}Add</Button>
+   163→  1138→                              </div>)})}
+   164→  1139→                          </div>
+   165→  1140→                          {/* Desktop: table */}
+   166→  1141→                          <div className="hidden sm:block rounded-md border overflow-x-auto"><Table><TableHeader><TableRow>
+   167→  1142→                            <TableHead className="h-5 text-[10px]">Product</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Qty</TableHead><TableHead className="h-5 text-[10px] w-14">Unit</TableHead><TableHead className="h-5 text-[10px] text-right w-20">Cost/U</TableHead><TableHead className="h-5 w-10"></TableHead>
+   168→  1143→                          </TableRow></TableHeader><TableBody>
+   169→  1144→                            {paged.map(prod => { const inp = getInRowInput(prod.id)
+   170→  1145→                              return (<TableRow key={prod.id}>
+   171→  1146→                                <TableCell className="py-0.5 text-[11px]"><span className="font-medium">{prod.name}</span> <span className="text-muted-foreground font-mono text-[10px]">{prod.sku}</span></TableCell>
+   172→  1147→                                <TableCell className="py-0.5"><Input type="number" min={1} value={inp.qty} onChange={e => updateInRowInput(prod.id, { qty: parseInt(e.target.value) || 1 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+   173→  1148→                                <TableCell className="py-0.5"><Select value={inp.unit} onValueChange={v => updateInRowInput(prod.id, { unit: v })}><SelectTrigger className="h-5 text-[11px]"><SelectValue /></SelectTrigger><SelectContent className="max-h-36">{SORTED_MEASUREMENTS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent></Select></TableCell>
+   174→  1149→                                <TableCell className="py-0.5"><Input type="number" step="0.01" min={0} value={inp.costPerUnit || ''} onChange={e => updateInRowInput(prod.id, { costPerUnit: parseFloat(e.target.value) || 0 })} className="h-5 text-[11px] w-20 text-right" /></TableCell>
+   175→  1150→                                <TableCell className="py-0.5 text-right"><Button size="sm" disabled={addingItem} className="h-5 text-[10px] bg-emerald-600 text-white px-1.5" onClick={() => { if (!inp.qty || inp.qty < 1) { toast({ title: 'Qty ≥ 1', variant: 'destructive' }); return }; addPendingInItem(r.id, { productId: prod.id, warehouseId: r.warehouseId, quantity: inp.qty, unit: inp.unit, costPerUnit: inp.costPerUnit || 0, notes: inp.notes || '' }); updateInRowInput(prod.id, { qty: 1, unit: 'pcs', costPerUnit: 0, notes: '' }) }}>{addingItem ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Plus className="w-2.5 h-2.5" />}</Button></TableCell>
+   176→  1151→                              </TableRow>)})}
+   177→  1152→                          </TableBody></Table></div>
+   178→  1153→                          <Pager page={stockInProductPage} totalPages={totalPages} onPageChange={setStockInProductPage} />
+   179→  1154→                        </div>)
+   180→  1155→                      })()
+   181→  1156→                    )}
+   182→  1157→                  </div>
+   183→  1158→                </div>)}
+   184→  1159→              </CardContent></Card>)})}
+   185→  1160→            <Pager page={stockInRecPage} totalPages={recTotalPages} onPageChange={setStockInRecPage} />
+   186→  1161→          </>)
+   187→  1162→        })()}
+   188→  1163→      </div>
+   189→  1164→    )
+   190→  1165→
+   191→  1166→    // ─── STOCK OUT
+   192→  1167→    if (page === 'stockOut') return (
+   193→  1168→      <div className="space-y-3">
+   194→  1169→        <div className="flex items-center justify-between flex-wrap gap-2">
+   195→  1170→          <div><h1 className="text-lg font-bold flex items-center gap-1.5"><ArrowUpFromLine className="w-4 h-4 text-orange-500" />Stock Out</h1></div>
+   196→  1171→          <Button size="sm" onClick={() => openCreate('stockOut')} className="bg-gradient-to-r from-orange-500 to-red-500 text-white h-7 text-xs"><Plus className="w-3 h-3 mr-1" />New Recorder</Button>
+   197→  1172→        </div>
+   198→  1173→
+   199→  1174→        {/* ── Filters ── */}
+   200→  1175→        <div className="flex flex-wrap items-end gap-2 bg-muted/30 rounded-md p-2">
+   201→
+   202→[showing lines 976-1175 of 1895; use offset=1176 with limit to continue reading]
