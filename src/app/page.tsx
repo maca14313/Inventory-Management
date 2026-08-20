@@ -60,7 +60,7 @@ const PIE_COLORS = ['#10b981','#3b82f6','#f59e0b','#ef4444','#8b5cf6','#ec4899',
 interface Enterprise { id: number; name: string; code: string; contactEmail: string; contactPhone: string; address: string; isActive: boolean; maxBranches: number; maxWarehouses: number; maxUsers: number }
 interface Branch { id: number; enterpriseId: number; name: string; code: string; location: string; managerName: string; managerEmail: string; isActive: boolean }
 interface Warehouse { id: number; enterpriseId: number; branchId: number; name: string; code: string; location: string; capacity: number; managerName: string; isActive: boolean }
-interface User { id: number; enterpriseId: number | null; branchId: number | null; warehouseId: number | null; username: string; email: string; fullName: string; role: RoleLevel; isActive: boolean; mustResetPassword?: boolean }
+interface User { id: number; enterpriseId: number | null; branchId: number | null; warehouseId: number | null; username: string; email: string; fullName: string; role: RoleLevel; isActive: boolean }
 interface Category { id: number; enterpriseId: number; name: string; description: string }
 interface Condition { id: number; enterpriseId: number; name: string; description: string }
 interface Supplier { id: number; enterpriseId: number; name: string; contactPerson: string; email: string; phone: string; address: string }
@@ -872,10 +872,6 @@ export default function IMSApp() {
   const [entLimitsDlg, setEntLimitsDlg] = useState<{ open: boolean; enterprise: any | null; maxBranches: number; maxWarehouses: number; maxUsers: number; submitting: boolean }>({ open: false, enterprise: null, maxBranches: 10, maxWarehouses: 50, maxUsers: 100, submitting: false })
   // Edit existing enterprise admin's details (username/fullName/email/password/isActive)
   const [entEditAdminDlg, setEntEditAdminDlg] = useState<{ open: boolean; enterprise: any | null; admin: any | null; username: string; fullName: string; email: string; password: string; isActive: boolean; submitting: boolean }>({ open: false, enterprise: null, admin: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false })
-
-  // ─── User management dialogs (Task 19) ─────────
-  const [userEditDlg, setUserEditDlg] = useState<{ open: boolean; user: any | null; username: string; fullName: string; email: string; password: string; isActive: boolean; submitting: boolean }>({ open: false, user: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false })
-  const [userResetDlg, setUserResetDlg] = useState<{ open: boolean; user: any | null; newPassword: string; submitting: boolean }>({ open: false, user: null, newPassword: '', submitting: false })
 
   const [stockOutMode, setStockOutMode] = useState<'pic' | 'table'>('pic')
   const [stockInMode, setStockInMode] = useState<'pic' | 'table'>('pic')
@@ -1843,55 +1839,15 @@ export default function IMSApp() {
       <div className="space-y-5">
         <div className="flex items-center justify-between"><h1 className="text-2xl font-bold">{t(locale, 'navUsers')}</h1>
           {hasPermission(role!, 'users:create') && <Button onClick={() => openCreate('user')} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm"><Plus className="w-4 h-4 mr-1.5" />{t(locale, 'newUser')}</Button>}</div>
-        <div className="grid gap-3">{allUsers.map(u => {
+        <div className="space-y-2">{allUsers.map(u => {
           const colors: Record<string, string> = { super_admin: 'from-purple-500 to-pink-500', enterprise_admin: 'from-blue-500 to-cyan-500', branch_admin: 'from-orange-500 to-amber-500', warehouse_admin: 'from-emerald-500 to-teal-500' }
-          const canManage = u.id !== auth.userId && (role === 'super_admin' || canManageRole(role!, u.role))
-          const canToggleActive = canManage && hasPermission(role!, 'users:toggle_active' as any)
-          const canEdit = canManage && hasPermission(role!, 'users:edit')
-          const canReset = canManage && hasPermission(role!, 'users:reset_password' as any)
-          const canDelete = canManage && hasPermission(role!, 'users:delete')
-          const canManagePerms = canManage && hasPermission(role!, 'permissions:manage' as any) && role !== 'warehouse_admin'
-          const entName = u.enterpriseId ? enterprises.find(e => e.id === u.enterpriseId)?.name : null
-          const brName = u.branchId ? branches.find(b => b.id === u.branchId)?.name : null
-          const whName = u.warehouseId ? warehouses.find(w => w.id === u.warehouseId)?.name : null
-          const scopeParts = [entName, brName, whName].filter(Boolean)
-          return (
-          <Card key={u.id} className={`shadow-sm hover:shadow-md transition-shadow ${!u.isActive ? 'opacity-70' : ''}`}><CardContent className="p-4 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${colors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white font-bold shrink-0`}>{u.fullName.charAt(0)}</div>
-                <div>
-                  <div className="font-semibold flex items-center gap-2 flex-wrap">
-                    {u.fullName}
-                    {!u.isActive && <Badge className="bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 border-0 text-[9px]">INACTIVE</Badge>}
-                    {canToggleActive && u.role !== 'super_admin' && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span><Switch checked={u.isActive} onCheckedChange={async (v) => { try { await apiFetch(`/users/${u.id}`, { method: 'PUT', body: JSON.stringify({ isActive: v }) }); toast({ title: `User ${v ? 'activated' : 'deactivated'}` }); await loadData() } catch (err: any) { toast({ title: err.message, variant: 'destructive' }) } }} /></span>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="text-xs">{u.isActive ? 'Click to deactivate' : 'Click to activate'}</TooltipContent>
-                      </Tooltip>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground">@{u.username} · {u.email || '—'}</div>
-                  {scopeParts.length > 0 && <div className="text-[10px] text-muted-foreground/70 mt-0.5">{scopeParts.join(' → ')}</div>}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge className={`${statusColor(u.role === 'super_admin' ? 'confirmed' : u.role === 'enterprise_admin' ? 'approved' : u.role === 'branch_admin' ? 'shipped' : 'received')} border-0 text-xs`}>{ROLE_LABELS[u.role]}</Badge>
-                {canEdit && <Button size="sm" variant="ghost" onClick={() => setUserEditDlg({ open: true, user: u, username: u.username, fullName: u.fullName, email: u.email || '', password: '', isActive: u.isActive, submitting: false })}><Pencil className="w-3.5 h-3.5" /></Button>}
-                {canDelete && <Button size="sm" variant="ghost" onClick={() => crud.remove(`/users/${u.id}`)} disabled={isCrudLoading('remove', `/users/${u.id}`)} className="text-red-500">{isCrudLoading('remove', `/users/${u.id}`) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}</Button>}
-              </div>
-            </div>
-            {canManage && (
-              <div className="flex items-center gap-2 flex-wrap pt-2 border-t">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wider mr-1">Manage:</span>
-                {canEdit && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setUserEditDlg({ open: true, user: u, username: u.username, fullName: u.fullName, email: u.email || '', password: '', isActive: u.isActive, submitting: false })}><UserCog className="w-3 h-3 mr-1" />Edit User</Button>}
-                {canReset && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setUserResetDlg({ open: true, user: u, newPassword: '', submitting: false })}><RotateCcw className="w-3 h-3 mr-1" />Reset Password</Button>}
-                {canManagePerms && <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setPage('permissions')}><ShieldCheck className="w-3 h-3 mr-1" />Permission Manager</Button>}
-              </div>
-            )}
-          </CardContent></Card>)})}</div>
+          return (<Card key={u.id} className="shadow-sm"><CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${colors[u.role] || 'from-slate-500 to-slate-600'} flex items-center justify-center text-white font-bold shrink-0`}>{u.fullName.charAt(0)}</div>
+              <div><div className="font-semibold">{u.fullName}</div><div className="text-xs text-muted-foreground">{u.username} · {u.email}</div></div></div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge className={`${statusColor(u.role === 'super_admin' ? 'confirmed' : u.role === 'enterprise_admin' ? 'approved' : u.role === 'branch_admin' ? 'shipped' : 'received')} border-0 text-xs`}>{ROLE_LABELS[u.role]}</Badge>
+              {hasPermission(role!, 'users:edit') && (role === 'super_admin' || canManageRole(role!, u.role)) && <Button size="sm" variant="ghost" onClick={() => openEdit('user', u)}><Pencil className="w-3.5 h-3.5" /></Button>}
+            </div></CardContent></Card>)})}</div>
         <Card className="shadow-sm"><CardHeader className="pb-2"><CardTitle className="text-xs flex items-center gap-2"><Lock className="w-4 h-4 text-blue-500" /> Role Hierarchy</CardTitle></CardHeader>
           <CardContent className="text-xs text-muted-foreground"><p>Your role: <span className="text-blue-500 font-medium">{ROLE_LABELS[role!]}</span></p><p>Can create: <span className="text-foreground font-medium">{MANAGEABLE_ROLES[role!].map(r => ROLE_LABELS[r]).join(', ') || 'None'}</span></p></CardContent></Card>
       </div>
@@ -5538,79 +5494,6 @@ export default function IMSApp() {
                   setEntResetDlg({ open: false, enterprise: null, newPassword: '', submitting: false })
                 } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setEntResetDlg(s => ({ ...s, submitting: false })) }
               }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{entResetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Reset Password</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* ─── EDIT USER DIALOG (Task 19) ─── */}
-        <Dialog open={userEditDlg.open} onOpenChange={o => setUserEditDlg(s => ({ ...s, open: o }))}>
-          <DialogContent className="max-w-md w-[95vw]">
-            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><UserCog className="w-4 h-4 text-blue-500" /> Edit User — {userEditDlg.user?.fullName}</DialogTitle>
-            <DialogDescription className="text-xs">Update this user's details. Leave password blank to keep the current one.</DialogDescription></DialogHeader>
-            <div className="space-y-3">
-              {userEditDlg.user && (
-                <div className="text-xs text-muted-foreground bg-muted/50 rounded-md p-2 flex items-center justify-between">
-                  <span>Editing: <span className="font-semibold text-foreground">@{userEditDlg.user.username}</span> ({ROLE_LABELS[userEditDlg.user.role] || userEditDlg.user.role})</span>
-                  {userEditDlg.user.mustResetPassword && <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400 border-0 text-[10px]">Must Reset</Badge>}
-                </div>
-              )}
-              <div className="space-y-1"><Label className="text-xs">Username *</Label><Input value={userEditDlg.username} onChange={e => setUserEditDlg(s => ({ ...s, username: e.target.value }))} placeholder="e.g. john_doe" className="h-8 text-sm" /></div>
-              <div className="space-y-1"><Label className="text-xs">Full Name *</Label><Input value={userEditDlg.fullName} onChange={e => setUserEditDlg(s => ({ ...s, fullName: e.target.value }))} placeholder="John Doe" className="h-8 text-sm" /></div>
-              <div className="space-y-1"><Label className="text-xs">Email</Label><Input type="email" value={userEditDlg.email} onChange={e => setUserEditDlg(s => ({ ...s, email: e.target.value }))} placeholder="" className="h-8 text-sm" /></div>
-              <div className="space-y-1"><Label className="text-xs">New Password (optional)</Label><Input type="password" value={userEditDlg.password} onChange={e => setUserEditDlg(s => ({ ...s, password: e.target.value }))} placeholder="blank = keep current password" className="h-8 text-sm" /></div>
-              <div className="flex items-center justify-between rounded-md border p-2">
-                <div><Label className="text-xs">Account Active</Label><p className="text-[10px] text-muted-foreground">Deactivating blocks login but keeps the user record.</p></div>
-                <Switch checked={userEditDlg.isActive} onCheckedChange={v => setUserEditDlg(s => ({ ...s, isActive: v }))} />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setUserEditDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={userEditDlg.submitting}>{t(locale,'cancel')}</Button>
-              <Button disabled={userEditDlg.submitting} onClick={async () => {
-                if (!userEditDlg.username.trim() || !userEditDlg.fullName.trim()) { toast({ title: 'Username and Full Name are required', variant: 'destructive' }); return }
-                if (!userEditDlg.user) { toast({ title: 'No user loaded', variant: 'destructive' }); return }
-                setUserEditDlg(s => ({ ...s, submitting: true }))
-                try {
-                  const body: any = {
-                    username: userEditDlg.username.trim(),
-                    fullName: userEditDlg.fullName.trim(),
-                    email: userEditDlg.email.trim(),
-                    isActive: userEditDlg.isActive,
-                  }
-                  if (userEditDlg.password) body.password = userEditDlg.password
-                  await apiFetch(`/users/${userEditDlg.user.id}`, { method: 'PUT', body: JSON.stringify(body) })
-                  toast({ title: `User updated: ${userEditDlg.username.trim()}` })
-                  setUserEditDlg({ open: false, user: null, username: '', fullName: '', email: '', password: '', isActive: true, submitting: false })
-                  await loadData()
-                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setUserEditDlg(s => ({ ...s, submitting: false })) }
-              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{userEditDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <UserCog className="w-4 h-4 mr-1.5" />}Save Changes</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* ─── RESET USER PASSWORD DIALOG (Task 19) ─── */}
-        <Dialog open={userResetDlg.open} onOpenChange={o => setUserResetDlg(s => ({ ...s, open: o }))}>
-          <DialogContent className="max-w-md w-[95vw]">
-            <DialogHeader><DialogTitle className="text-base font-bold flex items-center gap-1.5"><RotateCcw className="w-4 h-4 text-blue-500" /> Reset Password — {userResetDlg.user?.fullName}</DialogTitle>
-            <DialogDescription className="text-xs">Reset the password for this user.</DialogDescription></DialogHeader>
-            <div className="space-y-3">
-              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg p-2 text-[11px] text-amber-700 dark:text-amber-400">If left blank, password will be reset to <span className="font-mono font-semibold">admin123</span> with forced reset on next login.</div>
-              {userResetDlg.user && (
-                <div className="text-xs text-muted-foreground">User: <span className="font-semibold text-foreground">@{userResetDlg.user.username}</span> ({userResetDlg.user.fullName}, {ROLE_LABELS[userResetDlg.user.role] || userResetDlg.user.role})</div>
-              )}
-              <div className="space-y-1"><Label className="text-xs">New Password</Label><Input type="password" value={userResetDlg.newPassword} onChange={e => setUserResetDlg(s => ({ ...s, newPassword: e.target.value }))} placeholder="blank = admin123" className="h-8 text-sm" /></div>
-            </div>
-            <DialogFooter>
-              <Button variant="ghost" onClick={() => setUserResetDlg(s => ({ ...s, open: false }))} className="text-muted-foreground" disabled={userResetDlg.submitting}>{t(locale,'cancel')}</Button>
-              <Button disabled={userResetDlg.submitting} onClick={async () => {
-                if (!userResetDlg.user) { toast({ title: 'No user loaded', variant: 'destructive' }); return }
-                setUserResetDlg(s => ({ ...s, submitting: true }))
-                try {
-                  const body: any = { password: userResetDlg.newPassword || 'admin123', mustResetPassword: true }
-                  await apiFetch(`/users/${userResetDlg.user.id}`, { method: 'PUT', body: JSON.stringify(body) })
-                  toast({ title: `Password reset${!userResetDlg.newPassword ? ' to admin123 (forced reset on next login)' : ' successfully'}` })
-                  setUserResetDlg({ open: false, user: null, newPassword: '', submitting: false })
-                } catch (e: any) { toast({ title: e.message, variant: 'destructive' }); setUserResetDlg(s => ({ ...s, submitting: false })) }
-              }} className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">{userResetDlg.submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}Reset Password</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

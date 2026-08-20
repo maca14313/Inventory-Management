@@ -57,7 +57,6 @@ export type Permission =
   | 'warehouses:view' | 'warehouses:create' | 'warehouses:edit' | 'warehouses:delete'
   // User-level
   | 'users:view' | 'users:create' | 'users:edit' | 'users:delete' | 'users:assign_roles'
-  | 'users:toggle_active' | 'users:reset_password'
   // Product-level
   | 'products:view' | 'products:create' | 'products:edit' | 'products:delete'
   // Category-level
@@ -79,7 +78,7 @@ export const PERMISSION_GROUPS = {
   enterprises: { label: 'Enterprises', perms: ['enterprises:view','enterprises:create','enterprises:edit','enterprises:delete','enterprises:set_abilities','enterprises:set_features'] as Permission[] },
   branches: { label: 'Branches', perms: ['branches:view','branches:create','branches:edit','branches:delete'] as Permission[] },
   warehouses: { label: 'Warehouses', perms: ['warehouses:view','warehouses:create','warehouses:edit','warehouses:delete'] as Permission[] },
-  users: { label: 'Users', perms: ['users:view','users:create','users:edit','users:delete','users:assign_roles','users:toggle_active','users:reset_password'] as Permission[] },
+  users: { label: 'Users', perms: ['users:view','users:create','users:edit','users:delete','users:assign_roles'] as Permission[] },
   products: { label: 'Products', perms: ['products:view','products:create','products:edit','products:delete'] as Permission[] },
   categories: { label: 'Categories', perms: ['categories:view','categories:create','categories:edit','categories:delete'] as Permission[] },
   stock: { label: 'Stock', perms: ['stock:view','stock:adjust'] as Permission[] },
@@ -100,7 +99,6 @@ const ROLE_PERMISSIONS: Record<RoleLevel, Permission[]> = {
     'branches:view', 'branches:create', 'branches:edit', 'branches:delete',
     'warehouses:view', 'warehouses:create', 'warehouses:edit', 'warehouses:delete',
     'users:view', 'users:create', 'users:edit', 'users:delete', 'users:assign_roles',
-    'users:toggle_active', 'users:reset_password',
     'products:view', 'products:create', 'products:edit', 'products:delete',
     'categories:view', 'categories:create', 'categories:edit', 'categories:delete',
     'stock:view', 'stock:adjust',
@@ -114,7 +112,6 @@ const ROLE_PERMISSIONS: Record<RoleLevel, Permission[]> = {
     'branches:view', 'branches:edit',
     'warehouses:view', 'warehouses:create', 'warehouses:edit',
     'users:view', 'users:create', 'users:edit',
-    'users:toggle_active', 'users:reset_password',
     'products:view', 'products:create', 'products:edit',
     'categories:view',
     'stock:view', 'stock:adjust',
