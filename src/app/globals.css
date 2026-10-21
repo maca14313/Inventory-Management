@@ -1,5 +1,12 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
 @import "tw-animate-css";
+
+/* Explicit sources only — prevents Tailwind from scanning skills/, mini-services/,
+   node_modules etc. which exhausts the inotify watch limit and crashes Turbopack. */
+@source "../";
+@source "../../components/";
+@source "../../lib/";
+@source "../../hooks/";
 
 @custom-variant dark (&:is(.dark *));
 

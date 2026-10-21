@@ -50,5 +50,16 @@ test
 prompt
 
 server.log
-# Skills directory
-/skills//attachments
+
+# Skills directory (never scan/tracked - huge tree crashes inotify)
+/skills/
+
+# other non-app dirs that should not be scanned
+/attachments
+/mini-services/
+/examples/
+/tool-results/
+/download/
+/upload/
+/agent-ctx/
+/tests/

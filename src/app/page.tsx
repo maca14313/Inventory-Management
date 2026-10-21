@@ -3825,52 +3825,7 @@ export default function IMSApp() {
       </div>
     )
 
-    // Helper for permission group rendering (uses const, so cannot be inline JSX)
-    const renderPermGroup = (g: any) => {
-      const allGroupPerms = g.perms as string[]
-      const target = permEditDlg.target
-      const groupCanUseAll = allGroupPerms.every((p: string) => !!target?.permissions?.find((x: any) => x.ability === p)?.canUse)
-      const groupCanDelAll = allGroupPerms.every((p: string) => !!target?.permissions?.find((x: any) => x.ability === p)?.canDelegate)
-      const groupHasAnyDelegatable = allGroupPerms.some((p: string) => permData.isSuperAdmin || (permData.delegatable || []).includes(p))
-      const refreshTarget = async () => { try { const subRes = await fetch(`${BASE}/api/permissions/subordinates`, { headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() } }); if (subRes.ok) { const subData = await subRes.json(); const arr = Array.isArray(subData) ? subData : []; setSubordinates(arr); const updated = arr.find((s: any) => s.id === target.id); if (updated) setPermEditDlg(s => ({ ...s, target: updated })) } } catch (e) { /* ignore */ } }
-      return (
-        <div key={g.key} className="rounded-lg border bg-card p-2.5">
-          <div className="text-xs font-bold mb-1.5 flex items-center justify-between gap-2"><div className="flex items-center gap-1.5"><Shield className="w-3 h-3 text-blue-500" />{g.label}</div>
-            <div className="flex items-center gap-1">
-              <Button size="sm" variant={groupCanUseAll ? 'default' : 'outline'} className={`h-5 text-[9px] px-1.5 ${groupCanUseAll ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`} onClick={async () => { const nv = !groupCanUseAll; setPermLoading(s => ({ ...s, [`${g.key}:use`]: true })); try { for (const p of allGroupPerms) { const cur = target?.permissions?.find((x: any) => x.ability === p); if (nv && !cur?.canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: !!cur?.canDelegate }) }) } else if (!nv && cur?.canUse) { if (cur?.canDelegate) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: false, canDelegate: true }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } } } toast({ title: `${nv ? 'Granted' : 'Revoked'} all ${g.label} use` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`${g.key}:use`]: false })) } }}>{permLoading[`${g.key}:use`] ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}{groupCanUseAll ? '✓' : '○'} Use All</Button>
-              {groupHasAnyDelegatable && <Button size="sm" variant={groupCanDelAll ? 'default' : 'outline'} className={`h-5 text-[9px] px-1.5 ${groupCanDelAll ? 'bg-amber-600 hover:bg-amber-700' : ''}`} onClick={async () => { const nv = !groupCanDelAll; setPermLoading(s => ({ ...s, [`${g.key}:del`]: true })); try { for (const p of allGroupPerms) { if (!(permData.isSuperAdmin || (permData.delegatable || []).includes(p))) continue; const cur = target?.permissions?.find((x: any) => x.ability === p); if (nv && !cur?.canDelegate) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: true }) }) } else if (!nv && cur?.canDelegate) { if (cur?.canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: false }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } } } toast({ title: `${nv ? 'Granted' : 'Revoked'} all ${g.label} delegate` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`${g.key}:del`]: false })) } }}>{permLoading[`${g.key}:del`] ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}{groupCanDelAll ? '✓' : '○'} Del. All</Button>}
-            </div>
-          </div>
-          <div className="space-y-0.5">
-            {g.perms.map((p: string) => {
-              const cur = target?.permissions?.find((x: any) => x.ability === p)
-              const canUse = !!cur?.canUse
-              const canDel = !!cur?.canDelegate
-              const granterCanDelegate = permData.isSuperAdmin || (permData.delegatable || []).includes(p)
-              return (
-                <div key={p} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 py-0.5 text-xs">
-                  <span className="font-mono truncate text-muted-foreground">{p}</span>
-                  <div className="flex items-center gap-1.5">
-                    <Label className="text-[10px] text-muted-foreground">Use</Label>
-                    <Switch disabled={permLoading[`use:${p}`]} checked={canUse} onCheckedChange={async (v) => { setPermLoading(s => ({ ...s, [`use:${p}`]: true })); try { if (v) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: canDel }) }) } else if (canDel) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: false, canDelegate: true }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } toast({ title: `${v ? 'Granted' : 'Revoked'} use: ${p}` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`use:${p}`]: false })) } }} />
-                    {permLoading[`use:${p}`] && <Loader2 className="w-3 h-3 animate-spin text-blue-500" />}
-                  </div>
-                  {granterCanDelegate ? (
-                    <div className="flex items-center gap-1.5">
-                      <Label className="text-[10px] text-muted-foreground">Delegate</Label>
-                      <Switch disabled={permLoading[`del:${p}`]} checked={canDel} onCheckedChange={async (v) => { setPermLoading(s => ({ ...s, [`del:${p}`]: true })); try { if (v) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: canUse, canDelegate: true }) }) } else if (canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: false }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } toast({ title: `${v ? 'Granted' : 'Revoked'} delegate: ${p}` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`del:${p}`]: false })) } }} />
-                      {permLoading[`del:${p}`] && <Loader2 className="w-3 h-3 animate-spin text-amber-500" />}
-                    </div>
-                  ) : (
-                    <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1.5 opacity-50 cursor-not-allowed"><Label className="text-[10px] text-muted-foreground">Delegate</Label><Switch checked={canDel} disabled /></span></TooltipTrigger><TooltipContent side="top" className="text-xs">You cannot delegate this permission</TooltipContent></Tooltip>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )
-    }
+    // (renderPermGroup moved to component level — it is used by the permission editor dialog in the main layout)
 
     // ─── PERMISSION MANAGER (Task 6) ───────────────────────────
     if (page === 'permissions' && hasPermission(role!, 'permissions:view' as any)) return (
@@ -3961,6 +3916,55 @@ export default function IMSApp() {
     )
 
     return null
+  }
+
+  // ─── renderPermGroup: renders one permission group card for the permission editor.
+  // MUST live at component level — it is used BOTH by the permissions page (renderPage)
+  // AND by the permission editor Dialog down in the main layout JSX.
+  const renderPermGroup = (g: any) => {
+    const allGroupPerms = g.perms as string[]
+    const target = permEditDlg.target
+    const groupCanUseAll = allGroupPerms.every((p: string) => !!target?.permissions?.find((x: any) => x.ability === p)?.canUse)
+    const groupCanDelAll = allGroupPerms.every((p: string) => !!target?.permissions?.find((x: any) => x.ability === p)?.canDelegate)
+    const groupHasAnyDelegatable = allGroupPerms.some((p: string) => permData.isSuperAdmin || (permData.delegatable || []).includes(p))
+    const refreshTarget = async () => { try { const subRes = await fetch(`${BASE}/api/permissions/subordinates`, { headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() } }); if (subRes.ok) { const subData = await subRes.json(); const arr = Array.isArray(subData) ? subData : []; setSubordinates(arr); const updated = arr.find((s: any) => s.id === target.id); if (updated) setPermEditDlg(s => ({ ...s, target: updated })) } } catch (e) { /* ignore */ } }
+    return (
+      <div key={g.key} className="rounded-lg border bg-card p-2.5">
+        <div className="text-xs font-bold mb-1.5 flex items-center justify-between gap-2"><div className="flex items-center gap-1.5"><Shield className="w-3 h-3 text-blue-500" />{g.label}</div>
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant={groupCanUseAll ? 'default' : 'outline'} className={`h-5 text-[9px] px-1.5 ${groupCanUseAll ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`} onClick={async () => { const nv = !groupCanUseAll; setPermLoading(s => ({ ...s, [`${g.key}:use`]: true })); try { for (const p of allGroupPerms) { const cur = target?.permissions?.find((x: any) => x.ability === p); if (nv && !cur?.canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: !!cur?.canDelegate }) }) } else if (!nv && cur?.canUse) { if (cur?.canDelegate) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: false, canDelegate: true }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } } } toast({ title: `${nv ? 'Granted' : 'Revoked'} all ${g.label} use` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`${g.key}:use`]: false })) } }}>{permLoading[`${g.key}:use`] ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}{groupCanUseAll ? '✓' : '○'} Use All</Button>
+            {groupHasAnyDelegatable && <Button size="sm" variant={groupCanDelAll ? 'default' : 'outline'} className={`h-5 text-[9px] px-1.5 ${groupCanDelAll ? 'bg-amber-600 hover:bg-amber-700' : ''}`} onClick={async () => { const nv = !groupCanDelAll; setPermLoading(s => ({ ...s, [`${g.key}:del`]: true })); try { for (const p of allGroupPerms) { if (!(permData.isSuperAdmin || (permData.delegatable || []).includes(p))) continue; const cur = target?.permissions?.find((x: any) => x.ability === p); if (nv && !cur?.canDelegate) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: true }) }) } else if (!nv && cur?.canDelegate) { if (cur?.canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: false }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } } } toast({ title: `${nv ? 'Granted' : 'Revoked'} all ${g.label} delegate` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`${g.key}:del`]: false })) } }}>{permLoading[`${g.key}:del`] ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : null}{groupCanDelAll ? '✓' : '○'} Del. All</Button>}
+          </div>
+        </div>
+        <div className="space-y-0.5">
+          {g.perms.map((p: string) => {
+            const cur = target?.permissions?.find((x: any) => x.ability === p)
+            const canUse = !!cur?.canUse
+            const canDel = !!cur?.canDelegate
+            const granterCanDelegate = permData.isSuperAdmin || (permData.delegatable || []).includes(p)
+            return (
+              <div key={p} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 py-0.5 text-xs">
+                <span className="font-mono truncate text-muted-foreground">{p}</span>
+                <div className="flex items-center gap-1.5">
+                  <Label className="text-[10px] text-muted-foreground">Use</Label>
+                  <Switch disabled={permLoading[`use:${p}`]} checked={canUse} onCheckedChange={async (v) => { setPermLoading(s => ({ ...s, [`use:${p}`]: true })); try { if (v) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: canDel }) }) } else if (canDel) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: false, canDelegate: true }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } toast({ title: `${v ? 'Granted' : 'Revoked'} use: ${p}` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`use:${p}`]: false })) } }} />
+                  {permLoading[`use:${p}`] && <Loader2 className="w-3 h-3 animate-spin text-blue-500" />}
+                </div>
+                {granterCanDelegate ? (
+                  <div className="flex items-center gap-1.5">
+                    <Label className="text-[10px] text-muted-foreground">Delegate</Label>
+                    <Switch disabled={permLoading[`del:${p}`]} checked={canDel} onCheckedChange={async (v) => { setPermLoading(s => ({ ...s, [`del:${p}`]: true })); try { if (v) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: canUse, canDelegate: true }) }) } else if (canUse) { await apiFetch('/permissions/grant', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p, canUse: true, canDelegate: false }) }) } else { await apiFetch('/permissions/revoke', { method: 'POST', body: JSON.stringify({ targetUserId: target.id, ability: p }) }) } toast({ title: `${v ? 'Granted' : 'Revoked'} delegate: ${p}` }); await refreshTarget() } catch (e: any) { toast({ title: e.message, variant: 'destructive' }) } finally { setPermLoading(s => ({ ...s, [`del:${p}`]: false })) } }} />
+                    {permLoading[`del:${p}`] && <Loader2 className="w-3 h-3 animate-spin text-amber-500" />}
+                  </div>
+                ) : (
+                  <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-1.5 opacity-50 cursor-not-allowed"><Label className="text-[10px] text-muted-foreground">Delegate</Label><Switch checked={canDel} disabled /></span></TooltipTrigger><TooltipContent side="top" className="text-xs">You cannot delegate this permission</TooltipContent></Tooltip>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
   }
 
   // ─── MAIN LAYOUT ────────────────────────────────────────

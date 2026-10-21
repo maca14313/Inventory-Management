@@ -65,3 +65,30 @@ Task ID: 7 — Verification
 - Agent Browser verified: login page shows all 5 demo accounts (S/E/B/W/U)
 - Agent Browser verified: user can log in as 'Warehouse Employee'
 - Dashboard renders with 'Current: Reorder:', stock data, etc.
+
+---
+Task ID: 8 — Fix Turbopack crash (inotify exhaustion) + renderPermGroup ReferenceError
+Agent: main (session continuation)
+
+Task: Fix two runtime errors blocking the app: (1) "An unexpected Turbopack error occurred" panic on every page load, (2) "renderPermGroup is not defined" ReferenceError at page.tsx:5908.
+
+Work Log:
+- Diagnosed Turbopack panic via /tmp/next-panic-*.log: "Unable to watch /home/z/my-project/skills/web-search - Permission denied (os error 13)". Root cause: kernel inotify max_user_watches=8192 exhausted because Tailwind v4 auto-scans the whole project tree (71+ skill folders) — .gitignore line for /skills/ was corrupted (merged with /attachments as "/skills//attachments")
+- Fixed .gitignore: split merged line, added /skills/, /mini-services/, /examples/, /tool-results/, /download/, /upload/, /agent-ctx/, /tests/
+- Hardened src/app/globals.css: `@import "tailwindcss" source(none)` + explicit @source directives for src/ only (app, components, lib, hooks)
+- Diagnosed renderPermGroup bug: function was defined INSIDE renderPage() (line 3829, between page early-returns) but referenced at line 5908 in the MAIN layout JSX (permission editor Dialog) — out of scope
+- Moved renderPermGroup to component level (between renderPage() closing brace and MAIN LAYOUT), preserving all logic: bulk Use All/Del. All per group, per-perm Use/Delegate switches, permLoading spinners, refreshTarget
+- Killed stale dev processes, cleared .next cache, restarted dev server
+
+Stage Summary:
+- Turbopack panic eliminated (page loads 200 consistently)
+- renderPermGroup ReferenceError fixed — permission editor dialog now renders
+- All 7 user-requested features verified working in browser:
+  1. Demo User account (U — User, Acme WH1) present on login page; login as acme_wh1_user/admin123 works ("Welcome, Warehouse Employee")
+  2. Edit Admin on Branches (dialog tested: username/fullName/email/password/isActive) + Warehouses + Enterprises
+  3. Set Limits + active status switches on Branches, Warehouses, Users
+  4. Bulk "Use All"/"Del. All" toggle buttons per permission group — tested grant+revoke round-trip, buttons flip ✓/○ correctly
+  5. Loading states (permLoading spinners) on Use/Delegate switches and bulk buttons
+  6. All APIs 200: POST /api/permissions/grant, /api/permissions/revoke, branches/warehouses create-admin & reset-admin routes exist
+  7. Users at bottom of hierarchy: role 'user' under warehouse_admin, "Can create: Enterprise Admin, Branch Admin, Warehouse Admin, User" confirmed on Users page
+- lint passes (only page-size note)
