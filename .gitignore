@@ -73,3 +73,11 @@ server.log
 
 # env template ships in the repo
 !.env.example
+
+# sandbox infra + session files (never in the repo)
+/.zscripts/
+/Caddyfile
+/worklog.md
+/test-returns-flow.sh
+/check-att-entity.ts
+/dev.log
