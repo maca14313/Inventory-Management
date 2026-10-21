@@ -1,6 +1,6 @@
 /** next.config.mjs — plain JS on purpose (deployment-guide rule 4). */
 const basePath = process.env.BASE_PATH || ''
-export default {
+const nextConfig = {
   basePath,
   output: undefined, // NOT 'standalone' — Passenger runs app.js itself
   compress: true,
@@ -11,3 +11,4 @@ export default {
   },
   reactStrictMode: false,
 }
+export default nextConfig
