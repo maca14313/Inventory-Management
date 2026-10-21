@@ -28,7 +28,25 @@ function resolveDbFile(): string {
 
 export const DB_FILE = resolveDbFile()
 
+/**
+ * Build-phase DB no-op (deployment-guide §5.6).
+ * `next build` evaluates modules that import this file; on a machine without
+ * the database we must not touch the real DB file. During the build phase we
+ * open an in-memory scratch DB instead — `ping()` still works, but any real
+ * query fails with "no such table" (throws only if a query is actually
+ * executed). The build command passes NEXT_BUILD=true (guide §6).
+ */
+export const isBuildPhase =
+  process.env.NEXT_PHASE === 'phase-production-build' ||
+  process.env.NEXT_BUILD === 'true'
+
 function open(): Database.Database {
+  if (isBuildPhase) {
+    // In-memory scratch database — no file side effects during `next build`.
+    const scratch = new Database(':memory:')
+    scratch.pragma('foreign_keys = ON')
+    return scratch
+  }
   fs.mkdirSync(path.dirname(DB_FILE), { recursive: true })
   const conn = new Database(DB_FILE)
   conn.pragma('journal_mode = WAL')

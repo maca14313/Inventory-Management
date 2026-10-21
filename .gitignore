@@ -65,7 +65,8 @@ server.log
 /tests/
 
 # deployment artifacts
-/deploy/
+/deploy/*
+!/deploy/*.tar.gz
 /.deploy-stage/
 /db/*.db
 /db/*.db-wal
