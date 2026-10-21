@@ -27,7 +27,7 @@ import {
   MessageSquare, Send, Ban, ClipboardCheck,
   Paperclip, Download, Upload, Image as ImageIcon, File as FileIcon, FileImage,
   Table as TableIcon, Presentation, Video, Music, Archive, Code, Files, Tags,
-  ShieldCheck, KeyRound, SlidersHorizontal, UserCog,
+  ShieldCheck, KeyRound, SlidersHorizontal, UserCog, UserRound,
 } from 'lucide-react'
 import {
   BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -44,7 +44,7 @@ import {
 } from '@/lib/rbac'
 import { useAuthStore } from '@/lib/auth-store'
 import { apiFetch } from '@/lib/api'
-import { MEASUREMENTS } from '@/lib/db'
+import { MEASUREMENTS } from '@/lib/constants'
 
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH || ''
 const SORTED_MEASUREMENTS = [...MEASUREMENTS].sort((a, b) => a.localeCompare(b))
@@ -71,13 +71,13 @@ interface AuditEntry { id: number; userId: number | null; enterpriseId: number |
 interface Feature { id: number; enterpriseId: number; feature: string; enabled: boolean }
 interface Lot { id: number; lotNumber: string; productId: number; warehouseId: number; quantity: number; remainingQty: number; unit: string; costPerUnit: number; supplierName: string | null; source: string; sourceRef: string | null; notes: string | null; receivedDate: string; closedAt: string | null; status: string; createdAt: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
 interface StockInItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; costPerUnit: number; notes: string; createdAt: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
-interface StockInRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockInItem[]; createdAt: string }
+interface StockInRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; personUserId?: number | null; personUser?: { id: number; username: string; fullName: string; role: string } | null; notes: string; status: string; items: StockInItem[]; createdAt: string }
 interface StockOutItem { id: number; recorderId: number; productId: number; warehouseId: number; quantity: number; unit: string; isReturnable: boolean; returnDeadline: string | null; notes: string; createdAt?: string; updatedAt?: string; conditionId?: number | null; condition?: { id: number; name: string; description: string } | null }
-interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; items: StockOutItem[]; createdAt: string }
+interface StockOutRecorder { id: number; enterpriseId: number; warehouseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; personUserId?: number | null; personUser?: { id: number; username: string; fullName: string; role: string } | null; notes: string; status: string; items: StockOutItem[]; createdAt: string }
 interface ReturnRecord { id: number; stockOutItemId: number; returnRecorderId: number | null; quantity: number; unit: string; notes: string; returnedAt: string; createdAt: string }
-interface ReturnRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; returns?: (ReturnRecord & { stockOutItem?: { product: Product } })[] }
+interface ReturnRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; personUserId?: number | null; personUser?: { id: number; username: string; fullName: string; role: string } | null; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; returns?: (ReturnRecord & { stockOutItem?: { product: Product } })[] }
 interface NonReturnable { id: number; stockOutItemId: number; nonReturnableRecorderId: number | null; quantity: number; unit: string; reason: string; reasonDetail: string; notes: string; decidedAt: string; createdAt: string; stockOutItem?: { id: number; productId: number; warehouseId: number; quantity: number; unit: string; product?: Product } }
-interface NonReturnableRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; nonReturnables?: (NonReturnable & { stockOutItem?: { product: Product } })[] }
+interface NonReturnableRecorder { id: number; enterpriseId: number; recorderCode: string; personName: string; personPhone: string; personEmail: string; personAddress: string; personUserId?: number | null; personUser?: { id: number; username: string; fullName: string; role: string } | null; notes: string; status: string; itemCount: number; totalQty: number; createdAt: string; updatedAt: string; nonReturnables?: (NonReturnable & { stockOutItem?: { product: Product } })[] }
 interface ReturnableItem extends StockOutItem { returnedQty: number; remainingQty: number; nonReturnableQty: number; product: Product; recorder: StockOutRecorder; returns: ReturnRecord[]; nonReturnables?: NonReturnable[]; createdAt: string }
 
 // ─── Attachments ────────────────────────────────────────────
@@ -775,7 +775,7 @@ export default function IMSApp() {
   // mode='new'       → opened from the "New Group Return" button (empty person + item picker across ALL returnable items)
   const [groupReturnDlg, setGroupReturnDlg] = useState<{
     open: boolean; submitting: boolean; mode: 'prefilled' | 'new'; personKey: string;
-    personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string;
+    personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; personUserId?: number | null;
     warehouseId: number | null;
     items: { item: ReturnableItem; qty: number; selected: boolean }[];
     availableItems: ReturnableItem[]; itemSearch: string; loadingAvailable: boolean;
@@ -834,7 +834,7 @@ export default function IMSApp() {
   // mode='new'       → opened from the "New Group Non-Returnable" button (empty person + item picker)
   const [groupNonRetDlg, setGroupNonRetDlg] = useState<{
     open: boolean; submitting: boolean; mode: 'prefilled' | 'new'; personKey: string;
-    personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string;
+    personName: string; personPhone: string; personEmail: string; personAddress: string; notes: string; personUserId?: number | null;
     warehouseId: number | null;
     items: { item: ReturnableItem; qty: number; reason: string; reasonDetail: string; selected: boolean }[];
     availableItems: ReturnableItem[]; itemSearch: string; loadingAvailable: boolean;
@@ -1203,7 +1203,7 @@ export default function IMSApp() {
   // returnable stock-out items (both tabs) so the user can build a brand-new group return
   // combining items from different suppliers/persons/recorders.
   const openNewGroupReturnDlg = async () => {
-    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
+    setGroupReturnDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', personUserId: null, warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
     try {
       const h = { ...auth.getAuthHeaders() }
       const [flagged, notFlagged] = await Promise.all([
@@ -1242,6 +1242,7 @@ export default function IMSApp() {
         headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() },
         body: JSON.stringify({
           personName: groupReturnDlg.personName.trim(),
+          personUserId: groupReturnDlg.personUserId || null,
           personPhone: groupReturnDlg.personPhone,
           personEmail: groupReturnDlg.personEmail,
           personAddress: groupReturnDlg.personAddress,
@@ -1365,7 +1366,7 @@ export default function IMSApp() {
   }
   // ─── Non-Returnables: open a NEW group-non-returnable record from scratch (new mode) ──
   const openNewGroupNonRetDlg = async () => {
-    setGroupNonRetDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
+    setGroupNonRetDlg({ open: true, submitting: false, mode: 'new', personKey: '', personName: '', personPhone: '', personEmail: '', personAddress: '', notes: '', personUserId: null, warehouseId: null, items: [], availableItems: [], itemSearch: '', loadingAvailable: true, availPage: 1, itemsPage: 1, filterWarehouse: '', filterCategory: '', filterCondition: '', filterPerson: '', filterDateFrom: '', filterDateTo: '', filterProgress: '', filterFlagged: '', whComboOpen: false, whComboSearch: '', availableFlaggedIds: [] })
     try {
       // Fetch BOTH flagged (isReturnable=true) AND not-flagged (isReturnable=false) stock-out
       // items — mirrors openNewGroupReturnDlg exactly. Any stock-out item with remaining qty
@@ -1404,6 +1405,7 @@ export default function IMSApp() {
         headers: { 'Content-Type': 'application/json', ...auth.getAuthHeaders() },
         body: JSON.stringify({
           personName: groupNonRetDlg.personName.trim(),
+          personUserId: groupNonRetDlg.personUserId || null,
           personPhone: groupNonRetDlg.personPhone,
           personEmail: groupNonRetDlg.personEmail,
           personAddress: groupNonRetDlg.personAddress,
@@ -2701,7 +2703,7 @@ export default function IMSApp() {
               return (<Card key={r.id} className="shadow-sm"><CardContent className="p-2.5">
                 <div className="flex items-center justify-between cursor-pointer" onClick={() => { if (isExp) { setExpandedIn(null) } else { setExpandingInId(r.id); setTimeout(() => { setExpandedIn(r.id); setExpandingInId(null) }, 200) } }}>
                   <div className="flex items-center gap-1.5">{isExpanding ? <Loader2 className="w-3 h-3 animate-spin text-emerald-500" /> : <ChevronRight className={`w-3.5 h-3.5 text-emerald-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />}
-                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
+                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{r.personUser && <Badge className="bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400 border-0 text-[9px] gap-0.5 h-4 px-1.5" title={`Linked user: ${r.personUser.fullName} (@${r.personUser.username})`}><UserRound className="w-2.5 h-2.5" />{r.personUser.fullName}</Badge>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
                     {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
@@ -2951,7 +2953,7 @@ export default function IMSApp() {
               return (<Card key={r.id} className="shadow-sm"><CardContent className="p-2.5">
                 <div className="flex items-center justify-between cursor-pointer" onClick={() => { if (isExp) { setExpandedOut(null) } else { setExpandingOutId(r.id); setTimeout(() => { setExpandedOut(r.id); setExpandingOutId(null) }, 200) } }}>
                   <div className="flex items-center gap-1.5">{isExpanding ? <Loader2 className="w-3 h-3 animate-spin text-orange-500" /> : <ChevronRight className={`w-3.5 h-3.5 text-orange-500 transition-transform ${isExp ? 'rotate-90' : ''}`} />}
-                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
+                    <div className="flex items-center gap-1.5 flex-wrap">{!isExp && r.personName ? <span className="text-xs font-semibold">{r.personName}</span> : <span className="text-xs font-semibold">{r.recorderCode}</span>}{r.personUser && <Badge className="bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400 border-0 text-[9px] gap-0.5 h-4 px-1.5" title={`Linked user: ${r.personUser.fullName} (@${r.personUser.username})`}><UserRound className="w-2.5 h-2.5" />{r.personUser.fullName}</Badge>}{statusBadge(r.status)}<span className="text-[10px] text-muted-foreground">{totalItems} item{totalItems !== 1 ? 's' : ''}{pendingItems.length > 0 && ` (${pendingItems.length} pend.)`}</span></div>
                     {!isExp && r.personName && <span className="text-[10px] text-muted-foreground ml-0.5">{r.recorderCode}</span>}{isExp && r.personName && <span className="text-xs font-medium text-foreground/80 ml-1">{r.personName}</span>}</div>
                   <div className="flex items-center gap-1">
                     <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
@@ -3420,6 +3422,7 @@ export default function IMSApp() {
                           <span className="text-xs font-mono font-semibold">{r.recorderCode}</span>
                           <Badge className={`${r.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' : r.status === 'partial' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'} border-0 text-[9px] h-4`}>{r.status}</Badge>
                           {r.personName && <span className="text-xs font-medium">{r.personName}</span>}
+                          {r.personUser && <Badge className="bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400 border-0 text-[9px] gap-0.5 h-4 px-1.5" title={`Linked user: @${r.personUser.username}`}><UserRound className="w-2.5 h-2.5" />{r.personUser.fullName}</Badge>}
                           <span className="text-[10px] text-muted-foreground">{r.itemCount} item(s) · {r.totalQty} qty</span>
                         </div>
                         <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
@@ -3748,6 +3751,7 @@ export default function IMSApp() {
                           <span className="text-xs font-mono font-semibold">{r.recorderCode}</span>
                           <Badge className={`${r.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' : r.status === 'partial' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400' : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'} border-0 text-[9px] h-4`}>{r.status}</Badge>
                           {r.personName && <span className="text-xs font-medium">{r.personName}</span>}
+                          {r.personUser && <Badge className="bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400 border-0 text-[9px] gap-0.5 h-4 px-1.5" title={`Linked user: @${r.personUser.username}`}><UserRound className="w-2.5 h-2.5" />{r.personUser.fullName}</Badge>}
                           <span className="text-[10px] text-muted-foreground">{r.itemCount} item(s) · {r.totalQty} qty</span>
                         </div>
                         <span className="text-[10px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</span>
@@ -4284,6 +4288,7 @@ export default function IMSApp() {
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Users}>Person</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={UserRound}>For Whom (User)</IconLabel><PaginatedCombobox items={allUsers.filter(u=>u.isActive!==false).map(u=>({value:String(u.id),label:u.fullName,sublabel:`@${u.username} · ${(u.role||'').replace('_',' ')}`}))} value={dlgData.personUserId?String(dlgData.personUserId):''} onChange={v=>{const u=allUsers.find(x=>String(x.id)===v);setDlgData({...dlgData,personUserId:parseInt(v),personName:u?.fullName||dlgData.personName||'',personEmail:u?.email||dlgData.personEmail||'',personPhone:dlgData.personPhone||''})}} placeholder="Link a user (for whom)…" perPage={8} /><p className="text-[10px] text-muted-foreground">Selecting a user links this dispatch to them and fills their name/email.</p></div>
                   <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={dlgData.personName||''} onChange={e=>setDlgData({...dlgData,personName:e.target.value})} className="h-8 text-sm rounded-md" /></div>
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
@@ -4408,6 +4413,7 @@ export default function IMSApp() {
                 </div>
                 <div className="bg-muted/30 rounded-lg p-2.5 space-y-2">
                   <SectionHeader icon={Truck}>Supplier</SectionHeader>
+                  <div className="space-y-1"><IconLabel icon={UserRound}>From Whom (User)</IconLabel><PaginatedCombobox items={allUsers.filter(u=>u.isActive!==false).map(u=>({value:String(u.id),label:u.fullName,sublabel:`@${u.username} · ${(u.role||'').replace('_',' ')}`}))} value={dlgData.personUserId?String(dlgData.personUserId):''} onChange={v=>{const u=allUsers.find(x=>String(x.id)===v);setDlgData({...dlgData,personUserId:parseInt(v),personName:u?.fullName||dlgData.personName||'',personEmail:u?.email||dlgData.personEmail||'',personPhone:dlgData.personPhone||''})}} placeholder="Link a user (from whom)…" perPage={8} /><p className="text-[10px] text-muted-foreground">Selecting a user links this receipt to them and fills their name/email.</p></div>
                   <div className="space-y-1"><IconLabel icon={Users}>Supplier Name</IconLabel><Input value={dlgData.personName||''} onChange={e=>setDlgData({...dlgData,personName:e.target.value})} className="h-8 text-sm rounded-md" /></div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={dlgData.personPhone||''} onChange={e=>setDlgData({...dlgData,personPhone:e.target.value})} className="h-8 text-sm rounded-md" /></div>
@@ -4443,6 +4449,9 @@ export default function IMSApp() {
                 if (dlgType==='product') { if(!sd.enterpriseId) sd.enterpriseId=eid; if(!sd.categoryId||sd.categoryId===0) sd.categoryId=null }
                 if (dlgType==='branch'&&!sd.enterpriseId) sd.enterpriseId=eid
                 if (dlgType==='warehouse'&&!sd.enterpriseId) sd.enterpriseId=eid
+                // Derive enterpriseId from the selected warehouse when missing
+                // (e.g. super_admin has no enterprise scope of their own).
+                if ((dlgType==='stockOut'||dlgType==='stockInRecorder'||dlgType==='stockOutItem')&&!sd.enterpriseId&&sd.warehouseId){const wh=warehouses.find(w=>w.id===sd.warehouseId);if(wh)sd.enterpriseId=wh.enterpriseId}
                 if (dlgType==='stockOut'&&!sd.enterpriseId) sd.enterpriseId=eid
                 if (dlgType==='stockInRecorder'&&!sd.enterpriseId) sd.enterpriseId=eid
                 if (dlgType==='category'&&!sd.enterpriseId) sd.enterpriseId=eid
@@ -4673,7 +4682,7 @@ export default function IMSApp() {
                   <SectionHeader icon={ArrowUpFromLine}>From Stock-Out Recorder</SectionHeader>
                   <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-semibold">{rec.recorderCode}</span>{statusBadge(rec.status)}<span className="text-[11px] text-muted-foreground">{new Date(rec.createdAt).toLocaleString()}</span></div>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
-                    {rec.personName && <span className="flex items-center gap-0.5"><Users className="w-2.5 h-2.5 text-muted-foreground" />{rec.personName}</span>}
+                    {rec.personName && <span className="flex items-center gap-0.5"><Users className="w-2.5 h-2.5 text-muted-foreground" />{rec.personName}</span>}{rec.personUser && <Badge className="bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400 border-0 text-[9px] gap-0.5 h-4 px-1.5" title={`Linked user: @${rec.personUser.username}`}><UserRound className="w-2.5 h-2.5" />{rec.personUser.fullName}</Badge>}
                     {rec.personPhone && <span className="flex items-center gap-0.5"><Phone className="w-2.5 h-2.5 text-muted-foreground" />{rec.personPhone}</span>}
                     {rec.personEmail && <span className="flex items-center gap-0.5"><Mail className="w-2.5 h-2.5 text-muted-foreground" />{rec.personEmail}</span>}
                     {rec.personAddress && <span className="flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5 text-muted-foreground" />{rec.personAddress}</span>}
@@ -4746,6 +4755,7 @@ export default function IMSApp() {
               {/* ── Supplier / Person header (editable, mirrors Stock-In recorder) ── */}
               <div className="bg-violet-50/60 dark:bg-violet-500/5 rounded-lg p-2.5 space-y-2 border border-violet-100 dark:border-violet-500/20">
                 <SectionHeader icon={Truck}>Supplier / Person (returning party)</SectionHeader>
+                <div className="space-y-1"><IconLabel icon={UserRound}>Returned By (User)</IconLabel><PaginatedCombobox items={allUsers.filter(u=>u.isActive!==false).map(u=>({value:String(u.id),label:u.fullName,sublabel:`@${u.username} · ${(u.role||'').replace('_',' ')}`}))} value={groupReturnDlg.personUserId?String(groupReturnDlg.personUserId):''} onChange={v=>{const u=allUsers.find(x=>String(x.id)===v);setGroupReturnDlg(s=>({...s,personUserId:parseInt(v),personName:u?.fullName||s.personName,personEmail:u?.email||s.personEmail}))}} placeholder="Link a user (returned by)…" perPage={8} /><p className="text-[10px] text-muted-foreground">Selecting a user links this return record to them and fills their name/email.</p></div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={groupReturnDlg.personName} onChange={e => setGroupReturnDlg(s => ({ ...s, personName: e.target.value }))} placeholder="Enter name..." className="h-8 text-sm rounded-md" /></div>
                   <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={groupReturnDlg.personPhone} onChange={e => setGroupReturnDlg(s => ({ ...s, personPhone: e.target.value }))} className="h-8 text-sm rounded-md" /></div>
@@ -5085,6 +5095,7 @@ export default function IMSApp() {
               {/* ── Person header (editable) ── */}
               <div className="bg-rose-50/60 dark:bg-rose-500/5 rounded-lg p-2.5 space-y-2 border border-rose-100 dark:border-rose-500/20">
                 <SectionHeader icon={Truck}>Inspector / Party (making the decision)</SectionHeader>
+                <div className="space-y-1"><IconLabel icon={UserRound}>Decided By (User)</IconLabel><PaginatedCombobox items={allUsers.filter(u=>u.isActive!==false).map(u=>({value:String(u.id),label:u.fullName,sublabel:`@${u.username} · ${(u.role||'').replace('_',' ')}`}))} value={groupNonRetDlg.personUserId?String(groupNonRetDlg.personUserId):''} onChange={v=>{const u=allUsers.find(x=>String(x.id)===v);setGroupNonRetDlg(s=>({...s,personUserId:parseInt(v),personName:u?.fullName||s.personName,personEmail:u?.email||s.personEmail}))}} placeholder="Link a user (decided by)…" perPage={8} /><p className="text-[10px] text-muted-foreground">Selecting a user links this decision record to them and fills their name/email.</p></div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="space-y-1"><IconLabel icon={Users}>Person Name</IconLabel><Input value={groupNonRetDlg.personName} onChange={e => setGroupNonRetDlg(s => ({ ...s, personName: e.target.value }))} placeholder="Enter name..." className="h-8 text-sm rounded-md" /></div>
                   <div className="space-y-1"><IconLabel icon={Phone}>Phone</IconLabel><Input value={groupNonRetDlg.personPhone} onChange={e => setGroupNonRetDlg(s => ({ ...s, personPhone: e.target.value }))} className="h-8 text-sm rounded-md" /></div>

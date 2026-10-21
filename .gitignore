@@ -63,3 +63,10 @@ server.log
 /upload/
 /agent-ctx/
 /tests/
+
+# deployment artifacts
+/deploy/
+/.deploy-stage/
+/db/*.db
+/db/*.db-wal
+/db/*.db-shm

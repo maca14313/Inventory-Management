@@ -20,7 +20,6 @@
  */
 
 import { prisma } from './prisma'
-import { Prisma } from '@prisma/client'
 import {
   type AuthContext, canAccessEnterprise,
 } from './db'
@@ -128,8 +127,8 @@ function ser(row: unknown): unknown {
 }
 
 /** Build tenant-scoped where for attachments (enterprise + branch + warehouse hierarchy). */
-function attachmentWhere(ctx: AuthContext, f: AttachmentFilters = {}): Prisma.AttachmentWhereInput {
-  const w: Prisma.AttachmentWhereInput = {}
+function attachmentWhere(ctx: AuthContext, f: AttachmentFilters = {}): any {
+  const w: any = {}
   if (ctx.role === 'super_admin') {
     // sees everything; optional explicit filters apply below
   } else if (ctx.role === 'enterprise_admin') {
@@ -158,7 +157,7 @@ function attachmentWhere(ctx: AuthContext, f: AttachmentFilters = {}): Prisma.At
   // Free-text search across title / fileName / description
   if (f.search) {
     const q = f.search.toLowerCase()
-    const searchClause: Prisma.AttachmentWhereInput[] = [
+    const searchClause: any[] = [
       { title: { contains: q } },
       { fileName: { contains: q } },
       { description: { contains: q } },
@@ -190,7 +189,7 @@ function attachmentWhere(ctx: AuthContext, f: AttachmentFilters = {}): Prisma.At
   }
 
   if (f.dateFrom || f.dateTo) {
-    const created: Prisma.DateTimeFilter = {}
+    const created: any = {}
     if (f.dateFrom) created.gte = new Date(f.dateFrom + 'T00:00:00')
     if (f.dateTo) created.lte = new Date(f.dateTo + 'T23:59:59')
     w.createdAt = created

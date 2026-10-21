@@ -25,7 +25,6 @@
  */
 
 import { prisma } from './prisma'
-import { Prisma } from '@prisma/client'
 
 // ─── Core Types ─────────────────────────────────────────────
 
@@ -122,6 +121,8 @@ export interface OrderItem {
 export interface StockInRecorder {
   id: number; enterpriseId: number; warehouseId: number; recorderCode: string
   personName: string; personPhone: string; personEmail: string; personAddress: string
+  personUserId?: number | null
+  personUser?: { id: number; username: string; fullName: string; role: string } | null
   notes: string; status: 'pending' | 'submitted'
   createdAt: string; updatedAt: string
 }
@@ -137,6 +138,8 @@ export interface StockInItem {
 export interface StockOutRecorder {
   id: number; enterpriseId: number; warehouseId: number; recorderCode: string
   personName: string; personPhone: string; personEmail: string; personAddress: string
+  personUserId?: number | null
+  personUser?: { id: number; username: string; fullName: string; role: string } | null
   notes: string; status: 'pending' | 'partial_return' | 'returned'
   createdAt: string; updatedAt: string
 }
@@ -158,6 +161,8 @@ export interface ReturnRecord {
 export interface ReturnRecorder {
   id: number; enterpriseId: number; recorderCode: string
   personName: string; personPhone: string; personEmail: string; personAddress: string
+  personUserId?: number | null
+  personUser?: { id: number; username: string; fullName: string; role: string } | null
   notes: string; status: string; itemCount: number; totalQty: number
   createdAt: string; updatedAt: string
   returns?: ReturnRecord[]
@@ -173,6 +178,8 @@ export interface NonReturnable {
 export interface NonReturnableRecorder {
   id: number; enterpriseId: number; recorderCode: string
   personName: string; personPhone: string; personEmail: string; personAddress: string
+  personUserId?: number | null
+  personUser?: { id: number; username: string; fullName: string; role: string } | null
   notes: string; status: string; itemCount: number; totalQty: number
   createdAt: string; updatedAt: string
   nonReturnables?: (NonReturnable & { stockOutItem?: { product: Product } })[]
@@ -226,7 +233,7 @@ export type Measurement = typeof MEASUREMENTS[number]
 
 // ─── Tenant Scoping Helpers ────────────────────────────────
 
-type Tx = Prisma.TransactionClient | typeof prisma
+type Tx = typeof prisma
 
 function canAccessEnterprise(ctx: AuthContext, eid: number | null): boolean {
   if (eid === null) return false
@@ -262,7 +269,7 @@ function canManageUser(ctx: AuthContext, target: { role: string; enterpriseId: n
 }
 
 /** Build Prisma where for enterprises */
-function enterpriseWhere(ctx: AuthContext, eid?: number): Prisma.EnterpriseWhereInput {
+function enterpriseWhere(ctx: AuthContext, eid?: number): any {
   if (eid) return { id: eid }
   if (ctx.role === 'super_admin') return {}
   if (!ctx.enterpriseId) return { id: -1 }
@@ -270,8 +277,8 @@ function enterpriseWhere(ctx: AuthContext, eid?: number): Prisma.EnterpriseWhere
 }
 
 /** Build Prisma where for branches */
-function branchWhere(ctx: AuthContext, eid?: number, bid?: number): Prisma.BranchWhereInput {
-  const w: Prisma.BranchWhereInput = {}
+function branchWhere(ctx: AuthContext, eid?: number, bid?: number): any {
+  const w: any = {}
   if (eid) w.enterpriseId = eid
   if (bid) w.id = bid
   if (ctx.role === 'super_admin') return w
@@ -287,8 +294,8 @@ function branchWhere(ctx: AuthContext, eid?: number, bid?: number): Prisma.Branc
 }
 
 /** Build Prisma where for warehouses */
-function warehouseWhere(ctx: AuthContext, eid?: number, bid?: number): Prisma.WarehouseWhereInput {
-  const w: Prisma.WarehouseWhereInput = {}
+function warehouseWhere(ctx: AuthContext, eid?: number, bid?: number): any {
+  const w: any = {}
   if (eid) w.enterpriseId = eid
   if (bid) w.branchId = bid
   if (ctx.role === 'super_admin') return w
@@ -309,8 +316,8 @@ function warehouseWhere(ctx: AuthContext, eid?: number, bid?: number): Prisma.Wa
 }
 
 /** Build Prisma where for users */
-function userWhere(ctx: AuthContext, eid?: number, bid?: number): Prisma.UserWhereInput {
-  const w: Prisma.UserWhereInput = {}
+function userWhere(ctx: AuthContext, eid?: number, bid?: number): any {
+  const w: any = {}
   if (eid) w.enterpriseId = eid
   if (bid) w.branchId = bid
   if (ctx.role === 'super_admin') return w
@@ -975,7 +982,7 @@ export const db = {
   // ── Categories ──────────────────────────────────────────
   categories: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Category[]> => {
-      const where: Prisma.CategoryWhereInput = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
+      const where: any = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
       const rows = await prisma.category.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Category[]
     },
@@ -1052,7 +1059,7 @@ export const db = {
   // ── Conditions ──────────────────────────────────────────
   conditions: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Condition[]> => {
-      const where: Prisma.ConditionWhereInput = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
+      const where: any = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
       const rows = await prisma.condition.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Condition[]
     },
@@ -1129,7 +1136,7 @@ export const db = {
   // ── Suppliers ───────────────────────────────────────────
   suppliers: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Supplier[]> => {
-      const where: Prisma.SupplierWhereInput = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
+      const where: any = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
       const rows = await prisma.supplier.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Supplier[]
     },
@@ -1212,7 +1219,7 @@ export const db = {
   // ── Products ────────────────────────────────────────────
   products: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Product[]> => {
-      const where: Prisma.ProductWhereInput = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
+      const where: any = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
       const rows = await prisma.product.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Product[]
     },
@@ -1459,7 +1466,7 @@ export const db = {
     findMany: async (ctx: AuthContext, filters?: { productId?: number; warehouseId?: number; openOnly?: boolean }): Promise<Lot[]> => {
       const whIds = await getAccessibleWarehouseIds(ctx)
       if (whIds.length === 0) return []
-      const where: Prisma.LotWhereInput = { warehouseId: { in: whIds } }
+      const where: any = { warehouseId: { in: whIds } }
       if (filters?.productId) where.productId = filters.productId
       if (filters?.warehouseId) where.warehouseId = filters.warehouseId
       if (filters?.openOnly) {
@@ -1477,20 +1484,20 @@ export const db = {
     findMany: async (ctx: AuthContext, eid?: number, wid?: number): Promise<StockInRecorder[]> => {
       const whIds = await getAccessibleWarehouseIds(ctx)
       if (whIds.length === 0) return []
-      const where: Prisma.StockInRecorderWhereInput = { warehouseId: { in: whIds } }
+      const where: any = { warehouseId: { in: whIds } }
       if (eid) where.enterpriseId = eid
       if (wid) where.warehouseId = wid
       const rows = await prisma.stockInRecorder.findMany({
         where,
         orderBy: { id: 'desc' },
-        include: { items: { include: { condition: true } } },
+        include: { items: { include: { condition: true } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
       })
       return ser(rows) as StockInRecorder[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<StockInRecorder | null> => {
       const r = await prisma.stockInRecorder.findUnique({
         where: { id },
-        include: { items: { include: { condition: true } } },
+        include: { items: { include: { condition: true } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
       })
       if (!r) return null
       if (!canAccessWarehouse(ctx, r.enterpriseId, null, r.warehouseId) && ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) return null
@@ -1512,6 +1519,7 @@ export const db = {
             personPhone: d.personPhone || '',
             personEmail: d.personEmail || '',
             personAddress: d.personAddress || '',
+            personUserId: (d as any).personUserId ?? null,
             notes: d.notes || '',
             status: (d.status as 'pending' | 'submitted') || 'pending',
           },
@@ -1539,6 +1547,7 @@ export const db = {
             ...(d.personPhone !== undefined ? { personPhone: d.personPhone } : {}),
             ...(d.personEmail !== undefined ? { personEmail: d.personEmail } : {}),
             ...(d.personAddress !== undefined ? { personAddress: d.personAddress } : {}),
+            ...((d as any).personUserId !== undefined ? { personUserId: (d as any).personUserId } : {}),
             ...(d.notes !== undefined ? { notes: d.notes } : {}),
             ...(d.status !== undefined ? { status: d.status } : {}),
           },
@@ -1684,20 +1693,20 @@ export const db = {
     findMany: async (ctx: AuthContext, eid?: number, wid?: number): Promise<StockOutRecorder[]> => {
       const whIds = await getAccessibleWarehouseIds(ctx)
       if (whIds.length === 0) return []
-      const where: Prisma.StockOutRecorderWhereInput = { warehouseId: { in: whIds } }
+      const where: any = { warehouseId: { in: whIds } }
       if (eid) where.enterpriseId = eid
       if (wid) where.warehouseId = wid
       const rows = await prisma.stockOutRecorder.findMany({
         where,
         orderBy: { id: 'desc' },
-        include: { items: { include: { condition: true } } },
+        include: { items: { include: { condition: true } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
       })
       return ser(rows) as StockOutRecorder[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<StockOutRecorder | null> => {
       const r = await prisma.stockOutRecorder.findUnique({
         where: { id },
-        include: { items: { include: { condition: true } } },
+        include: { items: { include: { condition: true } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
       })
       if (!r) return null
       if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) return null
@@ -1719,6 +1728,7 @@ export const db = {
             personPhone: d.personPhone || '',
             personEmail: d.personEmail || '',
             personAddress: d.personAddress || '',
+            personUserId: (d as any).personUserId ?? null,
             notes: d.notes || '',
             status: (d.status as 'pending' | 'partial_return' | 'returned') || 'pending',
           },
@@ -1746,6 +1756,7 @@ export const db = {
             ...(d.personPhone !== undefined ? { personPhone: d.personPhone } : {}),
             ...(d.personEmail !== undefined ? { personEmail: d.personEmail } : {}),
             ...(d.personAddress !== undefined ? { personAddress: d.personAddress } : {}),
+            ...((d as any).personUserId !== undefined ? { personUserId: (d as any).personUserId } : {}),
             ...(d.notes !== undefined ? { notes: d.notes } : {}),
             ...(d.status !== undefined ? { status: d.status } : {}),
           },
@@ -1937,7 +1948,7 @@ export const db = {
   // ── Orders ──────────────────────────────────────────────
   orders: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Order[]> => {
-      const where: Prisma.OrderWhereInput = {}
+      const where: any = {}
       if (eid) where.enterpriseId = eid
       if (ctx.role === 'super_admin') {
         // all
@@ -2040,7 +2051,7 @@ export const db = {
   // ── Audit ───────────────────────────────────────────────
   audit: {
     findMany: async (ctx: AuthContext, limit = 100): Promise<AuditLog[]> => {
-      const where: Prisma.AuditLogWhereInput = {}
+      const where: any = {}
       if (ctx.role !== 'super_admin') {
         if (!ctx.enterpriseId) return []
         where.enterpriseId = ctx.enterpriseId
@@ -2071,7 +2082,7 @@ export const db = {
   // ── Features ────────────────────────────────────────────
   features: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Feature[]> => {
-      const where: Prisma.FeatureWhereInput = {}
+      const where: any = {}
       if (eid) where.enterpriseId = eid
       else if (ctx.role !== 'super_admin') {
         if (!ctx.enterpriseId) return []
@@ -2201,7 +2212,7 @@ export const db = {
         .slice(0, 5)
 
       // Recent activity (last 10 audit logs with userName)
-      const where: Prisma.AuditLogWhereInput = {}
+      const where: any = {}
       if (ctx.role !== 'super_admin') {
         if (!ctx.enterpriseId) return { stockByWarehouse, stockByCategory, topProducts, recentActivity: [] }
         where.enterpriseId = ctx.enterpriseId
@@ -2237,7 +2248,7 @@ export const db = {
     ): Promise<ReturnableItem[]> => {
       const whIds = await getAccessibleWarehouseIds(ctx)
       if (whIds.length === 0) return []
-      const where: Prisma.StockOutItemWhereInput = {
+      const where: any = {
         warehouseId: { in: whIds },
         isReturnable: opts.tab === 'flagged',
       }
@@ -2495,6 +2506,7 @@ export const db = {
           data: {
             enterpriseId,
             recorderCode,
+            personUserId: (opts as any).personUserId ?? null,
             personName: opts.personName || '',
             personPhone: opts.personPhone || '',
             personEmail: opts.personEmail || '',
@@ -2549,17 +2561,18 @@ export const db = {
 
     /** List all ReturnRecorder records for the user's accessible enterprise (newest first). */
     findRecorders: async (ctx: AuthContext): Promise<ReturnRecorder[]> => {
-      const where: Prisma.ReturnRecorderWhereInput = {}
+      const where: any = {}
       if (ctx.role !== 'super_admin' && ctx.enterpriseId) where.enterpriseId = ctx.enterpriseId
       const rows = await prisma.returnRecorder.findMany({
         where,
-        include: { returns: { include: { stockOutItem: { include: { product: true, condition: true } } } } },
+        include: { returns: { include: { stockOutItem: { include: { product: true, condition: true } } } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
         orderBy: { id: 'desc' },
       })
       return rows.map(r => ({
         id: r.id, enterpriseId: r.enterpriseId, recorderCode: r.recorderCode,
         personName: r.personName, personPhone: r.personPhone, personEmail: r.personEmail,
-        personAddress: r.personAddress, notes: r.notes, status: r.status,
+        personAddress: r.personAddress, personUserId: (r as any).personUserId ?? null, personUser: (r as any).personUser ?? null,
+        notes: r.notes, status: r.status,
         itemCount: r.itemCount, totalQty: r.totalQty,
         createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
         returns: r.returns.map(rt => ({
@@ -2684,6 +2697,7 @@ export const db = {
           data: {
             enterpriseId,
             recorderCode,
+            personUserId: (opts as any).personUserId ?? null,
             personName: opts.personName || '',
             personPhone: opts.personPhone || '',
             personEmail: opts.personEmail || '',
@@ -2738,17 +2752,18 @@ export const db = {
 
     /** List all NonReturnableRecorder records for the user's accessible enterprise (newest first). */
     findRecorders: async (ctx: AuthContext): Promise<NonReturnableRecorder[]> => {
-      const where: Prisma.NonReturnableRecorderWhereInput = {}
+      const where: any = {}
       if (ctx.role !== 'super_admin' && ctx.enterpriseId) where.enterpriseId = ctx.enterpriseId
       const rows = await prisma.nonReturnableRecorder.findMany({
         where,
-        include: { nonReturnables: { include: { stockOutItem: { include: { product: true, condition: true } } } } },
+        include: { nonReturnables: { include: { stockOutItem: { include: { product: true, condition: true } } } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
         orderBy: { id: 'desc' },
       })
       return rows.map(r => ({
         id: r.id, enterpriseId: r.enterpriseId, recorderCode: r.recorderCode,
         personName: r.personName, personPhone: r.personPhone, personEmail: r.personEmail,
-        personAddress: r.personAddress, notes: r.notes, status: r.status,
+        personAddress: r.personAddress, personUserId: (r as any).personUserId ?? null, personUser: (r as any).personUser ?? null,
+        notes: r.notes, status: r.status,
         itemCount: r.itemCount, totalQty: r.totalQty,
         createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString(),
         nonReturnables: r.nonReturnables.map(nr => ({

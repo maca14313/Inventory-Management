@@ -32,6 +32,7 @@ export async function POST(req: Request) {
       personPhone: body.personPhone || '',
       personEmail: body.personEmail || '',
       personAddress: body.personAddress || '',
+      personUserId: body.personUserId ? parseInt(body.personUserId, 10) : (body.personUserId === 0 ? null : undefined),
       notes: body.notes || '',
       items,
     })

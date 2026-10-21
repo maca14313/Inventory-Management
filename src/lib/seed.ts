@@ -1,28 +1,17 @@
 /**
- * Multi-Tenant Enterprise IMS — Database Seed
+ * Demo data seeder — plain SQLite (no Prisma).
  *
- * Creates demo data per SESSION_HANDOFF.md section 7:
- *   - 3 enterprises (Acme, Beta, Gamma)
- *   - 5 branches (2 + 2 + 1)
- *   - 6 warehouses distributed across branches
- *   - 11 users (super_admin + 3 enterprise_admin + 5 branch_admin + 2 warehouse_admin)
- *     ALL password = admin123 (bcrypt hashed)
- *   - 5 categories per enterprise (Electronics, Furniture, Office Supplies, Food & Beverage, Raw Materials)
- *   - 5 suppliers per enterprise
- *   - 7 products with stock
- *   - 2 StockInRecorders (each with 2-3 items → uses db.stockIn.addItem so Lots get created)
- *   - 2 StockOutRecorders (each with 2-3 items → uses db.stockOut.addItem so FIFO deduction happens)
- *   - 3 orders (mixed purchase/sales, various statuses)
- *   - 5 features per enterprise
- *
- * Run: `bun prisma/seed.ts`
+ * Ported from prisma/seed.ts; uses the Prisma-compatible SQLite shim and the
+ * domain layer so Lots/FIFO/stock behave identically. Runs automatically at
+ * app startup (src/instrumentation.ts) ONLY when the User table is empty —
+ * i.e. first deploy / fresh database (deployment-guide §12 first-run setup).
+ * Manual run: `node scripts/seed.js`.
  */
 
-import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
-import { db, registerItem, type AuthContext } from '../src/lib/db'
-
-const prisma = new PrismaClient()
+import { prisma } from './prisma'
+import { db, registerItem, type AuthContext } from './db'
+import { seedAllExistingUsers } from './permissions'
 
 const SUPER_CTX: AuthContext = {
   userId: 1,
@@ -32,31 +21,14 @@ const SUPER_CTX: AuthContext = {
   warehouseId: null,
 }
 
-async function main() {
-  console.log('🌱 Seeding IMS database…')
+export async function seedDemoData(): Promise<void> {
+  console.log('[seed] Seeding IMS database…')
 
   // ─── Wipe existing data ────────────────────────────────
-  console.log('  - Wiping existing data…')
-  await prisma.auditLog.deleteMany()
-  await prisma.stockOutItem.deleteMany()
-  await prisma.stockOutRecorder.deleteMany()
-  await prisma.stockInItem.deleteMany()
-  await prisma.stockInRecorder.deleteMany()
-  await prisma.lot.deleteMany()
-  await prisma.orderItem.deleteMany()
-  await prisma.order.deleteMany()
-  await prisma.stock.deleteMany()
-  await prisma.product.deleteMany()
-  await prisma.supplier.deleteMany()
-  await prisma.category.deleteMany()
-  await prisma.user.deleteMany()
-  await prisma.warehouse.deleteMany()
-  await prisma.branch.deleteMany()
-  await prisma.feature.deleteMany()
-  await prisma.enterprise.deleteMany()
+  const wipe = sqlite_wipe()
+  void wipe
 
   // ─── Enterprises ───────────────────────────────────────
-  console.log('  - Creating 3 enterprises…')
   const acme = await prisma.enterprise.create({
     data: {
       name: 'Acme Corp', code: 'ACME',
@@ -83,7 +55,6 @@ async function main() {
   })
 
   // ─── Branches ──────────────────────────────────────────
-  console.log('  - Creating 5 branches…')
   const acmeHQ = await prisma.branch.create({
     data: { enterpriseId: acme.id, name: 'Acme HQ', code: 'ACME-HQ', location: 'New York, NY', managerName: 'Alice Johnson', managerEmail: 'alice@acme.com', isActive: true },
   })
@@ -101,7 +72,6 @@ async function main() {
   })
 
   // ─── Warehouses ────────────────────────────────────────
-  console.log('  - Creating 6 warehouses…')
   const acmeHQWh1 = await prisma.warehouse.create({
     data: { enterpriseId: acme.id, branchId: acmeHQ.id, name: 'Acme HQ Main WH', code: 'ACME-HQ-W1', location: 'NYC Industrial Park', capacity: 10000, managerName: 'Frank Green', isActive: true },
   })
@@ -120,51 +90,56 @@ async function main() {
   const betaSouthWh = await prisma.warehouse.create({
     data: { enterpriseId: beta.id, branchId: betaSouth.id, name: 'Beta South WH', code: 'BETA-S-W1', location: 'Houston Industrial', capacity: 9000, managerName: 'Ivy Wang', isActive: true },
   })
+  const gammaWh = await prisma.warehouse.create({
+    data: { enterpriseId: gamma.id, branchId: gammaCentral.id, name: 'Gamma Central WH', code: 'GAMM-C-W1', location: 'LA Industrial', capacity: 11000, managerName: 'Eve Park', isActive: true },
+  })
 
-  // ─── Users (11 total, all password = admin123) ─────────
-  console.log('  - Creating 11 users (password: admin123)…')
+  // ─── Users (12 total, all password = admin123) ─────────
   const passwordHash = await bcrypt.hash('admin123', 10)
   const superadmin = await prisma.user.create({
     data: { username: 'superadmin', email: 'super@ims.com', fullName: 'Super Administrator', role: 'super_admin', isActive: true, passwordHash, enterpriseId: null, branchId: null, warehouseId: null },
   })
-  // IMPORTANT: SUPER_CTX.userId must equal superadmin.id
   SUPER_CTX.userId = superadmin.id
 
-  const acmeAdmin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'acme_admin', email: 'admin@acme.com', fullName: 'Acme Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash, enterpriseId: acme.id, branchId: null, warehouseId: null },
   })
-  const betaAdmin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'beta_admin', email: 'admin@beta.com', fullName: 'Beta Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash, enterpriseId: beta.id, branchId: null, warehouseId: null },
   })
-  const gammaAdmin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'gamma_admin', email: 'admin@gamma.com', fullName: 'Gamma Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash, enterpriseId: gamma.id, branchId: null, warehouseId: null },
   })
 
-  const acmeHQAdmin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'acme_hq_admin', email: 'alice@acme.com', fullName: 'Alice Johnson (HQ)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: acme.id, branchId: acmeHQ.id, warehouseId: null },
   })
-  const acmeNorthAdmin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'acme_north_admin', email: 'bob@acme.com', fullName: 'Bob Smith (North)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: acme.id, branchId: acmeNorth.id, warehouseId: null },
   })
-  const betaMainAdmin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'beta_main_admin', email: 'carol@beta.com', fullName: 'Carol Lee (Main)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: beta.id, branchId: betaMain.id, warehouseId: null },
   })
-  const betaSouthAdmin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'beta_south_admin', email: 'dave@beta.com', fullName: 'Dave Kim (South)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: beta.id, branchId: betaSouth.id, warehouseId: null },
   })
-  const gammaCentralAdmin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'gamma_central_admin', email: 'eve@gamma.com', fullName: 'Eve Park (Central)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: gamma.id, branchId: gammaCentral.id, warehouseId: null },
   })
 
-  const acmeWh1Admin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'acme_wh1_admin', email: 'frank@acme.com', fullName: 'Frank Green (Acme WH1)', role: 'warehouse_admin', isActive: true, passwordHash, enterpriseId: acme.id, branchId: acmeHQ.id, warehouseId: acmeHQWh1.id },
   })
-  const betaWh1Admin = await prisma.user.create({
+  await prisma.user.create({
     data: { username: 'beta_wh1_admin', email: 'henry@beta.com', fullName: 'Henry Clark (Beta WH1)', role: 'warehouse_admin', isActive: true, passwordHash, enterpriseId: beta.id, branchId: betaMain.id, warehouseId: betaMainWh1.id },
   })
 
+  // Employee (bottom of hierarchy — lives inside a warehouse)
+  const wh1Employee = await prisma.user.create({
+    data: { username: 'acme_wh1_user', email: 'employee@acme.com', fullName: 'Warehouse Employee', role: 'user', isActive: true, passwordHash, enterpriseId: acme.id, branchId: acmeHQ.id, warehouseId: acmeHQWh1.id },
+  })
+
   // ─── Categories (5 per enterprise) ─────────────────────
-  console.log('  - Creating categories (5 per enterprise)…')
   const catNames = ['Electronics', 'Furniture', 'Office Supplies', 'Food & Beverage', 'Raw Materials']
   const catMap = new Map<string, number>()
   for (const ent of [acme, beta, gamma]) {
@@ -172,12 +147,11 @@ async function main() {
       const c = await prisma.category.create({
         data: { enterpriseId: ent.id, name: cn, description: `${cn} for ${ent.name}` },
       })
-      catMap.set(`${ent.id}-${cn}`, c.id)
+      catMap.set(`${ent.id}-${cn}`, (c as { id: number }).id)
     }
   }
 
   // ─── Suppliers (5 per enterprise) ──────────────────────
-  console.log('  - Creating suppliers (5 per enterprise)…')
   const supplierNames = ['TechCorp Supplies', 'Global Materials', 'Premier Logistics', 'Quality Vendors', 'Fast Distributors']
   const supplierMap = new Map<string, number>()
   for (const ent of [acme, beta, gamma]) {
@@ -192,13 +166,11 @@ async function main() {
           address: `${1000 + i} Commerce St`,
         },
       })
-      supplierMap.set(`${ent.id}-${i}`, s.id)
+      supplierMap.set(`${ent.id}-${i}`, (s as { id: number }).id)
     }
   }
 
-  // ─── Products (7 total — uses db.registerItem so Lots get created) ─
-  console.log('  - Creating 7 products via db.registerItem (with Lots)…')
-  // Acme products (5)
+  // ─── Products (7 total — via db.registerItem so Lots get created) ─
   const acmeProducts = [
     { name: 'Laptop Pro 15"', sku: 'ACME-ELEC-001', categoryId: catMap.get(`${acme.id}-Electronics`)!, price: 1299.99, cost: 850, unit: 'piece', reorderLevel: 10, qty: 25, warehouseId: acmeHQWh1.id },
     { name: 'Wireless Keyboard', sku: 'ACME-ELEC-002', categoryId: catMap.get(`${acme.id}-Electronics`)!, price: 79.99, cost: 25, unit: 'piece', reorderLevel: 50, qty: 150, warehouseId: acmeHQWh1.id },
@@ -206,11 +178,9 @@ async function main() {
     { name: 'Network Switch 24-port', sku: 'ACME-ELEC-003', categoryId: catMap.get(`${acme.id}-Electronics`)!, price: 299.99, cost: 140, unit: 'piece', reorderLevel: 3, qty: 2, warehouseId: acmeHQWh1.id },
     { name: 'Steel Shelving Unit', sku: 'ACME-FURN-002', categoryId: catMap.get(`${acme.id}-Furniture`)!, price: 189.99, cost: 80, unit: 'piece', reorderLevel: 5, qty: 12, warehouseId: acmeHQWh2.id },
   ]
-  // Beta products (1)
   const betaProducts = [
     { name: 'Cloud License Pro', sku: 'BETA-SW-001', categoryId: catMap.get(`${beta.id}-Office Supplies`)!, price: 599.99, cost: 200, unit: 'piece', reorderLevel: 0, qty: 50, warehouseId: betaMainWh1.id },
   ]
-  // Gamma product (1) — Gamma has only one branch but no warehouse yet; create one below.
 
   for (const p of acmeProducts) {
     await registerItem(SUPER_CTX, {
@@ -240,11 +210,6 @@ async function main() {
       notes: 'Initial stock from registration',
     })
   }
-  // Gamma — find a warehouse for it (Gamma has only one branch — gammaCentral — but no warehouse
-  // was created above. Create one quickly so the product has somewhere to live.)
-  const gammaWh = await prisma.warehouse.create({
-    data: { enterpriseId: gamma.id, branchId: gammaCentral.id, name: 'Gamma Central WH', code: 'GAMM-C-W1', location: 'LA Industrial', capacity: 11000, managerName: 'Eve Park', isActive: true },
-  })
   await registerItem(SUPER_CTX, {
     enterpriseId: gamma.id,
     name: 'Circuit Board A', sku: 'GAMM-RAW-001',
@@ -258,9 +223,7 @@ async function main() {
     notes: 'Initial stock from registration',
   })
 
-  // ─── Stock In Recorders (2, each with 2-3 items → via db.stockIn.addItem) ─
-  console.log('  - Creating 2 stock-in recorders with items (Lots created via domain)…')
-  // Look up products we just created
+  // ─── Stock In Recorders (linked to real users — "from whom") ──
   const laptop = await prisma.product.findUnique({ where: { sku: 'ACME-ELEC-001' } })
   const keyboard = await prisma.product.findUnique({ where: { sku: 'ACME-ELEC-002' } })
   const switch24 = await prisma.product.findUnique({ where: { sku: 'ACME-ELEC-003' } })
@@ -268,8 +231,9 @@ async function main() {
 
   const sin1 = await db.stockIn.create(SUPER_CTX, {
     enterpriseId: acme.id, warehouseId: acmeHQWh1.id,
-    personName: 'John Smith', personPhone: '+1-555-0101', personEmail: 'john@techcorp.com',
-    personAddress: '123 Tech Blvd, NY', notes: 'Q4 electronics restock', status: 'submitted',
+    personUserId: wh1Employee.id,
+    personName: 'Warehouse Employee', personPhone: '+1-555-0101', personEmail: 'employee@acme.com',
+    personAddress: '123 Acme Way, NY', notes: 'Q4 electronics restock', status: 'submitted',
   } as any)
   if (laptop) await db.stockIn.addItem(SUPER_CTX, sin1.id, { productId: laptop.id, warehouseId: acmeHQWh1.id, quantity: 10, unit: 'piece', costPerUnit: 850, notes: 'Laptops - Grade A' })
   if (keyboard) await db.stockIn.addItem(SUPER_CTX, sin1.id, { productId: keyboard.id, warehouseId: acmeHQWh1.id, quantity: 50, unit: 'piece', costPerUnit: 25, notes: 'Keyboards - Bulk' })
@@ -282,12 +246,12 @@ async function main() {
   } as any)
   if (cloudLicense) await db.stockIn.addItem(SUPER_CTX, sin2.id, { productId: cloudLicense.id, warehouseId: betaMainWh1.id, quantity: 20, unit: 'piece', costPerUnit: 200, notes: 'Annual licenses' })
 
-  // ─── Stock Out Recorders (2, each with 2-3 items → FIFO lot deduction) ─
-  console.log('  - Creating 2 stock-out recorders with items (FIFO lot deduction)…')
+  // ─── Stock Out Recorders (linked to a real user — "for whom") ──
   const sout1 = await db.stockOut.create(SUPER_CTX, {
     enterpriseId: acme.id, warehouseId: acmeHQWh1.id,
-    personName: 'Client Corp Ltd', personPhone: '+1-555-9001', personEmail: 'orders@clientcorp.com',
-    personAddress: '500 Corporate Blvd, NY', notes: 'Corporate quarterly order', status: 'returned',
+    personUserId: wh1Employee.id,
+    personName: 'Warehouse Employee', personPhone: '+1-555-9001', personEmail: 'employee@acme.com',
+    personAddress: '123 Acme Way, NY', notes: 'Employee equipment issue', status: 'returned',
   } as any)
   if (laptop) await db.stockOut.addItem(SUPER_CTX, sout1.id, { productId: laptop.id, warehouseId: acmeHQWh1.id, quantity: 5, unit: 'piece', isReturnable: true, returnDeadline: '2026-03-01', notes: 'Rental units' })
   if (keyboard) await db.stockOut.addItem(SUPER_CTX, sout1.id, { productId: keyboard.id, warehouseId: acmeHQWh1.id, quantity: 20, unit: 'piece', isReturnable: false, returnDeadline: null, notes: 'Consumable' })
@@ -300,7 +264,6 @@ async function main() {
   if (switch24) await db.stockOut.addItem(SUPER_CTX, sout2.id, { productId: switch24.id, warehouseId: acmeHQWh1.id, quantity: 2, unit: 'piece', isReturnable: false, returnDeadline: null, notes: 'Office network' })
 
   // ─── Orders (3, mixed) ─────────────────────────────────
-  console.log('  - Creating 3 orders…')
   const acmeSupplier1Id = supplierMap.get(`${acme.id}-0`)!
   const acmeSupplier2Id = supplierMap.get(`${acme.id}-1`)!
   await db.orders.create(SUPER_CTX, {
@@ -317,67 +280,54 @@ async function main() {
   } as any)
 
   // ─── Features (5 per enterprise) ───────────────────────
-  console.log('  - Creating features (5 per enterprise)…')
   const featureNames = ['inventory_tracking', 'multi_warehouse', 'ai_assistant', 'lot_tracking', 'advanced_reports']
   for (const ent of [acme, beta, gamma]) {
     for (const fname of featureNames) {
       await prisma.feature.create({
-        data: {
-          enterpriseId: ent.id,
-          feature: fname,
-          enabled: true,
-        },
+        data: { enterpriseId: ent.id, feature: fname, enabled: true },
       })
     }
   }
 
-  // ─── A few audit log entries (manual, beyond what domain methods logged) ─
-  console.log('  - Creating manual audit log entries…')
+  // ─── Default permission grants for every user ─────────
+  await seedAllExistingUsers()
+
+  // ─── Audit trail ───────────────────────────────────────
   await prisma.auditLog.create({
-    data: { userId: superadmin.id, enterpriseId: null, action: 'seed.run', entity: 'System', entityId: null, details: 'Seed completed — 3 enterprises, 5 branches, 7 warehouses, 11 users, 7 products, 2 stock-in recorders, 2 stock-out recorders, 3 orders' },
+    data: { userId: superadmin.id, enterpriseId: null, action: 'seed.run', entity: 'System', entityId: null, details: 'Seed completed — 3 enterprises, 5 branches, 7 warehouses, 12 users, 7 products, 2 stock-in recorders, 2 stock-out recorders, 3 orders' },
   })
 
-  // ─── Summary ───────────────────────────────────────────
   const counts = {
     enterprises: await prisma.enterprise.count(),
     branches: await prisma.branch.count(),
     warehouses: await prisma.warehouse.count(),
     users: await prisma.user.count(),
-    categories: await prisma.category.count(),
-    suppliers: await prisma.supplier.count(),
     products: await prisma.product.count(),
-    stock: await prisma.stock.count(),
     lots: await prisma.lot.count(),
-    stockInRecorders: await prisma.stockInRecorder.count(),
-    stockInItems: await prisma.stockInItem.count(),
-    stockOutRecorders: await prisma.stockOutRecorder.count(),
-    stockOutItems: await prisma.stockOutItem.count(),
-    orders: await prisma.order.count(),
-    features: await prisma.feature.count(),
-    auditLogs: await prisma.auditLog.count(),
   }
-  console.log('✅ Seed complete. Counts:')
-  console.log(JSON.stringify(counts, null, 2))
-  console.log('')
-  console.log('Demo logins (password: admin123):')
-  console.log('  superadmin             — super_admin')
-  console.log('  acme_admin             — enterprise_admin (Acme Corp)')
-  console.log('  beta_admin             — enterprise_admin (Beta Industries)')
-  console.log('  gamma_admin            — enterprise_admin (Gamma Trading)')
-  console.log('  acme_hq_admin          — branch_admin (Acme HQ)')
-  console.log('  acme_north_admin       — branch_admin (Acme North)')
-  console.log('  beta_main_admin        — branch_admin (Beta Main)')
-  console.log('  beta_south_admin       — branch_admin (Beta South)')
-  console.log('  gamma_central_admin    — branch_admin (Gamma Central)')
-  console.log('  acme_wh1_admin         — warehouse_admin (Acme HQ WH1)')
-  console.log('  beta_wh1_admin         — warehouse_admin (Beta Main WH1)')
+  console.log('[seed] complete:', JSON.stringify(counts))
 }
 
-main()
-  .catch((e) => {
-    console.error('❌ Seed failed:', e)
-    process.exit(1)
-  })
-  .finally(async () => {
-    await prisma.$disconnect()
-  })
+/** Wipe all data (order matters — children first). Kept as a helper for reset flows. */
+function sqlite_wipe(): void {
+  const tables = [
+    'AuditLog', 'NonReturnable', 'NonReturnableRecorder', 'Return', 'ReturnRecorder',
+    'StockOutItem', 'StockOutRecorder', 'StockInItem', 'StockInRecorder',
+    'OrderItem', 'Order', 'Stock', 'Lot', 'AttachmentMeta', 'Attachment',
+    'Product', 'Supplier', 'Category', 'Condition', 'UserPermission', 'User',
+    'Warehouse', 'Branch', 'Feature', 'Enterprise',
+  ]
+  for (const t of tables) {
+    try { (prisma as any)[t.charAt(0).toLowerCase() + t.slice(1)].deleteMany({}) } catch { /* table may not exist yet */ }
+  }
+}
+
+/** True when the database has no users yet (fresh deploy → seed it). */
+export async function isDatabaseEmpty(): Promise<boolean> {
+  try {
+    const count = await prisma.user.count()
+    return count === 0
+  } catch {
+    return true
+  }
+}
