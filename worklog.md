@@ -92,3 +92,30 @@ Stage Summary:
   6. All APIs 200: POST /api/permissions/grant, /api/permissions/revoke, branches/warehouses create-admin & reset-admin routes exist
   7. Users at bottom of hierarchy: role 'user' under warehouse_admin, "Can create: Enterprise Admin, Branch Admin, Warehouse Admin, User" confirmed on Users page
 - lint passes (only page-size note)
+
+---
+Task ID: 9 — Remove Prisma 100% + plain SQLite + user-links on recorders + cPanel deployment per guide
+Agent: main
+
+Task: (1) Attach users to stock-in/stock-out/returns/non-returnables ("from whom"/"for whom"). (2) Deploy per DEPLOYMENT-GUIDE (1).md from GitHub using SQLite, (3) remove ALL Prisma code, (4) push to github.com/maca14313/Inventory-Management.
+
+Work Log:
+- Removed prisma/@prisma/client packages, prisma/ folder, all prisma scripts, db:* prisma scripts from package.json
+- Created src/lib/sqlite.ts: better-sqlite3 connection (WAL, FK on), schema metadata (26 models, fields, relations, compound uniques), cached prepare() (globalThis statement cache — critical: prevents native napi cleanup-hook crashes under Turbopack), migrations runner reading migrations/*.sql
+- Created migrations/001_initial_schema.sql (97 statements — EXACT match to Prisma's table/column names, BOOLEAN 0/1, DATETIME epoch-ms so existing DB keeps working) + 002_recorder_person_user.sql (personUserId FK columns on 4 recorder tables)
+- Rewrote src/lib/prisma.ts as a Prisma-COMPATIBLE shim: findUnique/findFirst/findMany/create/createMany/update/updateMany/delete/deleteMany/upsert/count/groupBy/aggregate/$transaction(interactive), where compiler (eq/in/notIn/contains/gt/gte/lt/lte/not/AND/OR/NOT/startsWith/isSet/some/every/none/is + implied to-one relation filters), select/include (nested), orderBy/take/skip/distinct, increment/decrement ops, P2025 errors, async serialization lock. ZERO changes needed in db.ts/attachments.ts/API routes (only type-annotation cleanup)
+- Moved MEASUREMENTS to src/lib/constants.ts (client-safe — page.tsx must not import the sqlite chain)
+- src/instrumentation.ts: startup migrations + first-run demo seed (guide §5.5/§12). src/app/api/health/route.ts (guide §5.4). scripts/migrate.js + seed.js plain-Node CLIs (guide §5.5)
+- src/lib/seed.ts: ported prisma/seed.ts to the shim + acme_wh1_user demo account + personUserId examples; auto-runs when User table empty
+- Feature "belongs to whom": personUserId + personUser on StockInRecorder/StockOutRecorder/ReturnRecorder/NonReturnableRecorder (interfaces, create/update, findMany includes); API routes pass-through; UI: "From Whom (User)" picker (Stock In), "For Whom (User)" (Stock Out), "Returned By (User)" (Group Returns), "Decided By (User)" (Non-Returnables) — auto-fills name/email; sky-blue user badges in all recorder lists; enterpriseId now derived from selected warehouse (fixes superadmin recorder creation)
+- Deployment per guide: app.js (Passenger entry §5.1), deploy-package.json (runtime deps only §5.2), next.config.mjs (plain JS, no standalone §5.3), .env.example (§10), scripts/build-and-package.sh (build+stage+tar+verify §6)
+- Fixed production-only native crash: (a) statement cache on globalThis, (b) connection singleton ALWAYS stored on globalThis (Turbopack tree-shook the dev-only assignment → 4+ Database instances → RemoveEnvironmentCleanupHook assert), (c) better-sqlite3 11.10.0→13.0.3 (Node 24 napi fix), (d) serverExternalPackages
+- FULL cPanel simulation verified: extract archive → npm install → node app.js → migrations → auto-seed → /api/health 200 → login → dashboard → stock-in with linked user → homepage 200
+- Group return transaction verified: RET-2026-0004 with personUserId=89, stock 18→20 (FIFO reversal)
+- Pushed to github.com/maca14313/Inventory-Management (main), .env untracked (guide §17)
+
+Stage Summary:
+- 100% Prisma-free: rg '@prisma|PrismaClient|from "prisma"' → no matches in src/
+- All 25 API endpoints 200; lint clean; dev server stable
+- deploy/inventory-management-*.tar.gz (4.5MB) ready for cPanel upload
+- Demo logins unchanged: superadmin/acme_admin/acme_hq_admin/acme_wh1_admin/acme_wh1_user (admin123)
