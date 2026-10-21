@@ -16,7 +16,7 @@
  *     3. The target user's role is strictly lower in the hierarchy
  */
 
-import { prisma } from './prisma'
+import { orm } from './orm'
 import type { AuthContext } from './db'
 import type { Role } from './db'
 
@@ -328,7 +328,7 @@ export async function resolvePermissions(userId: number, role: string): Promise<
       isSuperAdmin: true,
     }
   }
-  const rows = await prisma.userPermission.findMany({ where: { userId } })
+  const rows = await orm.userPermission.findMany({ where: { userId } })
   const permissions = new Set<string>()
   const delegatable = new Set<string>()
   for (const r of rows) {
@@ -341,7 +341,7 @@ export async function resolvePermissions(userId: number, role: string): Promise<
 /** Check if a user has a specific permission (canUse). */
 export async function hasPermission(userId: number, role: string, ability: string): Promise<boolean> {
   if (role === 'super_admin') return true
-  const row = await prisma.userPermission.findUnique({
+  const row = await orm.userPermission.findUnique({
     where: { userId_ability: { userId, ability } },
   })
   return !!row?.canUse
@@ -350,7 +350,7 @@ export async function hasPermission(userId: number, role: string, ability: strin
 /** Check if a user can delegate a specific permission (canDelegate). */
 export async function canDelegate(userId: number, role: string, ability: string): Promise<boolean> {
   if (role === 'super_admin') return true
-  const row = await prisma.userPermission.findUnique({
+  const row = await orm.userPermission.findUnique({
     where: { userId_ability: { userId, ability } },
   })
   return !!row?.canDelegate
@@ -387,7 +387,7 @@ export async function canManageTarget(
   targetId: number,
 ): Promise<boolean> {
   if (granter.role === 'user') return false
-  const target = await prisma.user.findUnique({ where: { id: targetId } })
+  const target = await orm.user.findUnique({ where: { id: targetId } })
   if (!target) return false
   if (target.role === 'super_admin') return false
   if (granter.role === 'super_admin') return true
@@ -427,7 +427,7 @@ export async function grantPermission(
   const canUse = opts.canUse ?? true
   const canDelegateFlag = opts.canDelegate ?? false
   // If granting canDelegate=true, the granter must also have canDelegate=true (already checked above)
-  await prisma.userPermission.upsert({
+  await orm.userPermission.upsert({
     where: { userId_ability: { userId: targetId, ability } },
     create: {
       userId: targetId, ability, canUse, canDelegate: canDelegateFlag,
@@ -436,7 +436,7 @@ export async function grantPermission(
     update: { canUse, canDelegate: canDelegateFlag, grantedById: granter.userId || null },
   })
   // Audit log
-  await prisma.auditLog.create({
+  await orm.auditLog.create({
     data: {
       userId: granter.userId,
       enterpriseId: granter.enterpriseId,
@@ -458,10 +458,10 @@ export async function revokePermission(
   if (!canManage) {
     throw new Error('FORBIDDEN: Cannot manage permissions for this user')
   }
-  await prisma.userPermission.deleteMany({
+  await orm.userPermission.deleteMany({
     where: { userId: targetId, ability },
   })
-  await prisma.auditLog.create({
+  await orm.auditLog.create({
     data: {
       userId: granter.userId,
       enterpriseId: granter.enterpriseId,
@@ -501,8 +501,8 @@ export async function seedDefaultPermissions(
     }
   }
   // SQLite doesn't support skipDuplicates, so delete existing rows first then create
-  await prisma.userPermission.deleteMany({ where: { userId } })
-  await prisma.userPermission.createMany({
+  await orm.userPermission.deleteMany({ where: { userId } })
+  await orm.userPermission.createMany({
     data: Array.from(seen.values()),
   })
 }
@@ -510,11 +510,11 @@ export async function seedDefaultPermissions(
 /** Seed default permissions for ALL existing users who don't have any yet.
  *  Used for migration when the permission system is first introduced. */
 export async function seedAllExistingUsers(): Promise<{ seeded: number; skipped: number }> {
-  const users = await prisma.user.findMany()
+  const users = await orm.user.findMany()
   let seeded = 0, skipped = 0
   for (const u of users) {
     if (u.role === 'super_admin') { skipped++; continue }
-    const existing = await prisma.userPermission.count({ where: { userId: u.id } })
+    const existing = await orm.userPermission.count({ where: { userId: u.id } })
     if (existing > 0) { skipped++; continue }
     await seedDefaultPermissions(u.id, u.role)
     seeded++
@@ -531,14 +531,14 @@ export async function getSubordinateUsers(granter: AuthContext): Promise<{
 }[]> {
   if (granter.role === 'user') return []
   if (granter.role === 'super_admin') {
-    return prisma.user.findMany({
+    return orm.user.findMany({
       where: { role: { not: 'super_admin' } },
       select: { id: true, username: true, fullName: true, role: true, enterpriseId: true, branchId: true, warehouseId: true },
       orderBy: { id: 'asc' },
     })
   }
   if (granter.role === 'enterprise_admin') {
-    return prisma.user.findMany({
+    return orm.user.findMany({
       where: {
         enterpriseId: granter.enterpriseId,
         role: { in: ['branch_admin', 'warehouse_admin', 'user'] },
@@ -548,7 +548,7 @@ export async function getSubordinateUsers(granter: AuthContext): Promise<{
     })
   }
   if (granter.role === 'branch_admin') {
-    return prisma.user.findMany({
+    return orm.user.findMany({
       where: {
         branchId: granter.branchId,
         enterpriseId: granter.enterpriseId,
@@ -559,7 +559,7 @@ export async function getSubordinateUsers(granter: AuthContext): Promise<{
     })
   }
   if (granter.role === 'warehouse_admin') {
-    return prisma.user.findMany({
+    return orm.user.findMany({
       where: {
         warehouseId: granter.warehouseId,
         branchId: granter.branchId,

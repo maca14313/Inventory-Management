@@ -1,7 +1,7 @@
 /**
- * Demo data seeder — plain SQLite (no Prisma).
+ * Demo data seeder — plain SQLite (better-sqlite3).
  *
- * Ported from prisma/seed.ts; uses the Prisma-compatible SQLite shim and the
+ * Uses the SQLite ORM client (orm.ts) and the
  * domain layer so Lots/FIFO/stock behave identically. Runs automatically at
  * app startup (src/instrumentation.ts) ONLY when the User table is empty —
  * i.e. first deploy / fresh database (deployment-guide §12 first-run setup).
@@ -9,7 +9,7 @@
  */
 
 import bcrypt from 'bcryptjs'
-import { prisma } from './prisma'
+import { orm } from './orm'
 import { db, registerItem, type AuthContext } from './db'
 import { seedAllExistingUsers } from './permissions'
 
@@ -29,7 +29,7 @@ export async function seedDemoData(): Promise<void> {
   void wipe
 
   // ─── Enterprises ───────────────────────────────────────
-  const acme = await prisma.enterprise.create({
+  const acme = await orm.enterprise.create({
     data: {
       name: 'Acme Corp', code: 'ACME',
       contactEmail: 'admin@acme.com', contactPhone: '+1-555-0100',
@@ -37,7 +37,7 @@ export async function seedDemoData(): Promise<void> {
       isActive: true, maxBranches: 10, maxWarehouses: 50, maxUsers: 100,
     },
   })
-  const beta = await prisma.enterprise.create({
+  const beta = await orm.enterprise.create({
     data: {
       name: 'Beta Industries', code: 'BETA',
       contactEmail: 'admin@beta.com', contactPhone: '+1-555-0200',
@@ -45,7 +45,7 @@ export async function seedDemoData(): Promise<void> {
       isActive: true, maxBranches: 10, maxWarehouses: 50, maxUsers: 100,
     },
   })
-  const gamma = await prisma.enterprise.create({
+  const gamma = await orm.enterprise.create({
     data: {
       name: 'Gamma Trading', code: 'GAMM',
       contactEmail: 'admin@gamma.com', contactPhone: '+1-555-0300',
@@ -55,87 +55,87 @@ export async function seedDemoData(): Promise<void> {
   })
 
   // ─── Branches ──────────────────────────────────────────
-  const acmeHQ = await prisma.branch.create({
+  const acmeHQ = await orm.branch.create({
     data: { enterpriseId: acme.id, name: 'Acme HQ', code: 'ACME-HQ', location: 'New York, NY', managerName: 'Alice Johnson', managerEmail: 'alice@acme.com', isActive: true },
   })
-  const acmeNorth = await prisma.branch.create({
+  const acmeNorth = await orm.branch.create({
     data: { enterpriseId: acme.id, name: 'Acme North', code: 'ACME-N', location: 'Boston, MA', managerName: 'Bob Smith', managerEmail: 'bob@acme.com', isActive: true },
   })
-  const betaMain = await prisma.branch.create({
+  const betaMain = await orm.branch.create({
     data: { enterpriseId: beta.id, name: 'Beta Main', code: 'BETA-M', location: 'Chicago, IL', managerName: 'Carol Lee', managerEmail: 'carol@beta.com', isActive: true },
   })
-  const betaSouth = await prisma.branch.create({
+  const betaSouth = await orm.branch.create({
     data: { enterpriseId: beta.id, name: 'Beta South', code: 'BETA-S', location: 'Houston, TX', managerName: 'Dave Kim', managerEmail: 'dave@beta.com', isActive: true },
   })
-  const gammaCentral = await prisma.branch.create({
+  const gammaCentral = await orm.branch.create({
     data: { enterpriseId: gamma.id, name: 'Gamma Central', code: 'GAMM-C', location: 'Los Angeles, CA', managerName: 'Eve Park', managerEmail: 'eve@gamma.com', isActive: true },
   })
 
   // ─── Warehouses ────────────────────────────────────────
-  const acmeHQWh1 = await prisma.warehouse.create({
+  const acmeHQWh1 = await orm.warehouse.create({
     data: { enterpriseId: acme.id, branchId: acmeHQ.id, name: 'Acme HQ Main WH', code: 'ACME-HQ-W1', location: 'NYC Industrial Park', capacity: 10000, managerName: 'Frank Green', isActive: true },
   })
-  const acmeHQWh2 = await prisma.warehouse.create({
+  const acmeHQWh2 = await orm.warehouse.create({
     data: { enterpriseId: acme.id, branchId: acmeHQ.id, name: 'Acme HQ Overflow', code: 'ACME-HQ-W2', location: 'NYC Secondary Lot', capacity: 5000, managerName: 'Frank Green', isActive: true },
   })
-  const acmeNorthWh = await prisma.warehouse.create({
+  const acmeNorthWh = await orm.warehouse.create({
     data: { enterpriseId: acme.id, branchId: acmeNorth.id, name: 'Acme North WH', code: 'ACME-N-W1', location: 'Boston Port', capacity: 8000, managerName: 'Grace Lee', isActive: true },
   })
-  const betaMainWh1 = await prisma.warehouse.create({
+  const betaMainWh1 = await orm.warehouse.create({
     data: { enterpriseId: beta.id, branchId: betaMain.id, name: 'Beta Main WH 1', code: 'BETA-M-W1', location: 'Chicago Downtown', capacity: 12000, managerName: 'Henry Clark', isActive: true },
   })
-  const betaMainWh2 = await prisma.warehouse.create({
+  const betaMainWh2 = await orm.warehouse.create({
     data: { enterpriseId: beta.id, branchId: betaMain.id, name: 'Beta Main WH 2', code: 'BETA-M-W2', location: 'Chicago Suburb', capacity: 6000, managerName: 'Henry Clark', isActive: true },
   })
-  const betaSouthWh = await prisma.warehouse.create({
+  const betaSouthWh = await orm.warehouse.create({
     data: { enterpriseId: beta.id, branchId: betaSouth.id, name: 'Beta South WH', code: 'BETA-S-W1', location: 'Houston Industrial', capacity: 9000, managerName: 'Ivy Wang', isActive: true },
   })
-  const gammaWh = await prisma.warehouse.create({
+  const gammaWh = await orm.warehouse.create({
     data: { enterpriseId: gamma.id, branchId: gammaCentral.id, name: 'Gamma Central WH', code: 'GAMM-C-W1', location: 'LA Industrial', capacity: 11000, managerName: 'Eve Park', isActive: true },
   })
 
   // ─── Users (12 total, all password = admin123) ─────────
   const passwordHash = await bcrypt.hash('admin123', 10)
-  const superadmin = await prisma.user.create({
+  const superadmin = await orm.user.create({
     data: { username: 'superadmin', email: 'super@ims.com', fullName: 'Super Administrator', role: 'super_admin', isActive: true, passwordHash, enterpriseId: null, branchId: null, warehouseId: null },
   })
   SUPER_CTX.userId = superadmin.id
 
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'acme_admin', email: 'admin@acme.com', fullName: 'Acme Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash, enterpriseId: acme.id, branchId: null, warehouseId: null },
   })
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'beta_admin', email: 'admin@beta.com', fullName: 'Beta Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash, enterpriseId: beta.id, branchId: null, warehouseId: null },
   })
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'gamma_admin', email: 'admin@gamma.com', fullName: 'Gamma Enterprise Admin', role: 'enterprise_admin', isActive: true, passwordHash, enterpriseId: gamma.id, branchId: null, warehouseId: null },
   })
 
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'acme_hq_admin', email: 'alice@acme.com', fullName: 'Alice Johnson (HQ)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: acme.id, branchId: acmeHQ.id, warehouseId: null },
   })
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'acme_north_admin', email: 'bob@acme.com', fullName: 'Bob Smith (North)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: acme.id, branchId: acmeNorth.id, warehouseId: null },
   })
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'beta_main_admin', email: 'carol@beta.com', fullName: 'Carol Lee (Main)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: beta.id, branchId: betaMain.id, warehouseId: null },
   })
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'beta_south_admin', email: 'dave@beta.com', fullName: 'Dave Kim (South)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: beta.id, branchId: betaSouth.id, warehouseId: null },
   })
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'gamma_central_admin', email: 'eve@gamma.com', fullName: 'Eve Park (Central)', role: 'branch_admin', isActive: true, passwordHash, enterpriseId: gamma.id, branchId: gammaCentral.id, warehouseId: null },
   })
 
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'acme_wh1_admin', email: 'frank@acme.com', fullName: 'Frank Green (Acme WH1)', role: 'warehouse_admin', isActive: true, passwordHash, enterpriseId: acme.id, branchId: acmeHQ.id, warehouseId: acmeHQWh1.id },
   })
-  await prisma.user.create({
+  await orm.user.create({
     data: { username: 'beta_wh1_admin', email: 'henry@beta.com', fullName: 'Henry Clark (Beta WH1)', role: 'warehouse_admin', isActive: true, passwordHash, enterpriseId: beta.id, branchId: betaMain.id, warehouseId: betaMainWh1.id },
   })
 
   // Employee (bottom of hierarchy — lives inside a warehouse)
-  const wh1Employee = await prisma.user.create({
+  const wh1Employee = await orm.user.create({
     data: { username: 'acme_wh1_user', email: 'employee@acme.com', fullName: 'Warehouse Employee', role: 'user', isActive: true, passwordHash, enterpriseId: acme.id, branchId: acmeHQ.id, warehouseId: acmeHQWh1.id },
   })
 
@@ -144,7 +144,7 @@ export async function seedDemoData(): Promise<void> {
   const catMap = new Map<string, number>()
   for (const ent of [acme, beta, gamma]) {
     for (const cn of catNames) {
-      const c = await prisma.category.create({
+      const c = await orm.category.create({
         data: { enterpriseId: ent.id, name: cn, description: `${cn} for ${ent.name}` },
       })
       catMap.set(`${ent.id}-${cn}`, (c as { id: number }).id)
@@ -156,7 +156,7 @@ export async function seedDemoData(): Promise<void> {
   const supplierMap = new Map<string, number>()
   for (const ent of [acme, beta, gamma]) {
     for (let i = 0; i < supplierNames.length; i++) {
-      const s = await prisma.supplier.create({
+      const s = await orm.supplier.create({
         data: {
           enterpriseId: ent.id,
           name: `${supplierNames[i]} (${ent.code})`,
@@ -224,10 +224,10 @@ export async function seedDemoData(): Promise<void> {
   })
 
   // ─── Stock In Recorders (linked to real users — "from whom") ──
-  const laptop = await prisma.product.findUnique({ where: { sku: 'ACME-ELEC-001' } })
-  const keyboard = await prisma.product.findUnique({ where: { sku: 'ACME-ELEC-002' } })
-  const switch24 = await prisma.product.findUnique({ where: { sku: 'ACME-ELEC-003' } })
-  const cloudLicense = await prisma.product.findUnique({ where: { sku: 'BETA-SW-001' } })
+  const laptop = await orm.product.findUnique({ where: { sku: 'ACME-ELEC-001' } })
+  const keyboard = await orm.product.findUnique({ where: { sku: 'ACME-ELEC-002' } })
+  const switch24 = await orm.product.findUnique({ where: { sku: 'ACME-ELEC-003' } })
+  const cloudLicense = await orm.product.findUnique({ where: { sku: 'BETA-SW-001' } })
 
   const sin1 = await db.stockIn.create(SUPER_CTX, {
     enterpriseId: acme.id, warehouseId: acmeHQWh1.id,
@@ -283,7 +283,7 @@ export async function seedDemoData(): Promise<void> {
   const featureNames = ['inventory_tracking', 'multi_warehouse', 'ai_assistant', 'lot_tracking', 'advanced_reports']
   for (const ent of [acme, beta, gamma]) {
     for (const fname of featureNames) {
-      await prisma.feature.create({
+      await orm.feature.create({
         data: { enterpriseId: ent.id, feature: fname, enabled: true },
       })
     }
@@ -293,17 +293,17 @@ export async function seedDemoData(): Promise<void> {
   await seedAllExistingUsers()
 
   // ─── Audit trail ───────────────────────────────────────
-  await prisma.auditLog.create({
+  await orm.auditLog.create({
     data: { userId: superadmin.id, enterpriseId: null, action: 'seed.run', entity: 'System', entityId: null, details: 'Seed completed — 3 enterprises, 5 branches, 7 warehouses, 12 users, 7 products, 2 stock-in recorders, 2 stock-out recorders, 3 orders' },
   })
 
   const counts = {
-    enterprises: await prisma.enterprise.count(),
-    branches: await prisma.branch.count(),
-    warehouses: await prisma.warehouse.count(),
-    users: await prisma.user.count(),
-    products: await prisma.product.count(),
-    lots: await prisma.lot.count(),
+    enterprises: await orm.enterprise.count(),
+    branches: await orm.branch.count(),
+    warehouses: await orm.warehouse.count(),
+    users: await orm.user.count(),
+    products: await orm.product.count(),
+    lots: await orm.lot.count(),
   }
   console.log('[seed] complete:', JSON.stringify(counts))
 }
@@ -318,14 +318,14 @@ function sqlite_wipe(): void {
     'Warehouse', 'Branch', 'Feature', 'Enterprise',
   ]
   for (const t of tables) {
-    try { (prisma as any)[t.charAt(0).toLowerCase() + t.slice(1)].deleteMany({}) } catch { /* table may not exist yet */ }
+    try { (orm as any)[t.charAt(0).toLowerCase() + t.slice(1)].deleteMany({}) } catch { /* table may not exist yet */ }
   }
 }
 
 /** True when the database has no users yet (fresh deploy → seed it). */
 export async function isDatabaseEmpty(): Promise<boolean> {
   try {
-    const count = await prisma.user.count()
+    const count = await orm.user.count()
     return count === 0
   } catch {
     return true

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
 import { resolvePermissions, ALL_PERMISSIONS, PERMISSION_GROUPS } from '@/lib/permissions'
-import { prisma } from '@/lib/prisma'
+import { orm } from '@/lib/orm'
 
 /** GET /api/permissions — list the current user's permissions + delegatable abilities.
  *  Also returns the full permission catalog (for UI rendering). */
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
     }
 
     // For non-super: fetch raw rows so the UI can show canUse/canDelegate per ability
-    const raw = await prisma.userPermission.findMany({
+    const raw = await orm.userPermission.findMany({
       where: { userId: ctx.userId },
       orderBy: { ability: 'asc' },
     })

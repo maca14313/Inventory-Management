@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
 import { requirePermission } from '@/lib/permissions'
-import { prisma } from '@/lib/prisma'
+import { orm } from '@/lib/orm'
 
 /** POST /api/warehouses/[id]/reset-admin — reset the warehouse admin's password.
  *  Requires 'warehouses:reset_admin' permission.
@@ -22,19 +22,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const bcrypt = await import('bcryptjs')
     const passwordHash = await bcrypt.hash(newPassword, 10)
 
-    const admin = await prisma.user.findFirst({
+    const admin = await orm.user.findFirst({
       where: { warehouseId: wid, role: 'warehouse_admin' },
     })
     if (!admin) {
       return NextResponse.json({ error: 'Not found: no warehouse admin for this warehouse' }, { status: 404 })
     }
 
-    await prisma.user.update({
+    await orm.user.update({
       where: { id: admin.id },
       data: { passwordHash, mustResetPassword: forceReset },
     })
 
-    await prisma.auditLog.create({
+    await orm.auditLog.create({
       data: {
         userId: ctx.userId,
         enterpriseId: admin.enterpriseId,

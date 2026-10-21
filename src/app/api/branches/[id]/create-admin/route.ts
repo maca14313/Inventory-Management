@@ -3,7 +3,7 @@ import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
 import { requirePermission } from '@/lib/permissions'
 import { seedDefaultPermissions } from '@/lib/permissions'
-import { prisma } from '@/lib/prisma'
+import { orm } from '@/lib/orm'
 
 /** POST /api/branches/[id]/create-admin — create a branch_admin for the given branch.
  *  Requires 'branches:manage_admin' permission.
@@ -23,10 +23,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: 'Validation: username and fullName are required' }, { status: 400 })
     }
 
-    const branch = await prisma.branch.findUnique({ where: { id: bid } })
+    const branch = await orm.branch.findUnique({ where: { id: bid } })
     if (!branch) return NextResponse.json({ error: 'Not found: branch' }, { status: 404 })
 
-    const existing = await prisma.user.findUnique({ where: { username } })
+    const existing = await orm.user.findUnique({ where: { username } })
     if (existing) {
       return NextResponse.json({ error: 'Validation: username already taken' }, { status: 400 })
     }
@@ -36,7 +36,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const passwordHash = await bcrypt.hash(explicitPassword, 10)
     const forceReset = !password
 
-    const admin = await prisma.user.create({
+    const admin = await orm.user.create({
       data: {
         username,
         fullName,
@@ -52,7 +52,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     await seedDefaultPermissions(admin.id, 'branch_admin', ctx.userId || undefined)
 
-    await prisma.auditLog.create({
+    await orm.auditLog.create({
       data: {
         userId: ctx.userId,
         enterpriseId: branch.enterpriseId,

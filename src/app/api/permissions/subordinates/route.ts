@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
 import { grantPermission, canManageTarget, resolvePermissions } from '@/lib/permissions'
-import { prisma } from '@/lib/prisma'
+import { orm } from '@/lib/orm'
 
 /** GET /api/permissions/subordinates — list users whose permissions the current admin can manage. */
 export async function GET(req: Request) {
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
 
     // For each subordinate, fetch their current permissions
     const enriched = await Promise.all(subs.map(async (s) => {
-      const rows = await prisma.userPermission.findMany({
+      const rows = await orm.userPermission.findMany({
         where: { userId: s.id },
         orderBy: { ability: 'asc' },
       })

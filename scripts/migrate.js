@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * scripts/migrate.js — standalone migration CLI (deployment-guide §5.5).
- * Plain Node + better-sqlite3 only. No TypeScript, NO Prisma.
+ * Plain Node + better-sqlite3 only. No TypeScript, no ORM.
  *
  * Usage:
  *   node scripts/migrate.js            apply pending migrations

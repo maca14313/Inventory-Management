@@ -1,13 +1,13 @@
 /**
  * SQLite Layer — better-sqlite3 connection + schema + startup migrations.
  *
- * This replaces Prisma's engine entirely (user requirement: NO Prisma anywhere).
+ * Plain SQLite storage — no ORM engine, no codegen (hard requirement).
  * - One synchronous connection, WAL mode, foreign keys ON (cascade/set-null works).
  * - Schema is declared here as idempotent DDL (CREATE TABLE IF NOT EXISTS …).
  * - `runMigrations()` is called from src/instrumentation.ts at app startup
  *   (deployment-guide rule 5: migrate at app start, never at install) and from
  *   scripts/migrate.js for manual runs.
- * - Existing Prisma-created databases keep working unchanged: table names,
+ * - Databases created by earlier versions keep working: table names,
  *   column names, boolean 0/1 and epoch-ms DATETIME storage are identical.
  */
 
@@ -81,7 +81,7 @@ export function ping(): boolean {
   return true
 }
 
-// ─── Schema metadata (drives the Prisma-compatible shim in prisma.ts) ──────
+// ─── Schema metadata (drives the ORM query engine in orm.ts) ───────────────
 
 export type FieldType = 'int' | 'float' | 'string' | 'bool' | 'datetime'
 

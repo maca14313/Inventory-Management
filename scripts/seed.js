@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * scripts/seed.js — factory-reset the database to fresh demo data.
- * Plain Node + better-sqlite3 only. No TypeScript, NO Prisma.
+ * Plain Node + better-sqlite3 only. No TypeScript, no ORM.
  *
  * The actual demo data is seeded automatically at app startup
  * (src/instrumentation.ts) whenever the User table is empty — this is the

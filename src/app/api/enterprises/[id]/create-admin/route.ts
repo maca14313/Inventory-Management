@@ -3,7 +3,7 @@ import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
 import { requirePermission } from '@/lib/permissions'
 import { seedDefaultPermissions } from '@/lib/permissions'
-import { prisma } from '@/lib/prisma'
+import { orm } from '@/lib/orm'
 
 /** POST /api/enterprises/[id]/create-admin — create an enterprise_admin for the given enterprise.
  *  Super_admin only (requires 'enterprises:manage_admin' permission).
@@ -24,11 +24,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     // Check enterprise exists
-    const enterprise = await prisma.enterprise.findUnique({ where: { id: eid } })
+    const enterprise = await orm.enterprise.findUnique({ where: { id: eid } })
     if (!enterprise) return NextResponse.json({ error: 'Not found: enterprise' }, { status: 404 })
 
     // Check username is unique
-    const existing = await prisma.user.findUnique({ where: { username } })
+    const existing = await orm.user.findUnique({ where: { username } })
     if (existing) {
       return NextResponse.json({ error: 'Validation: username already taken' }, { status: 400 })
     }
@@ -38,7 +38,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const passwordHash = await bcrypt.hash(explicitPassword, 10)
     const forceReset = !password
 
-    const admin = await prisma.user.create({
+    const admin = await orm.user.create({
       data: {
         username,
         fullName,
@@ -54,7 +54,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Seed default permissions for the new enterprise_admin
     await seedDefaultPermissions(admin.id, 'enterprise_admin', ctx.userId || undefined)
 
-    await prisma.auditLog.create({
+    await orm.auditLog.create({
       data: {
         userId: ctx.userId,
         enterpriseId: eid,

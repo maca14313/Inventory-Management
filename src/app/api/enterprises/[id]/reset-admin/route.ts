@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getAuthContextFromHeaders } from '@/lib/api'
 import { handleError } from '@/lib/route-utils'
 import { requirePermission } from '@/lib/permissions'
-import { prisma } from '@/lib/prisma'
+import { orm } from '@/lib/orm'
 
 /** POST /api/enterprises/[id]/reset-admin — reset the enterprise admin's password.
  *  Super_admin only (requires 'enterprises:reset_admin' permission).
@@ -27,19 +27,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const passwordHash = await bcrypt.hash(newPassword, 10)
 
     // Find the enterprise admin for this enterprise
-    const admin = await prisma.user.findFirst({
+    const admin = await orm.user.findFirst({
       where: { enterpriseId: eid, role: 'enterprise_admin' },
     })
     if (!admin) {
       return NextResponse.json({ error: 'Not found: no enterprise admin for this enterprise' }, { status: 404 })
     }
 
-    await prisma.user.update({
+    await orm.user.update({
       where: { id: admin.id },
       data: { passwordHash, mustResetPassword: forceReset },
     })
 
-    await prisma.auditLog.create({
+    await orm.auditLog.create({
       data: {
         userId: ctx.userId,
         enterpriseId: eid,

@@ -9,7 +9,7 @@
  *
  * All findMany/findById/create/update/remove operations accept an
  * AuthContext that enforces tenant boundaries. API routes call
- * `db.<domain>.<method>(ctx, ...)` and never touch Prisma directly.
+ * `db.<domain>.<method>(ctx, ...)` and never touch the SQLite client directly.
  *
  * LOT TRACKING (Change 2):
  *   Every stock-in path creates a Lot:
@@ -24,7 +24,7 @@
  * NO Batch / BatchEntry — replaced entirely by Lot + StockInRecorder (Change 1).
  */
 
-import { prisma } from './prisma'
+import { orm } from './orm'
 
 // ─── Core Types ─────────────────────────────────────────────
 
@@ -233,7 +233,7 @@ export type Measurement = typeof MEASUREMENTS[number]
 
 // ─── Tenant Scoping Helpers ────────────────────────────────
 
-type Tx = typeof prisma
+type Tx = typeof orm
 
 function canAccessEnterprise(ctx: AuthContext, eid: number | null): boolean {
   if (eid === null) return false
@@ -268,7 +268,7 @@ function canManageUser(ctx: AuthContext, target: { role: string; enterpriseId: n
   return false
 }
 
-/** Build Prisma where for enterprises */
+/** Build where-filter for enterprises */
 function enterpriseWhere(ctx: AuthContext, eid?: number): any {
   if (eid) return { id: eid }
   if (ctx.role === 'super_admin') return {}
@@ -276,7 +276,7 @@ function enterpriseWhere(ctx: AuthContext, eid?: number): any {
   return { id: ctx.enterpriseId }
 }
 
-/** Build Prisma where for branches */
+/** Build where-filter for branches */
 function branchWhere(ctx: AuthContext, eid?: number, bid?: number): any {
   const w: any = {}
   if (eid) w.enterpriseId = eid
@@ -293,7 +293,7 @@ function branchWhere(ctx: AuthContext, eid?: number, bid?: number): any {
   return w
 }
 
-/** Build Prisma where for warehouses */
+/** Build where-filter for warehouses */
 function warehouseWhere(ctx: AuthContext, eid?: number, bid?: number): any {
   const w: any = {}
   if (eid) w.enterpriseId = eid
@@ -315,7 +315,7 @@ function warehouseWhere(ctx: AuthContext, eid?: number, bid?: number): any {
   return w
 }
 
-/** Build Prisma where for users */
+/** Build where-filter for users */
 function userWhere(ctx: AuthContext, eid?: number, bid?: number): any {
   const w: any = {}
   if (eid) w.enterpriseId = eid
@@ -336,7 +336,7 @@ function userWhere(ctx: AuthContext, eid?: number, bid?: number): any {
   return w
 }
 
-/** Build Prisma where for enterprise-scoped entities (categories, suppliers, products).
+/** Build where-filter for enterprise-scoped entities (categories, suppliers, products).
  *  Returns a generic shape compatible with any *WhereInput that has enterpriseId. */
 function enterpriseScopedWhere(ctx: AuthContext, eid?: number): { enterpriseId?: number } {
   if (eid) return { enterpriseId: eid }
@@ -347,7 +347,7 @@ function enterpriseScopedWhere(ctx: AuthContext, eid?: number): { enterpriseId?:
 
 /** Return list of warehouse IDs accessible to ctx */
 async function getAccessibleWarehouseIds(ctx: AuthContext, tx?: Tx): Promise<number[]> {
-  const client = tx ?? prisma
+  const client = tx ?? orm
   if (ctx.role === 'super_admin') {
     const ws = await client.warehouse.findMany({ select: { id: true } })
     return ws.map(w => w.id)
@@ -367,7 +367,7 @@ async function getAccessibleWarehouseIds(ctx: AuthContext, tx?: Tx): Promise<num
 
 // ─── Serialization Helpers ─────────────────────────────────
 
-/** Convert Prisma model rows to plain serializable objects (Date → ISO string).
+/** Convert model rows to plain serializable objects (Date → ISO string).
  *  Returns `unknown` so callers MUST cast to their target type — TypeScript
  *  cannot verify the Date→string conversion structurally. */
 function ser(row: unknown): unknown {
@@ -575,18 +575,18 @@ export const db = {
   // ── Enterprises ─────────────────────────────────────────
   enterprises: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Enterprise[]> => {
-      const rows = await prisma.enterprise.findMany({ where: enterpriseWhere(ctx, eid), orderBy: { id: 'asc' } })
+      const rows = await orm.enterprise.findMany({ where: enterpriseWhere(ctx, eid), orderBy: { id: 'asc' } })
       return ser(rows) as Enterprise[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Enterprise | null> => {
-      const e = await prisma.enterprise.findUnique({ where: { id } })
+      const e = await orm.enterprise.findUnique({ where: { id } })
       if (!e) return null
       if (!canAccessEnterprise(ctx, e.id)) return null
       return ser(e) as Enterprise
     },
     create: async (ctx: AuthContext, d: Partial<Enterprise>): Promise<Enterprise> => {
       if (ctx.role !== 'super_admin') throw new Error('FORBIDDEN: Only super_admin can create enterprises')
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const e = await tx.enterprise.create({
           data: {
             name: d.name!,
@@ -612,10 +612,10 @@ export const db = {
       return ser(created) as Enterprise
     },
     update: async (ctx: AuthContext, id: number, d: Partial<Enterprise>): Promise<Enterprise> => {
-      const existing = await prisma.enterprise.findUnique({ where: { id } })
+      const existing = await orm.enterprise.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.id)) throw new Error('FORBIDDEN: Cannot access this enterprise')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const e = await tx.enterprise.update({
           where: { id },
           data: {
@@ -643,9 +643,9 @@ export const db = {
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
       if (ctx.role !== 'super_admin') throw new Error('FORBIDDEN: Only super_admin can delete enterprises')
-      const existing = await prisma.enterprise.findUnique({ where: { id } })
+      const existing = await orm.enterprise.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: null,
@@ -661,11 +661,11 @@ export const db = {
   // ── Branches ────────────────────────────────────────────
   branches: {
     findMany: async (ctx: AuthContext, eid?: number, bid?: number): Promise<Branch[]> => {
-      const rows = await prisma.branch.findMany({ where: branchWhere(ctx, eid, bid), orderBy: { id: 'asc' } })
+      const rows = await orm.branch.findMany({ where: branchWhere(ctx, eid, bid), orderBy: { id: 'asc' } })
       return ser(rows) as Branch[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Branch | null> => {
-      const b = await prisma.branch.findUnique({ where: { id } })
+      const b = await orm.branch.findUnique({ where: { id } })
       if (!b) return null
       if (!canAccessBranch(ctx, b.enterpriseId, b.id)) return null
       return ser(b) as Branch
@@ -677,7 +677,7 @@ export const db = {
       if (ctx.role === 'enterprise_admin' && d.enterpriseId !== ctx.enterpriseId) {
         throw new Error('FORBIDDEN: Cannot create branch in another enterprise')
       }
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const b = await tx.branch.create({
           data: {
             enterpriseId: d.enterpriseId!,
@@ -701,10 +701,10 @@ export const db = {
       return ser(created) as Branch
     },
     update: async (ctx: AuthContext, id: number, d: Partial<Branch>): Promise<Branch> => {
-      const existing = await prisma.branch.findUnique({ where: { id } })
+      const existing = await orm.branch.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessBranch(ctx, existing.enterpriseId, existing.id)) throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const b = await tx.branch.update({
           where: { id },
           data: {
@@ -728,11 +728,11 @@ export const db = {
       return ser(updated) as Branch
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.branch.findUnique({ where: { id } })
+      const existing = await orm.branch.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (ctx.role !== 'super_admin' && ctx.role !== 'enterprise_admin') throw new Error('FORBIDDEN')
       if (!canAccessBranch(ctx, existing.enterpriseId, existing.id)) throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -748,11 +748,11 @@ export const db = {
   // ── Warehouses ──────────────────────────────────────────
   warehouses: {
     findMany: async (ctx: AuthContext, eid?: number, bid?: number): Promise<Warehouse[]> => {
-      const rows = await prisma.warehouse.findMany({ where: warehouseWhere(ctx, eid, bid), orderBy: { id: 'asc' } })
+      const rows = await orm.warehouse.findMany({ where: warehouseWhere(ctx, eid, bid), orderBy: { id: 'asc' } })
       return ser(rows) as Warehouse[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Warehouse | null> => {
-      const w = await prisma.warehouse.findUnique({ where: { id } })
+      const w = await orm.warehouse.findUnique({ where: { id } })
       if (!w) return null
       if (!canAccessWarehouse(ctx, w.enterpriseId, w.branchId, w.id)) return null
       return ser(w) as Warehouse
@@ -765,7 +765,7 @@ export const db = {
       if (ctx.role === 'enterprise_admin' && d.enterpriseId !== ctx.enterpriseId) {
         throw new Error('FORBIDDEN: Cannot create warehouse in another enterprise')
       }
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const w = await tx.warehouse.create({
           data: {
             enterpriseId: d.enterpriseId!,
@@ -790,10 +790,10 @@ export const db = {
       return ser(created) as Warehouse
     },
     update: async (ctx: AuthContext, id: number, d: Partial<Warehouse>): Promise<Warehouse> => {
-      const existing = await prisma.warehouse.findUnique({ where: { id } })
+      const existing = await orm.warehouse.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessWarehouse(ctx, existing.enterpriseId, existing.branchId, existing.id)) throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const w = await tx.warehouse.update({
           where: { id },
           data: {
@@ -817,11 +817,11 @@ export const db = {
       return ser(updated) as Warehouse
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.warehouse.findUnique({ where: { id } })
+      const existing = await orm.warehouse.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
       if (!canAccessWarehouse(ctx, existing.enterpriseId, existing.branchId, existing.id)) throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -837,7 +837,7 @@ export const db = {
   // ── Users ───────────────────────────────────────────────
   users: {
     findMany: async (ctx: AuthContext, eid?: number, bid?: number): Promise<User[]> => {
-      const rows = await prisma.user.findMany({
+      const rows = await orm.user.findMany({
         where: userWhere(ctx, eid, bid),
         orderBy: { id: 'asc' },
         select: {
@@ -850,7 +850,7 @@ export const db = {
       return ser(rows) as User[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<User | null> => {
-      const u = await prisma.user.findUnique({
+      const u = await orm.user.findUnique({
         where: { id },
         select: {
           id: true, enterpriseId: true, branchId: true, warehouseId: true,
@@ -869,7 +869,7 @@ export const db = {
     /** Authenticate by username + plaintext password (uses bcrypt.compare) */
     authenticate: async (username: string, password: string): Promise<User | null> => {
       const bcrypt = await import('bcryptjs')
-      const u = await prisma.user.findUnique({ where: { username } })
+      const u = await orm.user.findUnique({ where: { username } })
       if (!u || !u.isActive) return null
       const ok = await bcrypt.compare(password, u.passwordHash)
       if (!ok) return null
@@ -895,7 +895,7 @@ export const db = {
       const passwordHash = d.password
         ? await bcrypt.hash(d.password, 10)
         : await bcrypt.hash('admin123', 10)
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const u = await tx.user.create({
           data: {
             enterpriseId: d.enterpriseId ?? null,
@@ -925,7 +925,7 @@ export const db = {
       return ser(safe) as User
     },
     update: async (ctx: AuthContext, id: number, d: Partial<User> & { password?: string }): Promise<User> => {
-      const existing = await prisma.user.findUnique({ where: { id } })
+      const existing = await orm.user.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       // Self-update is allowed for non-role changes
       if (id !== ctx.userId) {
@@ -933,7 +933,7 @@ export const db = {
       }
       const bcrypt = await import('bcryptjs')
       const passwordHash = d.password ? await bcrypt.hash(d.password, 10) : undefined
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const u = await tx.user.update({
           where: { id },
           data: {
@@ -962,11 +962,11 @@ export const db = {
       return ser(safe) as User
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.user.findUnique({ where: { id } })
+      const existing = await orm.user.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (id === ctx.userId) throw new Error('FORBIDDEN: Cannot delete your own account')
       if (!canManageUser(ctx, existing)) throw new Error('FORBIDDEN: Cannot delete this user')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -983,11 +983,11 @@ export const db = {
   categories: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Category[]> => {
       const where: any = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
-      const rows = await prisma.category.findMany({ where, orderBy: { id: 'asc' } })
+      const rows = await orm.category.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Category[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Category | null> => {
-      const c = await prisma.category.findUnique({ where: { id } })
+      const c = await orm.category.findUnique({ where: { id } })
       if (!c) return null
       if (!canAccessEnterprise(ctx, c.enterpriseId)) return null
       return ser(c) as Category
@@ -995,7 +995,7 @@ export const db = {
     create: async (ctx: AuthContext, d: Partial<Category>): Promise<Category> => {
       if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
       if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const c = await tx.category.create({
           data: {
             enterpriseId: d.enterpriseId!,
@@ -1015,11 +1015,11 @@ export const db = {
       return ser(created) as Category
     },
     update: async (ctx: AuthContext, id: number, d: Partial<Category>): Promise<Category> => {
-      const existing = await prisma.category.findUnique({ where: { id } })
+      const existing = await orm.category.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
       if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const c = await tx.category.update({
           where: { id },
           data: {
@@ -1039,11 +1039,11 @@ export const db = {
       return ser(updated) as Category
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.category.findUnique({ where: { id } })
+      const existing = await orm.category.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
       if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -1060,11 +1060,11 @@ export const db = {
   conditions: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Condition[]> => {
       const where: any = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
-      const rows = await prisma.condition.findMany({ where, orderBy: { id: 'asc' } })
+      const rows = await orm.condition.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Condition[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Condition | null> => {
-      const c = await prisma.condition.findUnique({ where: { id } })
+      const c = await orm.condition.findUnique({ where: { id } })
       if (!c) return null
       if (!canAccessEnterprise(ctx, c.enterpriseId)) return null
       return ser(c) as Condition
@@ -1072,7 +1072,7 @@ export const db = {
     create: async (ctx: AuthContext, d: Partial<Condition>): Promise<Condition> => {
       if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
       if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const c = await tx.condition.create({
           data: {
             enterpriseId: d.enterpriseId!,
@@ -1092,11 +1092,11 @@ export const db = {
       return ser(created) as Condition
     },
     update: async (ctx: AuthContext, id: number, d: Partial<Condition>): Promise<Condition> => {
-      const existing = await prisma.condition.findUnique({ where: { id } })
+      const existing = await orm.condition.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
       if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const c = await tx.condition.update({
           where: { id },
           data: {
@@ -1116,11 +1116,11 @@ export const db = {
       return ser(updated) as Condition
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.condition.findUnique({ where: { id } })
+      const existing = await orm.condition.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
       if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -1137,11 +1137,11 @@ export const db = {
   suppliers: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Supplier[]> => {
       const where: any = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
-      const rows = await prisma.supplier.findMany({ where, orderBy: { id: 'asc' } })
+      const rows = await orm.supplier.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Supplier[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Supplier | null> => {
-      const s = await prisma.supplier.findUnique({ where: { id } })
+      const s = await orm.supplier.findUnique({ where: { id } })
       if (!s) return null
       if (!canAccessEnterprise(ctx, s.enterpriseId)) return null
       return ser(s) as Supplier
@@ -1149,7 +1149,7 @@ export const db = {
     create: async (ctx: AuthContext, d: Partial<Supplier>): Promise<Supplier> => {
       if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
       if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const s = await tx.supplier.create({
           data: {
             enterpriseId: d.enterpriseId!,
@@ -1172,11 +1172,11 @@ export const db = {
       return ser(created) as Supplier
     },
     update: async (ctx: AuthContext, id: number, d: Partial<Supplier>): Promise<Supplier> => {
-      const existing = await prisma.supplier.findUnique({ where: { id } })
+      const existing = await orm.supplier.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
       if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const s = await tx.supplier.update({
           where: { id },
           data: {
@@ -1199,11 +1199,11 @@ export const db = {
       return ser(updated) as Supplier
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.supplier.findUnique({ where: { id } })
+      const existing = await orm.supplier.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
       if (ctx.role === 'warehouse_admin' || ctx.role === 'branch_admin') throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -1220,11 +1220,11 @@ export const db = {
   products: {
     findMany: async (ctx: AuthContext, eid?: number): Promise<Product[]> => {
       const where: any = eid ? { enterpriseId: eid } : enterpriseScopedWhere(ctx)
-      const rows = await prisma.product.findMany({ where, orderBy: { id: 'asc' } })
+      const rows = await orm.product.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Product[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Product | null> => {
-      const p = await prisma.product.findUnique({ where: { id } })
+      const p = await orm.product.findUnique({ where: { id } })
       if (!p) return null
       if (!canAccessEnterprise(ctx, p.enterpriseId)) return null
       return ser(p) as Product
@@ -1232,7 +1232,7 @@ export const db = {
     create: async (ctx: AuthContext, d: Partial<Product>): Promise<Product> => {
       if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
       if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const p = await tx.product.create({
           data: {
             enterpriseId: d.enterpriseId!,
@@ -1259,11 +1259,11 @@ export const db = {
       return ser(created) as Product
     },
     update: async (ctx: AuthContext, id: number, d: Partial<Product>): Promise<Product> => {
-      const existing = await prisma.product.findUnique({ where: { id } })
+      const existing = await orm.product.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
       if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const p = await tx.product.update({
           where: { id },
           data: {
@@ -1290,11 +1290,11 @@ export const db = {
       return ser(updated) as Product
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.product.findUnique({ where: { id } })
+      const existing = await orm.product.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
       if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -1312,16 +1312,16 @@ export const db = {
     findMany: async (ctx: AuthContext): Promise<Stock[]> => {
       const whIds = await getAccessibleWarehouseIds(ctx)
       if (whIds.length === 0) return []
-      const rows = await prisma.stock.findMany({
+      const rows = await orm.stock.findMany({
         where: { warehouseId: { in: whIds } },
         orderBy: { id: 'asc' },
       })
       return ser(rows) as Stock[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Stock | null> => {
-      const s = await prisma.stock.findUnique({ where: { id } })
+      const s = await orm.stock.findUnique({ where: { id } })
       if (!s) return null
-      const w = await prisma.warehouse.findUnique({ where: { id: s.warehouseId } })
+      const w = await orm.warehouse.findUnique({ where: { id: s.warehouseId } })
       if (!w) return null
       if (!canAccessWarehouse(ctx, w.enterpriseId, w.branchId, w.id)) return null
       return ser(s) as Stock
@@ -1336,12 +1336,12 @@ export const db = {
       },
     ): Promise<Stock> => {
       if (d.quantity <= 0) throw new Error('Validation: quantity must be positive')
-      const wh = await prisma.warehouse.findUnique({ where: { id: d.warehouseId } })
+      const wh = await orm.warehouse.findUnique({ where: { id: d.warehouseId } })
       if (!wh) throw new Error(`Warehouse #${d.warehouseId} not found`)
-      const prod = await prisma.product.findUnique({ where: { id: d.productId } })
+      const prod = await orm.product.findUnique({ where: { id: d.productId } })
       if (!prod) throw new Error(`Product #${d.productId} not found. Register the product first before adding stock.`)
       if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN: Cannot add stock in this warehouse')
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await orm.$transaction(async (tx) => {
         const s = await tx.stock.upsert({
           where: { productId_warehouseId: { productId: d.productId, warehouseId: d.warehouseId } },
           update: { quantity: { increment: d.quantity } },
@@ -1377,12 +1377,12 @@ export const db = {
       d: { productId: number; warehouseId: number; newQuantity: number; unit?: string; costPerUnit?: number; notes?: string | null },
     ): Promise<Stock> => {
       if (d.newQuantity < 0) throw new Error('Validation: newQuantity cannot be negative')
-      const wh = await prisma.warehouse.findUnique({ where: { id: d.warehouseId } })
+      const wh = await orm.warehouse.findUnique({ where: { id: d.warehouseId } })
       if (!wh) throw new Error('Warehouse not found')
-      const prod = await prisma.product.findUnique({ where: { id: d.productId } })
+      const prod = await orm.product.findUnique({ where: { id: d.productId } })
       if (!prod) throw new Error('Product not found')
       if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN')
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await orm.$transaction(async (tx) => {
         const existing = await tx.stock.findUnique({
           where: { productId_warehouseId: { productId: d.productId, warehouseId: d.warehouseId } },
         })
@@ -1418,12 +1418,12 @@ export const db = {
       return ser(result) as Stock
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.stock.findUnique({ where: { id } })
+      const existing = await orm.stock.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
-      const w = await prisma.warehouse.findUnique({ where: { id: existing.warehouseId } })
+      const w = await orm.warehouse.findUnique({ where: { id: existing.warehouseId } })
       if (!w) throw new Error('Not found')
       if (!canAccessWarehouse(ctx, w.enterpriseId, w.branchId, w.id)) throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: w.enterpriseId,
@@ -1439,10 +1439,10 @@ export const db = {
   // ── Lots (Change 2) ─────────────────────────────────────
   lots: {
     findByProductWarehouse: async (ctx: AuthContext, productId: number, warehouseId: number): Promise<Lot[]> => {
-      const w = await prisma.warehouse.findUnique({ where: { id: warehouseId } })
+      const w = await orm.warehouse.findUnique({ where: { id: warehouseId } })
       if (!w) return []
       if (!canAccessWarehouse(ctx, w.enterpriseId, w.branchId, w.id)) return []
-      const rows = await prisma.lot.findMany({
+      const rows = await orm.lot.findMany({
         where: { productId, warehouseId },
         include: { condition: true },
         orderBy: { receivedDate: 'asc' },
@@ -1451,11 +1451,11 @@ export const db = {
       return serialized.map(l => ({ ...l, status: (l.remainingQty > 0 && !l.closedAt) ? 'open' : 'closed' as const }))
     },
     findByProduct: async (ctx: AuthContext, productId: number): Promise<Lot[]> => {
-      const p = await prisma.product.findUnique({ where: { id: productId } })
+      const p = await orm.product.findUnique({ where: { id: productId } })
       if (!p) return []
       if (!canAccessEnterprise(ctx, p.enterpriseId)) return []
       const whIds = await getAccessibleWarehouseIds(ctx)
-      const rows = await prisma.lot.findMany({
+      const rows = await orm.lot.findMany({
         where: { productId, warehouseId: whIds.length ? { in: whIds } : undefined },
         include: { condition: true },
         orderBy: { receivedDate: 'asc' },
@@ -1473,7 +1473,7 @@ export const db = {
         where.remainingQty = { gt: 0 }
         where.closedAt = null
       }
-      const rows = await prisma.lot.findMany({ where, include: { condition: true }, orderBy: { receivedDate: 'asc' } })
+      const rows = await orm.lot.findMany({ where, include: { condition: true }, orderBy: { receivedDate: 'asc' } })
       const serialized = ser(rows) as Lot[]
       return serialized.map(l => ({ ...l, status: (l.remainingQty > 0 && !l.closedAt) ? 'open' : 'closed' as const }))
     },
@@ -1487,7 +1487,7 @@ export const db = {
       const where: any = { warehouseId: { in: whIds } }
       if (eid) where.enterpriseId = eid
       if (wid) where.warehouseId = wid
-      const rows = await prisma.stockInRecorder.findMany({
+      const rows = await orm.stockInRecorder.findMany({
         where,
         orderBy: { id: 'desc' },
         include: { items: { include: { condition: true } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
@@ -1495,7 +1495,7 @@ export const db = {
       return ser(rows) as StockInRecorder[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<StockInRecorder | null> => {
-      const r = await prisma.stockInRecorder.findUnique({
+      const r = await orm.stockInRecorder.findUnique({
         where: { id },
         include: { items: { include: { condition: true } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
       })
@@ -1505,10 +1505,10 @@ export const db = {
     },
     create: async (ctx: AuthContext, d: Partial<StockInRecorder>): Promise<StockInRecorder> => {
       if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const wh = await prisma.warehouse.findUnique({ where: { id: d.warehouseId! } })
+      const wh = await orm.warehouse.findUnique({ where: { id: d.warehouseId! } })
       if (!wh) throw new Error('Warehouse not found')
       if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN')
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const recorderCode = await generateRecorderCode(tx, 'SIN', 'recorderCode')
         const r = await tx.stockInRecorder.create({
           data: {
@@ -1536,10 +1536,10 @@ export const db = {
       return ser(created) as StockInRecorder
     },
     update: async (ctx: AuthContext, id: number, d: Partial<StockInRecorder>): Promise<StockInRecorder> => {
-      const existing = await prisma.stockInRecorder.findUnique({ where: { id } })
+      const existing = await orm.stockInRecorder.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (ctx.role !== 'super_admin' && existing.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const r = await tx.stockInRecorder.update({
           where: { id },
           data: {
@@ -1569,19 +1569,19 @@ export const db = {
       recorderId: number,
       d: Partial<StockInItem>,
     ): Promise<StockInItem> => {
-      const r = await prisma.stockInRecorder.findUnique({ where: { id: recorderId } })
+      const r = await orm.stockInRecorder.findUnique({ where: { id: recorderId } })
       if (!r) throw new Error(`Stock-in recorder #${recorderId} not found`)
       if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
       const qty = d.quantity ?? 0
       if (qty <= 0) throw new Error('Validation: quantity must be positive')
       if (!d.productId) throw new Error('Validation: productId is required')
       if (!d.warehouseId) throw new Error('Validation: warehouseId is required')
-      const prod = await prisma.product.findUnique({ where: { id: d.productId } })
+      const prod = await orm.product.findUnique({ where: { id: d.productId } })
       if (!prod) throw new Error(`Product #${d.productId} not found`)
-      const wh = await prisma.warehouse.findUnique({ where: { id: d.warehouseId } })
+      const wh = await orm.warehouse.findUnique({ where: { id: d.warehouseId } })
       if (!wh) throw new Error(`Warehouse #${d.warehouseId} not found`)
       if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN')
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await orm.$transaction(async (tx) => {
         const item = await tx.stockInItem.create({
           data: {
             recorderId,
@@ -1625,13 +1625,13 @@ export const db = {
     },
     /** Remove a stock-in item: reverse Lot + decrement stock + delete item */
     removeItem: async (ctx: AuthContext, recorderId: number, itemId: number): Promise<void> => {
-      const r = await prisma.stockInRecorder.findUnique({ where: { id: recorderId } })
+      const r = await orm.stockInRecorder.findUnique({ where: { id: recorderId } })
       if (!r) throw new Error(`Stock-in recorder #${recorderId} not found`)
       if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const item = await prisma.stockInItem.findUnique({ where: { id: itemId } })
+      const item = await orm.stockInItem.findUnique({ where: { id: itemId } })
       if (!item || item.recorderId !== recorderId) throw new Error(`Item #${itemId} not found in recorder #${recorderId}`)
-      const prod = await prisma.product.findUnique({ where: { id: item.productId } })
-      await prisma.$transaction(async (tx) => {
+      const prod = await orm.product.findUnique({ where: { id: item.productId } })
+      await orm.$transaction(async (tx) => {
         // Reverse the lot (delete if untouched, reduce if partially consumed)
         await reverseLot(tx, ctx, `${r.recorderCode}-${itemId}`, item.quantity)
         // Decrement stock (never below 0)
@@ -1655,13 +1655,13 @@ export const db = {
       })
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.stockInRecorder.findUnique({
+      const existing = await orm.stockInRecorder.findUnique({
         where: { id },
         include: { items: true },
       })
       if (!existing) throw new Error(`Stock-in recorder #${id} not found`)
       if (ctx.role !== 'super_admin' && existing.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         // Reverse lots & decrement stock for every item
         for (const item of existing.items) {
           await reverseLot(tx, ctx, `${existing.recorderCode}-${item.id}`, item.quantity)
@@ -1696,7 +1696,7 @@ export const db = {
       const where: any = { warehouseId: { in: whIds } }
       if (eid) where.enterpriseId = eid
       if (wid) where.warehouseId = wid
-      const rows = await prisma.stockOutRecorder.findMany({
+      const rows = await orm.stockOutRecorder.findMany({
         where,
         orderBy: { id: 'desc' },
         include: { items: { include: { condition: true } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
@@ -1704,7 +1704,7 @@ export const db = {
       return ser(rows) as StockOutRecorder[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<StockOutRecorder | null> => {
-      const r = await prisma.stockOutRecorder.findUnique({
+      const r = await orm.stockOutRecorder.findUnique({
         where: { id },
         include: { items: { include: { condition: true } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
       })
@@ -1714,10 +1714,10 @@ export const db = {
     },
     create: async (ctx: AuthContext, d: Partial<StockOutRecorder>): Promise<StockOutRecorder> => {
       if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const wh = await prisma.warehouse.findUnique({ where: { id: d.warehouseId! } })
+      const wh = await orm.warehouse.findUnique({ where: { id: d.warehouseId! } })
       if (!wh) throw new Error('Warehouse not found')
       if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN')
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const recorderCode = await generateRecorderCode(tx, 'SOUT', 'recorderCode')
         const r = await tx.stockOutRecorder.create({
           data: {
@@ -1745,10 +1745,10 @@ export const db = {
       return ser(created) as StockOutRecorder
     },
     update: async (ctx: AuthContext, id: number, d: Partial<StockOutRecorder>): Promise<StockOutRecorder> => {
-      const existing = await prisma.stockOutRecorder.findUnique({ where: { id } })
+      const existing = await orm.stockOutRecorder.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (ctx.role !== 'super_admin' && existing.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const r = await tx.stockOutRecorder.update({
           where: { id },
           data: {
@@ -1778,19 +1778,19 @@ export const db = {
       recorderId: number,
       d: Partial<StockOutItem>,
     ): Promise<StockOutItem> => {
-      const r = await prisma.stockOutRecorder.findUnique({ where: { id: recorderId } })
+      const r = await orm.stockOutRecorder.findUnique({ where: { id: recorderId } })
       if (!r) throw new Error(`Stock-out recorder #${recorderId} not found`)
       if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
       const qty = d.quantity ?? 0
       if (qty <= 0) throw new Error('Validation: quantity must be positive')
       if (!d.productId) throw new Error('Validation: productId is required')
       if (!d.warehouseId) throw new Error('Validation: warehouseId is required')
-      const prod = await prisma.product.findUnique({ where: { id: d.productId } })
+      const prod = await orm.product.findUnique({ where: { id: d.productId } })
       if (!prod) throw new Error(`Product #${d.productId} not found`)
-      const wh = await prisma.warehouse.findUnique({ where: { id: d.warehouseId } })
+      const wh = await orm.warehouse.findUnique({ where: { id: d.warehouseId } })
       if (!wh) throw new Error(`Warehouse #${d.warehouseId} not found`)
       if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN')
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await orm.$transaction(async (tx) => {
         // Check current stock
         const existing = await tx.stock.findUnique({
           where: { productId_warehouseId: { productId: d.productId!, warehouseId: d.warehouseId! } },
@@ -1833,13 +1833,13 @@ export const db = {
     },
     /** Remove a stock-out item: restore stock + restore lot remainingQty */
     removeItem: async (ctx: AuthContext, recorderId: number, itemId: number): Promise<void> => {
-      const r = await prisma.stockOutRecorder.findUnique({ where: { id: recorderId } })
+      const r = await orm.stockOutRecorder.findUnique({ where: { id: recorderId } })
       if (!r) throw new Error(`Stock-out recorder #${recorderId} not found`)
       if (ctx.role !== 'super_admin' && r.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const item = await prisma.stockOutItem.findUnique({ where: { id: itemId } })
+      const item = await orm.stockOutItem.findUnique({ where: { id: itemId } })
       if (!item || item.recorderId !== recorderId) throw new Error(`Item #${itemId} not found in recorder #${recorderId}`)
-      const prod = await prisma.product.findUnique({ where: { id: item.productId } })
-      await prisma.$transaction(async (tx) => {
+      const prod = await orm.product.findUnique({ where: { id: item.productId } })
+      await orm.$transaction(async (tx) => {
         // Restore lot remainingQty: increment the youngest open lot, or create a reversal Lot
         const openLots = await tx.lot.findMany({
           where: { productId: item.productId, warehouseId: item.warehouseId, remainingQty: { gt: 0 }, closedAt: null },
@@ -1890,13 +1890,13 @@ export const db = {
       })
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.stockOutRecorder.findUnique({
+      const existing = await orm.stockOutRecorder.findUnique({
         where: { id },
         include: { items: true },
       })
       if (!existing) throw new Error(`Stock-out recorder #${id} not found`)
       if (ctx.role !== 'super_admin' && existing.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         for (const item of existing.items) {
           // Restore lot (find youngest open, else create reversal lot)
           const openLots = await tx.lot.findMany({
@@ -1962,11 +1962,11 @@ export const db = {
         // warehouse_admin
         where.warehouseId = ctx.warehouseId!
       }
-      const rows = await prisma.order.findMany({ where, orderBy: { id: 'desc' } })
+      const rows = await orm.order.findMany({ where, orderBy: { id: 'desc' } })
       return ser(rows) as Order[]
     },
     findById: async (ctx: AuthContext, id: number): Promise<Order | null> => {
-      const o = await prisma.order.findUnique({ where: { id }, include: { items: true } })
+      const o = await orm.order.findUnique({ where: { id }, include: { items: true } })
       if (!o) return null
       if (ctx.role === 'super_admin') return ser(o) as Order
       if (o.enterpriseId !== ctx.enterpriseId) return null
@@ -1980,7 +1980,7 @@ export const db = {
     create: async (ctx: AuthContext, d: Partial<Order>): Promise<Order> => {
       if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN: warehouse_admin cannot create orders')
       if (ctx.role !== 'super_admin' && d.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const created = await prisma.$transaction(async (tx) => {
+      const created = await orm.$transaction(async (tx) => {
         const o = await tx.order.create({
           data: {
             enterpriseId: d.enterpriseId!,
@@ -2005,10 +2005,10 @@ export const db = {
       return ser(created) as Order
     },
     update: async (ctx: AuthContext, id: number, d: Partial<Order>): Promise<Order> => {
-      const existing = await prisma.order.findUnique({ where: { id } })
+      const existing = await orm.order.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (ctx.role !== 'super_admin' && existing.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      const updated = await prisma.$transaction(async (tx) => {
+      const updated = await orm.$transaction(async (tx) => {
         const o = await tx.order.update({
           where: { id },
           data: {
@@ -2032,10 +2032,10 @@ export const db = {
       return ser(updated) as Order
     },
     remove: async (ctx: AuthContext, id: number): Promise<void> => {
-      const existing = await prisma.order.findUnique({ where: { id } })
+      const existing = await orm.order.findUnique({ where: { id } })
       if (!existing) throw new Error('Not found')
       if (ctx.role !== 'super_admin' && existing.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-      await prisma.$transaction(async (tx) => {
+      await orm.$transaction(async (tx) => {
         await tx.auditLog.create({
           data: {
             userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -2056,7 +2056,7 @@ export const db = {
         if (!ctx.enterpriseId) return []
         where.enterpriseId = ctx.enterpriseId
       }
-      const rows = await prisma.auditLog.findMany({
+      const rows = await orm.auditLog.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take: limit,
@@ -2065,7 +2065,7 @@ export const db = {
       return ser(rows.map(r => ({ ...r, userName: r.user?.fullName ?? null }))) as AuditLog[]
     },
     log: async (ctx: AuthContext, d: { action: string; entity: string; entityId?: number | null; details?: string; enterpriseId?: number | null }): Promise<AuditLog> => {
-      const created = await prisma.auditLog.create({
+      const created = await orm.auditLog.create({
         data: {
           userId: ctx.userId,
           enterpriseId: d.enterpriseId ?? ctx.enterpriseId,
@@ -2088,12 +2088,12 @@ export const db = {
         if (!ctx.enterpriseId) return []
         where.enterpriseId = ctx.enterpriseId
       }
-      const rows = await prisma.feature.findMany({ where, orderBy: { id: 'asc' } })
+      const rows = await orm.feature.findMany({ where, orderBy: { id: 'asc' } })
       return ser(rows) as Feature[]
     },
     update: async (ctx: AuthContext, enterpriseId: number, feature: string, enabled: boolean): Promise<Feature> => {
       if (ctx.role !== 'super_admin') throw new Error('FORBIDDEN: Only super_admin can toggle features')
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await orm.$transaction(async (tx) => {
         const existing = await tx.feature.findUnique({
           where: { enterpriseId_feature: { enterpriseId, feature } },
         })
@@ -2124,23 +2124,23 @@ export const db = {
       const whIds = await getAccessibleWarehouseIds(ctx)
 
       const [enterprises, branches, warehouses, users, products, orders, stockRows, totalLots, openLots, stockInCount, stockOutCount] = await Promise.all([
-        prisma.enterprise.count(),
-        prisma.branch.count({ where: entWhere }),
-        prisma.warehouse.count({ where: entWhere }),
-        prisma.user.count({ where: ctx.role === 'super_admin' ? {} : { enterpriseId: ctx.enterpriseId ?? -1 } }),
-        prisma.product.count({ where: entWhere }),
-        prisma.order.findMany({ where: entWhere }),
-        whIds.length ? prisma.stock.findMany({ where: { warehouseId: { in: whIds } }, include: { product: true } }) : [],
-        prisma.lot.count({ where: entWhere }),
-        prisma.lot.count({ where: { ...entWhere, remainingQty: { gt: 0 }, closedAt: null } }),
-        prisma.stockInRecorder.count({ where: entWhere }),
-        prisma.stockOutRecorder.count({ where: entWhere }),
+        orm.enterprise.count(),
+        orm.branch.count({ where: entWhere }),
+        orm.warehouse.count({ where: entWhere }),
+        orm.user.count({ where: ctx.role === 'super_admin' ? {} : { enterpriseId: ctx.enterpriseId ?? -1 } }),
+        orm.product.count({ where: entWhere }),
+        orm.order.findMany({ where: entWhere }),
+        whIds.length ? orm.stock.findMany({ where: { warehouseId: { in: whIds } }, include: { product: true } }) : [],
+        orm.lot.count({ where: entWhere }),
+        orm.lot.count({ where: { ...entWhere, remainingQty: { gt: 0 }, closedAt: null } }),
+        orm.stockInRecorder.count({ where: entWhere }),
+        orm.stockOutRecorder.count({ where: entWhere }),
       ])
 
       const totalStockValue = stockRows.reduce((s, r) => s + r.quantity * (r.product?.price ?? 0), 0)
       const pendingOrderCount = orders.filter(o => o.status === 'pending').length
 
-      const allProducts = eid ? await prisma.product.findMany({ where: { enterpriseId: eid } }) : await prisma.product.findMany()
+      const allProducts = eid ? await orm.product.findMany({ where: { enterpriseId: eid } }) : await orm.product.findMany()
       const stockByProduct = new Map<number, number>()
       for (const s of stockRows) {
         stockByProduct.set(s.productId, (stockByProduct.get(s.productId) ?? 0) + s.quantity)
@@ -2180,7 +2180,7 @@ export const db = {
       const eid = ctx.role === 'super_admin' ? undefined : ctx.enterpriseId ?? undefined
 
       // Stock by warehouse
-      const warehouses = await prisma.warehouse.findMany({
+      const warehouses = await orm.warehouse.findMany({
         where: { id: { in: whIds } },
         include: { stock: true },
       })
@@ -2190,7 +2190,7 @@ export const db = {
       }))
 
       // Stock by category
-      const products = eid ? await prisma.product.findMany({ where: { enterpriseId: eid }, include: { stock: true, category: true } }) : await prisma.product.findMany({ include: { stock: true, category: true } })
+      const products = eid ? await orm.product.findMany({ where: { enterpriseId: eid }, include: { stock: true, category: true } }) : await orm.product.findMany({ include: { stock: true, category: true } })
       const byCat = new Map<string, number>()
       for (const p of products) {
         // Only count stock rows in accessible warehouses
@@ -2217,7 +2217,7 @@ export const db = {
         if (!ctx.enterpriseId) return { stockByWarehouse, stockByCategory, topProducts, recentActivity: [] }
         where.enterpriseId = ctx.enterpriseId
       }
-      const logs = await prisma.auditLog.findMany({
+      const logs = await orm.auditLog.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take: 10,
@@ -2253,7 +2253,7 @@ export const db = {
         isReturnable: opts.tab === 'flagged',
       }
       if (opts.warehouseId) where.warehouseId = opts.warehouseId
-      const rows = await prisma.stockOutItem.findMany({
+      const rows = await orm.stockOutItem.findMany({
         where,
         include: {
           product: true,
@@ -2320,7 +2320,7 @@ export const db = {
 
     /** Find one stock-out item by id, with product + recorder + returns[] (for source-record dialog). */
     findItemById: async (ctx: AuthContext, stockOutItemId: number): Promise<ReturnableItem | null> => {
-      const it = await prisma.stockOutItem.findUnique({
+      const it = await orm.stockOutItem.findUnique({
         where: { id: stockOutItemId },
         include: {
           product: true,
@@ -2390,7 +2390,7 @@ export const db = {
     ): Promise<ReturnRecord> => {
       if (!d.stockOutItemId) throw new Error('Validation: stockOutItemId is required')
       if (!d.quantity || d.quantity <= 0) throw new Error('Validation: quantity must be positive')
-      const it = await prisma.stockOutItem.findUnique({
+      const it = await orm.stockOutItem.findUnique({
         where: { id: d.stockOutItemId },
         include: { recorder: true, product: true, returns: true, nonReturnables: true },
       })
@@ -2402,7 +2402,7 @@ export const db = {
       if (remaining <= 0) throw new Error('Validation: this item is fully resolved (returned + non-returnable)')
       if (d.quantity > remaining) throw new Error(`Validation: only ${remaining} remaining to return`)
 
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await orm.$transaction(async (tx) => {
         // Create the Return record (optionally linked to a ReturnRecorder for group returns)
         const ret = await tx.return.create({
           data: {
@@ -2490,14 +2490,14 @@ export const db = {
     ): Promise<{ recorder: ReturnRecorder; processed: number; lastError: string | null }> => {
       if (!Array.isArray(opts.items) || opts.items.length === 0) throw new Error('Validation: no items to return')
       // Derive enterpriseId from the first item's recorder (works for super_admin too)
-      const firstItem = await prisma.stockOutItem.findUnique({
+      const firstItem = await orm.stockOutItem.findUnique({
         where: { id: opts.items[0].stockOutItemId },
         include: { recorder: true },
       })
       if (!firstItem) throw new Error('StockOutItem not found')
       const enterpriseId = firstItem.recorder.enterpriseId
       // 1. Create the ReturnRecorder record (RET-YYYY-NNNN)
-      const recorder = await prisma.$transaction(async (tx) => {
+      const recorder = await orm.$transaction(async (tx) => {
         const year = new Date().getFullYear()
         const fullPrefix = `RET-${year}-`
         const count = await tx.returnRecorder.count({ where: { recorderCode: { startsWith: fullPrefix } } })
@@ -2531,7 +2531,7 @@ export const db = {
         }
       }
       // 3. Update the recorder with final counts + status
-      const updated = await prisma.returnRecorder.update({
+      const updated = await orm.returnRecorder.update({
         where: { id: recorder.id },
         data: {
           itemCount: processed.length,
@@ -2539,7 +2539,7 @@ export const db = {
           status: processed.length === opts.items.length ? 'completed' : (processed.length > 0 ? 'partial' : 'failed'),
         },
       })
-      await prisma.auditLog.create({
+      await orm.auditLog.create({
         data: {
           userId: ctx.userId, enterpriseId,
           action: 'return.group', entity: 'ReturnRecorder', entityId: recorder.id,
@@ -2563,7 +2563,7 @@ export const db = {
     findRecorders: async (ctx: AuthContext): Promise<ReturnRecorder[]> => {
       const where: any = {}
       if (ctx.role !== 'super_admin' && ctx.enterpriseId) where.enterpriseId = ctx.enterpriseId
-      const rows = await prisma.returnRecorder.findMany({
+      const rows = await orm.returnRecorder.findMany({
         where,
         include: { returns: { include: { stockOutItem: { include: { product: true, condition: true } } } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
         orderBy: { id: 'desc' },
@@ -2624,7 +2624,7 @@ export const db = {
       if (!d.stockOutItemId) throw new Error('Validation: stockOutItemId is required')
       if (!d.quantity || d.quantity <= 0) throw new Error('Validation: quantity must be positive')
       if (!d.reason) throw new Error('Validation: reason is required')
-      const it = await prisma.stockOutItem.findUnique({
+      const it = await orm.stockOutItem.findUnique({
         where: { id: d.stockOutItemId },
         include: { recorder: true, product: true, returns: true, nonReturnables: true },
       })
@@ -2636,7 +2636,7 @@ export const db = {
       if (remaining <= 0) throw new Error('Validation: this item is fully resolved (returned + non-returnable)')
       if (d.quantity > remaining) throw new Error(`Validation: only ${remaining} remaining to mark non-returnable`)
 
-      const result = await prisma.$transaction(async (tx) => {
+      const result = await orm.$transaction(async (tx) => {
         const nr = await tx.nonReturnable.create({
           data: {
             stockOutItemId: d.stockOutItemId,
@@ -2681,14 +2681,14 @@ export const db = {
       },
     ): Promise<{ recorder: NonReturnableRecorder; processed: number; lastError: string | null }> => {
       if (!Array.isArray(opts.items) || opts.items.length === 0) throw new Error('Validation: no items to mark')
-      const firstItem = await prisma.stockOutItem.findUnique({
+      const firstItem = await orm.stockOutItem.findUnique({
         where: { id: opts.items[0].stockOutItemId },
         include: { recorder: true },
       })
       if (!firstItem) throw new Error('StockOutItem not found')
       const enterpriseId = firstItem.recorder.enterpriseId
       // 1. Create the NonReturnableRecorder record (NR-YYYY-NNNN)
-      const recorder = await prisma.$transaction(async (tx) => {
+      const recorder = await orm.$transaction(async (tx) => {
         const year = new Date().getFullYear()
         const fullPrefix = `NR-${year}-`
         const count = await tx.nonReturnableRecorder.count({ where: { recorderCode: { startsWith: fullPrefix } } })
@@ -2722,7 +2722,7 @@ export const db = {
         }
       }
       // 3. Update the recorder with final counts + status
-      const updated = await prisma.nonReturnableRecorder.update({
+      const updated = await orm.nonReturnableRecorder.update({
         where: { id: recorder.id },
         data: {
           itemCount: processed.length,
@@ -2730,7 +2730,7 @@ export const db = {
           status: processed.length === opts.items.length ? 'completed' : (processed.length > 0 ? 'partial' : 'failed'),
         },
       })
-      await prisma.auditLog.create({
+      await orm.auditLog.create({
         data: {
           userId: ctx.userId, enterpriseId,
           action: 'non_returnable.group', entity: 'NonReturnableRecorder', entityId: recorder.id,
@@ -2754,7 +2754,7 @@ export const db = {
     findRecorders: async (ctx: AuthContext): Promise<NonReturnableRecorder[]> => {
       const where: any = {}
       if (ctx.role !== 'super_admin' && ctx.enterpriseId) where.enterpriseId = ctx.enterpriseId
-      const rows = await prisma.nonReturnableRecorder.findMany({
+      const rows = await orm.nonReturnableRecorder.findMany({
         where,
         include: { nonReturnables: { include: { stockOutItem: { include: { product: true, condition: true } } } }, personUser: { select: { id: true, username: true, fullName: true, role: true } } },
         orderBy: { id: 'desc' },
@@ -2811,12 +2811,12 @@ export async function registerItem(
 ): Promise<{ product: Product; stock: Stock | null }> {
   if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
   if (ctx.role !== 'super_admin' && params.enterpriseId !== ctx.enterpriseId) throw new Error('FORBIDDEN')
-  const wh = await prisma.warehouse.findUnique({ where: { id: params.warehouseId } })
+  const wh = await orm.warehouse.findUnique({ where: { id: params.warehouseId } })
   if (!wh) throw new Error(`Warehouse #${params.warehouseId} not found`)
   if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN')
   const initialStock = params.initialStock ?? 0
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await orm.$transaction(async (tx) => {
     const p = await tx.product.create({
       data: {
         enterpriseId: params.enterpriseId,
@@ -2905,7 +2905,7 @@ export async function registerItems(
 ): Promise<{ products: Product[]; lotsCreated: number }> {
   if (ctx.role === 'warehouse_admin') throw new Error('FORBIDDEN')
   if (items.length === 0) throw new Error('Validation: no items to register')
-  const wh = await prisma.warehouse.findUnique({ where: { id: warehouseId } })
+  const wh = await orm.warehouse.findUnique({ where: { id: warehouseId } })
   if (!wh) throw new Error(`Warehouse #${warehouseId} not found`)
   if (!canAccessWarehouse(ctx, wh.enterpriseId, wh.branchId, wh.id)) throw new Error('FORBIDDEN')
   const enterpriseId = wh.enterpriseId
@@ -2918,7 +2918,7 @@ export async function registerItems(
   if (supplierInfo?.personAddress) contactBits.push(`Address: ${supplierInfo.personAddress}`)
   const contactNotes = contactBits.join(' · ')
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result = await orm.$transaction(async (tx) => {
     const created: Product[] = []
     let lotsCreated = 0
     for (const item of items) {

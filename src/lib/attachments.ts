@@ -19,7 +19,7 @@
  *   transparently handled by the download endpoint (gunzip fallback).
  */
 
-import { prisma } from './prisma'
+import { orm } from './orm'
 import {
   type AuthContext, canAccessEnterprise,
 } from './db'
@@ -110,7 +110,7 @@ export function classifyFile(fileName: string, mimeType: string): string {
   return 'other'
 }
 
-/** Convert Prisma rows to plain serializable objects (Date → ISO string). */
+/** Convert rows to plain serializable objects (Date → ISO string). */
 function ser(row: unknown): unknown {
   if (row === null || row === undefined) return row
   if (Array.isArray(row)) return row.map(ser)
@@ -219,7 +219,7 @@ function createZipBuffer(files: { name: string; buffer: Buffer }[]): Promise<Buf
 export const attachments = {
   findMany: async (ctx: AuthContext, filters: AttachmentFilters = {}): Promise<Attachment[]> => {
     const where = attachmentWhere(ctx, filters)
-    const rows = await prisma.attachment.findMany({
+    const rows = await orm.attachment.findMany({
       where,
       orderBy: { id: 'desc' },
       include: {
@@ -231,7 +231,7 @@ export const attachments = {
   },
 
   findById: async (ctx: AuthContext, id: number): Promise<Attachment | null> => {
-    const a = await prisma.attachment.findUnique({
+    const a = await orm.attachment.findUnique({
       where: { id },
       include: {
         metaFields: { orderBy: { id: 'asc' } },
@@ -270,11 +270,11 @@ export const attachments = {
     const branchId = params.branchId ?? null
     const warehouseId = params.warehouseId ?? null
     if (branchId) {
-      const br = await prisma.branch.findUnique({ where: { id: branchId } })
+      const br = await orm.branch.findUnique({ where: { id: branchId } })
       if (!br || br.enterpriseId !== enterpriseId) throw new Error('Validation: invalid branch')
     }
     if (warehouseId) {
-      const wh = await prisma.warehouse.findUnique({ where: { id: warehouseId } })
+      const wh = await orm.warehouse.findUnique({ where: { id: warehouseId } })
       if (!wh || wh.enterpriseId !== enterpriseId) throw new Error('Validation: invalid warehouse')
     }
 
@@ -297,7 +297,7 @@ export const attachments = {
 
     let created: any
     try {
-      created = await prisma.$transaction(async (tx) => {
+      created = await orm.$transaction(async (tx) => {
         const a = await tx.attachment.create({
           data: {
             enterpriseId,
@@ -357,13 +357,13 @@ export const attachments = {
       metaFields: { key: string; value: string; description: string }[]
     }>
   ): Promise<Attachment> => {
-    const existing = await prisma.attachment.findUnique({ where: { id } })
+    const existing = await orm.attachment.findUnique({ where: { id } })
     if (!existing) throw new Error('Not found')
     if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
     if (ctx.role === 'warehouse_admin' && existing.warehouseId !== null && existing.warehouseId !== ctx.warehouseId) throw new Error('FORBIDDEN')
     if (ctx.role === 'branch_admin' && existing.branchId !== null && existing.branchId !== ctx.branchId) throw new Error('FORBIDDEN')
 
-    const updated = await prisma.$transaction(async (tx) => {
+    const updated = await orm.$transaction(async (tx) => {
       const a = await tx.attachment.update({
         where: { id },
         data: {
@@ -407,13 +407,13 @@ export const attachments = {
   },
 
   remove: async (ctx: AuthContext, id: number): Promise<void> => {
-    const existing = await prisma.attachment.findUnique({ where: { id } })
+    const existing = await orm.attachment.findUnique({ where: { id } })
     if (!existing) throw new Error('Not found')
     if (!canAccessEnterprise(ctx, existing.enterpriseId)) throw new Error('FORBIDDEN')
     if (ctx.role === 'warehouse_admin' && existing.warehouseId !== null && existing.warehouseId !== ctx.warehouseId) throw new Error('FORBIDDEN')
     if (ctx.role === 'branch_admin' && existing.branchId !== null && existing.branchId !== ctx.branchId) throw new Error('FORBIDDEN')
 
-    await prisma.$transaction(async (tx) => {
+    await orm.$transaction(async (tx) => {
       await tx.auditLog.create({
         data: {
           userId: ctx.userId, enterpriseId: existing.enterpriseId,
@@ -428,7 +428,7 @@ export const attachments = {
 
   /** Returns disk path + original file info for download. Tenant-checked. */
   getDownloadInfo: async (ctx: AuthContext, id: number): Promise<{ filePath: string; fileName: string; mimeType: string; attachment: any } | null> => {
-    const a = await prisma.attachment.findUnique({ where: { id } })
+    const a = await orm.attachment.findUnique({ where: { id } })
     if (!a) return null
     if (!canAccessEnterprise(ctx, a.enterpriseId)) return null
     if (ctx.role === 'warehouse_admin' && a.warehouseId !== null && a.warehouseId !== ctx.warehouseId) return null
@@ -485,7 +485,7 @@ export const attachments = {
   countsByEntity: async (ctx: AuthContext, entityType: string, entityIds: number[]): Promise<Record<number, number>> => {
     if (entityIds.length === 0) return {}
     const where = attachmentWhere(ctx, { entityType })
-    const rows = await prisma.attachment.groupBy({
+    const rows = await orm.attachment.groupBy({
       by: ['entityId'],
       where: { ...where, entityType, entityId: { in: entityIds } },
       _count: { id: true },
@@ -498,7 +498,7 @@ export const attachments = {
   /** Attachment counts grouped by entityType for a single entityId. Powers item-level badges. */
   countsForEntity: async (ctx: AuthContext, entityType: string, entityId: number): Promise<number> => {
     const where = attachmentWhere(ctx, { entityType, entityId })
-    const c = await prisma.attachment.count({ where })
+    const c = await orm.attachment.count({ where })
     return c
   },
 
@@ -506,7 +506,7 @@ export const attachments = {
    *  AND the "by metadata type" tabs on the Attachments page. */
   distinctMetaKeys: async (ctx: AuthContext): Promise<string[]> => {
     const where = attachmentWhere(ctx)
-    const rows = await prisma.attachmentMeta.findMany({
+    const rows = await orm.attachmentMeta.findMany({
       where: { attachment: where },
       select: { key: true },
       distinct: ['key'],
@@ -518,7 +518,7 @@ export const attachments = {
   /** Counts of attachments grouped by fileCategory — powers the file-type tabs. */
   countsByCategory: async (ctx: AuthContext): Promise<Record<string, number>> => {
     const where = attachmentWhere(ctx)
-    const rows = await prisma.attachment.groupBy({
+    const rows = await orm.attachment.groupBy({
       by: ['fileCategory'],
       where,
       _count: { id: true },

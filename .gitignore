@@ -70,3 +70,6 @@ server.log
 /db/*.db
 /db/*.db-wal
 /db/*.db-shm
+
+# env template ships in the repo
+!.env.example

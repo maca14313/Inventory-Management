@@ -1,6 +1,6 @@
 /**
  * Client-safe shared constants (importable from both browser and server code).
- * Kept free of any server-only imports (no sqlite/prisma chain).
+ * Kept free of any server-only imports (no sqlite chain).
  */
 
 export const MEASUREMENTS = [

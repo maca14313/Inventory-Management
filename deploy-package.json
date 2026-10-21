@@ -2,9 +2,9 @@
   "name": "inventory-management",
   "version": "1.0.0",
   "private": true,
-  "main": "app.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node app.js",
+    "start": "node server.js",
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js"
   },

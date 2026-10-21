@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/build-and-package.sh — build the app and create the deploy archive
-# (deployment-guide §6, adapted for SQLite — no MySQL, no Prisma).
+# (deployment-guide §6, adapted for SQLite — no MySQL, no ORM).
 #
 # Produces: deploy/inventory-management-<timestamp>.tar.gz
 # Usage:    bash scripts/build-and-package.sh          (root deploy)
@@ -20,9 +20,9 @@ NEXT_BUILD=true NODE_ENV=production BASE_PATH="$BASE_PATH" npx next build
 
 echo "── [2/4] Staging runtime files (rule 2: NO node_modules) …"
 rm -rf "$STAGE_DIR"; mkdir -p "$STAGE_DIR"
-cp app.js                 "$STAGE_DIR/"                # Passenger entry (§5.1)
-cp deploy-package.json    "$STAGE_DIR/package.json"    # runtime deps only (§5.2)
-cp next.config.mjs        "$STAGE_DIR/"                # plain-JS config (§5.3)
+cp server.js              "$STAGE_DIR/"                # Passenger entry (guide Step 2)
+cp deploy-package.json    "$STAGE_DIR/package.json"    # runtime deps only (guide Step 6)
+cp next.config.js         "$STAGE_DIR/"                # CommonJS config (guide Step 1)
 cp .env.example           "$STAGE_DIR/"                # env var template (§10)
 mkdir -p "$STAGE_DIR/logs"; touch "$STAGE_DIR/logs/.gitkeep"
 cp -a public              "$STAGE_DIR/public"          # static assets
@@ -44,7 +44,7 @@ rm -rf "$STAGE_DIR/.next/types" "$STAGE_DIR/.next/diagnostics"
 echo "── [3/4] Creating archive (tar preserves symlinks — rule 7) …"
 cd "$STAGE_DIR"
 tar -czf "$DEPLOY_DIR/$ARCHIVE_NAME" \
-  app.js package.json next.config.mjs .env.example logs/ .next/ public/ scripts/ migrations/ db/
+  server.js package.json next.config.js .env.example logs/ .next/ public/ scripts/ migrations/ db/
 cd "$PROJECT_DIR"; rm -rf "$STAGE_DIR"
 
 echo "── [4/4] Verifying archive …"
@@ -60,7 +60,7 @@ echo "OK → $DEPLOY_DIR/$ARCHIVE_NAME"
 echo ""
 echo "Next steps (cPanel):"
 echo "  1. File Manager → upload + extract into ~/apps/inventory-management/"
-echo "  2. Setup Node.js App → Node 20 · Production · startup file: app.js"
+echo "  2. Setup Node.js App → Node 20 · Production · startup file: server.js"
 echo "  3. Env vars: DB_PATH=db/custom.db · NODE_ENV=production"
 echo "  4. Run NPM Install → Start"
 echo "  5. /api/health must return {\"ok\":true} — migrations + demo seed run at first start"
