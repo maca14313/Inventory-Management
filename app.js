@@ -1,5 +1,5 @@
 /**
- * server.js — cPanel / Passenger entry point (deployment-guide Step 2).
+ * app.js — cPanel / Passenger entry point (deployment-guide §5.1).
  *
  * Why require('next') instead of node_modules/.bin/next?
  * cPanel's "Run NPM Install" creates node_modules in the CloudLinux
