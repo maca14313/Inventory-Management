@@ -125,6 +125,26 @@ function compileCondition(model: string, field: string, cond: unknown, out: Comp
         out.params.push(...sub.params)
         return
       }
+      if ('is' in c) {
+        // explicit to-one filter: { relation: { is: {...} } }
+        const sub = compileWhere(rel.relatedModel!, (c.is as Record<string, unknown>) ?? {})
+        if (rel.kind === 'toOne') {
+          out.sql += ` EXISTS (SELECT 1 FROM "${rel.relatedModel}" AS _sub WHERE _sub."id" = "${model}"."${rel.fk}" AND ${sub.sql})`
+        } else {
+          out.sql += ` EXISTS (SELECT 1 FROM "${rel.relatedModel}" AS _sub WHERE _sub."${rel.relatedFk}" = "${model}"."id" AND ${sub.sql})`
+        }
+        out.params.push(...sub.params)
+        return
+      }
+      // Plain object on a relation → Prisma's IMPLIED filter:
+      //   toOne:  { attachment: { branchId: 5 } }  → related row matches sub-where
+      //   toMany: { relation: { ... } } is invalid in Prisma (needs some/every/none)
+      if (rel.kind === 'toOne') {
+        const sub = compileWhere(rel.relatedModel!, c)
+        out.sql += ` EXISTS (SELECT 1 FROM "${rel.relatedModel}" AS _sub WHERE _sub."id" = "${model}"."${rel.fk}" AND ${sub.sql})`
+        out.params.push(...sub.params)
+        return
+      }
     }
     throw new PrismaError('P2009', `Unknown field "${field}" on model "${model}"`)
   }
