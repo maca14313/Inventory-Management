@@ -1,0 +1,22 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# REVERSE PROXY — copy this file into your web root (public_html or the
+# subdomain folder) and rename it to `.htaccess` using cPanel File Manager.
+#
+# Routes all public web traffic to the Node.js app listening internally on
+# 127.0.0.1:3001 (started with `nohup node app.js > app.log 2>&1 &`).
+#
+# The port MUST match the PORT your app.js uses (default: 3001).
+# Requires Apache mod_proxy (the [P] flag). If the site shows 500, ask your
+# host to enable mod_proxy + mod_rewrite.
+# ─────────────────────────────────────────────────────────────────────────────
+
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/[0-9]+\..*cpanellogos
+RewriteCond %{REQUEST_URI} !^/[0-9]+\..*webmaildiskusage
+RewriteCond %{REQUEST_URI} !^/[0-9]+\..*whm
+RewriteRule ^(.*)$ http://127.0.0.1:3001/$1 [P,L]
+
+# Optional (recommended): keep Let's Encrypt / AutoSSL domain-verification
+# requests out of the proxy by uncommenting this line (place it above, after
+# `RewriteEngine On`):
+# RewriteCond %{REQUEST_URI} !^/\.well-known/(acme-challenge|pki-validation)

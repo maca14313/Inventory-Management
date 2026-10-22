@@ -1,23 +1,26 @@
 /**
- * app.js — cPanel / Passenger entry point (deployment-guide §5.1).
+ * app.js — server entry point. Works under BOTH hosting methods:
  *
- * Why require('next') instead of node_modules/.bin/next?
- * cPanel's "Run NPM Install" creates node_modules in the CloudLinux
- * nodevenv and sets NODE_PATH to it. require() honors NODE_PATH;
- * a .bin path lookup does not.
+ *  A) Terminal method (no "Setup Node.js App" extension — DEPLOY-TERMINAL.md):
+ *       started with `nohup node app.js > app.log 2>&1 &`, behind an
+ *       .htaccess reverse proxy (public_html → http://127.0.0.1:3001).
+ *       Port defaults to 3001 (3000 is often restricted/occupied on shared hosts).
+ *
+ *  B) Passenger method (if the extension exists later — DEPLOYMENT-GUIDE (1).md §5.1):
+ *       Passenger intercepts .listen() and binds its own socket; PORT is ignored.
  */
 const { createServer } = require('http')
 const path = require('path')
 const fs = require('fs')
 
-const PORT = process.env.PORT || 3000
-const HOSTNAME = process.env.HOSTNAME || '0.0.0.0'
+const PORT = process.env.PORT || 3001 // internal port behind the .htaccess proxy
+const HOSTNAME = process.env.HOSTNAME || '127.0.0.1' // not exposed publicly — proxied
 
 let next
 try {
-  next = require('next') // respects NODE_PATH (cPanel sets this)
+  next = require('next') // resolves from ./node_modules (installed via Terminal)
 } catch (err) {
-  console.error('Cannot find "next". Did you click "Run NPM Install" in cPanel?')
+  console.error('Cannot find "next". Run: npm install --cache /tmp/npm-cache --prefer-offline --no-audit')
   console.error(err.message)
   process.exit(1)
 }
